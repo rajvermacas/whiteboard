@@ -1,0 +1,120 @@
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { font-family: Inter, system-ui, -apple-system, sans-serif; color: #1f2328; background: #f3f4f6; overflow: hidden; }
+button { font: inherit; cursor: pointer; }
+
+#app { height: 100%; display: flex; flex-direction: column; background: #f3f4f6; }
+#app.fs { position: fixed; inset: 0; z-index: 50; }
+
+/* ---------- toolbar ---------- */
+#toolbar { display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 6px 10px; background: #fff; border-bottom: 1px solid #e3e6ea; flex: 0 0 auto; min-height: 46px; }
+#toolbar .title { display: flex; align-items: center; gap: 6px; border: 0; background: none; font-weight: 600; font-size: 15px; padding: 4px 6px; border-radius: 8px; min-width: 0; max-width: 46vw; }
+#toolbar .title:hover { background: #f1f3f5; }
+#titleText { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#titleText small { font-weight: 400; color: #7d848c; }
+.logo { font-family: Caveat, cursive; font-size: 22px; color: #1d6fb8; }
+.caret { color: #7d848c; font-size: 11px; }
+.tools { margin-left: auto; display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+.tools button { border: 1px solid #e3e6ea; background: #fff; border-radius: 8px; padding: 5px 9px; font-size: 13px; color: #1f2328; white-space: nowrap; }
+.tools button:hover { background: #f1f3f5; }
+.tools button[aria-pressed="true"] { background: #e8f1fb; border-color: #1d6fb8; }
+.zoom { display: inline-flex; }
+.zoom button { border-radius: 0; margin-left: -1px; }
+.zoom button:first-child { border-radius: 8px 0 0 8px; }
+.zoom button:last-child { border-radius: 0 8px 8px 0; }
+#zoomPct { min-width: 54px; }
+
+/* ---------- layout ---------- */
+#main { flex: 1 1 auto; display: flex; min-height: 0; }
+#boardWrap { position: relative; flex: 1 1 auto; min-width: 0; background: #fff; overflow: hidden; }
+#board { width: 100%; height: 100%; display: block; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+#board.panning { cursor: grabbing; }
+#board.overObj { cursor: pointer; }
+#board.dragging { cursor: move; }
+#emptyHint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 30px; color: #b3b9c0; font-family: Caveat, cursive; font-size: 26px; pointer-events: none; }
+
+#chat { flex: 0 0 380px; width: 380px; max-width: 380px; min-width: 0; overflow: hidden; display: flex; flex-direction: column; border-left: 1px solid #e3e6ea; background: #fafbfc; min-height: 0; position: relative; }
+
+@media (max-width: 899px) {
+  #main { flex-direction: column; }
+  #boardWrap { flex: 0 0 56%; }
+  #chat { flex: 1 1 auto; width: auto; max-width: none; border-left: 0; border-top: 1px solid #e3e6ea; }
+  .tools .lbl { display: none; }
+  .tools button { padding: 5px 7px; }
+  #zoomPct { min-width: 46px; }
+  #chips { flex-wrap: nowrap; }
+}
+
+/* ---------- chat ---------- */
+.chatHead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid #eceef1; gap: 6px; }
+.chatHead button { border: 1px solid #e3e6ea; background: #fff; border-radius: 999px; padding: 4px 10px; font-size: 12px; color: #444c56; max-width: 70%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#modelPop { position: absolute; top: 40px; left: 10px; right: 10px; z-index: 5; background: #fff; border: 1px solid #e3e6ea; border-radius: 12px; padding: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.12); font-size: 13px; }
+#modelPop label { display: flex; flex-direction: column; gap: 4px; }
+#modelPop select { font: inherit; padding: 6px; border-radius: 8px; border: 1px solid #d0d5db; }
+.effortRow { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.seg { display: inline-flex; }
+.seg button { border: 1px solid #d0d5db; background: #fff; padding: 4px 10px; margin-left: -1px; font-size: 12px; }
+.seg button:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
+.seg button:last-child { border-radius: 0 8px 8px 0; }
+.seg button.on { background: #1d6fb8; color: #fff; border-color: #1d6fb8; }
+.note { color: #7d848c; font-size: 12px; margin: 8px 0 0; }
+
+#messages { flex: 1 1 auto; overflow-y: auto; padding: 12px 12px 4px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.msg { max-width: 92%; padding: 8px 12px; border-radius: 14px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
+.msg.user { align-self: flex-end; background: #1d6fb8; color: #fff; border-bottom-right-radius: 4px; }
+.msg.user .about { display: block; font-size: 11px; opacity: .8; margin-top: 2px; }
+.msg.assistant { align-self: flex-start; background: #fff; border: 1px solid #e6e8eb; border-bottom-left-radius: 4px; }
+.msg.assistant .meta { display: block; font-size: 11px; color: #9aa1a9; margin-top: 4px; }
+.msg.assistant .thinking { color: #7d848c; font-style: italic; }
+.msg.error { align-self: stretch; background: #fdecea; color: #a1281e; border: 1px solid #f5c6c0; font-size: 13px; }
+.msg.system { align-self: center; background: none; color: #8a9199; font-size: 12px; text-align: center; }
+
+#selLine { display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 12px; color: #444c56; border-top: 1px dashed #d0d5db; }
+#selLine[hidden] { display: none; }
+#selText { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#selLine button { border: 1px solid #d0d5db; background: #fff; border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+
+#chips { min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 12px; overflow-x: auto; flex: 0 0 auto; scrollbar-width: none; }
+#chips button { flex: 0 0 auto; border: 1px solid #cfd8e3; background: #fff; color: #1d6fb8; border-radius: 999px; padding: 5px 11px; font-size: 12.5px; white-space: nowrap; }
+#chips button:hover { background: #eef5fc; }
+#chips button.primary { background: #1d6fb8; color: #fff; border-color: #1d6fb8; }
+
+#composer { display: flex; gap: 6px; padding: 8px 10px 10px; border-top: 1px solid #eceef1; background: #fff; }
+#input { flex: 1; resize: none; font: inherit; font-size: 14px; border: 1px solid #d0d5db; border-radius: 10px; padding: 8px 10px; max-height: 120px; outline: none; }
+#input:focus { border-color: #1d6fb8; }
+#sendBtn { border: 0; background: #1d6fb8; color: #fff; border-radius: 10px; padding: 0 16px; font-weight: 600; }
+#sendBtn.stop { background: #d1382c; }
+#sendBtn:disabled { opacity: .5; cursor: default; }
+
+/* ---------- topic dialog ---------- */
+dialog { border: 0; border-radius: 16px; padding: 0; width: min(520px, 94vw); box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+dialog::backdrop { background: rgba(20,24,28,.35); }
+#topicForm { padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+#topicForm h2 { margin: 0 0 4px; font-family: Caveat, cursive; font-size: 30px; color: #1d6fb8; }
+#topicForm label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #444c56; }
+#topicForm input, #topicForm textarea { font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid #d0d5db; border-radius: 8px; }
+#topicForm menu { display: flex; justify-content: flex-end; gap: 8px; margin: 6px 0 0; padding: 0; }
+#topicForm menu button { border: 1px solid #d0d5db; background: #fff; border-radius: 8px; padding: 7px 14px; }
+#topicForm menu button.primary { background: #1d6fb8; color: #fff; border-color: #1d6fb8; font-weight: 600; }
+
+/* ---------- board text ---------- */
+.hand { font-family: Caveat, 'Comic Sans MS', cursive; }
+.math { font-family: 'Times New Roman', Georgia, serif; font-style: italic; }
+
+/* ---------- sessions ---------- */
+.sessWrap { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 10px; max-height: 80vh; }
+.sessHead { display: flex; justify-content: space-between; align-items: center; }
+.sessHead h2 { margin: 0; font-family: Caveat, cursive; font-size: 30px; color: #1d6fb8; }
+.sessHead button { border: 0; background: none; font-size: 18px; color: #7d848c; }
+#sessNew { align-self: flex-start; border: 0; background: #1d6fb8; color: #fff; border-radius: 8px; padding: 7px 14px; font-weight: 600; }
+#sessList { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+#sessList li { display: flex; align-items: center; gap: 8px; border: 1px solid #e3e6ea; border-radius: 10px; padding: 8px 10px; }
+#sessList li.current { border-color: #1d6fb8; background: #f3f8fd; }
+#sessList .info { flex: 1; min-width: 0; cursor: pointer; }
+#sessList .t { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sessList .m { font-size: 12px; color: #7d848c; }
+#sessList button { border: 1px solid #d0d5db; background: #fff; border-radius: 6px; padding: 3px 9px; font-size: 12px; }
+#sessList .empty { color: #9aa1a9; font-size: 13px; border: 0; }
+#saveState { font-size: 11px; color: #9aa1a9; margin-left: 6px; white-space: nowrap; }
+.seg { flex-wrap: wrap; }
+@media (max-width: 520px) { #saveState { display: none; } }

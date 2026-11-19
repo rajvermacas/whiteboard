@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Whiteboard Teacher</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%231d6fb8%22/%3E%3Cpath d=%22M8 24l3-9 10-10 6 6-10 10z%22 fill=%22%23fff%22/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="toolbar">
+    <button id="topicBtn" class="title" title="Change topic">
+      <span class="logo">✎</span><span id="titleText">Whiteboard Teacher</span><span class="caret">▾</span>
+    </button>
+    <span id="saveState"></span>
+    <div class="tools">
+      <button id="sessionsBtn" title="Saved lessons (auto-saved)">🗂 <span class="lbl">Sessions</span></button>
+      <button id="replayBtn" title="Replay the board with the pen">⟲ <span class="lbl">Replay</span></button>
+      <button id="wipeBtn" title="Wipe the board">⌫ <span class="lbl">Wipe</span></button>
+      <button id="fitBtn" title="Zoom to show everything">⤢ <span class="lbl">Fit</span></button>
+      <span class="zoom">
+        <button id="zoomOut" title="Zoom out">−</button>
+        <button id="zoomPct" title="Reset zoom">100%</button>
+        <button id="zoomIn" title="Zoom in">+</button>
+      </span>
+      <button id="slowBtn" title="Slow pen" aria-pressed="false">🐢</button>
+      <button id="fsBtn" title="Full screen">⛶</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section id="boardWrap">
+      <svg id="board" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse">
+            <circle cx="1.5" cy="1.5" r="1.5" fill="#d5d9de"/>
+          </pattern>
+        </defs>
+        <rect id="grid" fill="url(#dots)"/>
+        <g id="layerObjects"></g>
+        <g id="layerOverlay"></g>
+      </svg>
+      <div id="emptyHint">Ask a question → the teacher talks in the chat and draws here at the same time</div>
+    </section>
+
+    <aside id="chat">
+      <div class="chatHead">
+        <button id="modelBtn" title="Model and reasoning">⚙ <span id="modelLabel">model</span></button>
+        <button id="clearChatBtn" title="Clear chat">Clear chat</button>
+      </div>
+      <div id="modelPop" hidden>
+        <label>Model (OpenCode Go)
+          <select id="modelSelect"></select>
+        </label>
+        <div class="effortRow">Reasoning
+          <span class="seg" id="effortSeg"></span>
+        </div>
+        <p class="note" id="effortNote">Lower reasoning starts drawing sooner. Only the levels this model supports are shown.</p>
+      </div>
+      <div id="messages"></div>
+      <div id="selLine" hidden>
+        <span id="selText"></span>
+        <button id="selAsk">Ask</button><button id="selErase">Erase</button><button id="selClear" title="Clear selection">✕</button>
+      </div>
+      <div id="chips"></div>
+      <form id="composer">
+        <textarea id="input" rows="1" placeholder="Ask the teacher…"></textarea>
+        <button id="sendBtn" type="submit">Send</button>
+      </form>
+    </aside>
+  </main>
+</div>
+
+<dialog id="topicDlg">
+  <form method="dialog" id="topicForm">
+    <h2>What should the teacher teach?</h2>
+    <label>Topic <input id="tTopic" required placeholder="e.g. How attention works in transformers"></label>
+    <label>Audience <input id="tAudience" placeholder="Technical reader new to the topic"></label>
+    <label>Worked example (optional) <input id="tExample" placeholder="Teacher picks one if empty"></label>
+    <label>Reference notes (optional) <textarea id="tNotes" rows="4" placeholder="Paste key points, numbers or a summary of a paper / video. Credited on the page."></textarea></label>
+    <label>Source name (optional) <input id="tSource" placeholder="e.g. Vaswani et al. 2017"></label>
+    <p class="note" id="tWarn" hidden>A new topic starts a new lesson. The current one stays saved under 🗂 Sessions.</p>
+    <menu>
+      <button value="cancel" id="tCancel" formnovalidate>Cancel</button>
+      <button value="ok" id="tOk" class="primary">Start teaching</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="sessDlg">
+  <div class="sessWrap">
+    <div class="sessHead">
+      <h2>Your lessons</h2>
+      <button id="sessClose" title="Close">✕</button>
+    </div>
+    <p class="note">Every lesson is saved automatically as you go, in the <code>sessions/</code> folder next to the app. Pick one to carry on where you left off.</p>
+    <button id="sessNew" class="primary">＋ New lesson</button>
+    <ul id="sessList"></ul>
+  </div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
