@@ -4,15 +4,18 @@ An AI teacher that explains **any topic** on an infinite whiteboard. You ask in 
 
 ## Run it
 
-Requires **Node.js 18+**. No `npm install` needed: the project has zero dependencies.
+Requires **Node.js 18+**.
 
 ```bash
 cd ~/Projects/whiteboard
+npm install               # once: installs the natural voice (Kokoro) for the server
 cp .env.example .env      # skip if .env already exists; put your key in it
 npm start                 # → http://127.0.0.1:5173
 ```
 
 Open the URL, type a topic (plus optional audience, worked example and reference notes), then tap **Start the lesson**.
+
+The first time the server starts after `npm install`, it downloads the voice model (~90 MB, once). The app also works without `npm install`, but the voice is then generated inside the browser, which is slow (especially in Safari) and often falls back to the browser's robotic voice.
 
 ## How it works
 
@@ -29,7 +32,11 @@ browser (public/)  ──POST /api/chat──▶  server.js  ──stream──�
 
 ## What the teacher can do
 
-**🔊 Narration.** The teacher speaks each line aloud with **Kokoro (voice af_bella)**, while the pen draws that line's picture. The chat text types at the speaking pace, and the next sentence waits until the current one is spoken and drawn. Kokoro runs entirely in your browser. The model downloads once (~90 MB on CPU, or ~310 MB with the faster GPU option) and is then cached. ⚙ → Narration lets you pick the voice (Bella, Heart, Nicole, Michael, Emma, George…), the speed, CPU or GPU, the browser's built-in voice, or off. 🔊 in the toolbar mutes. If your CPU generates speech slower than it speaks, a hint suggests turning on GPU.
+**🔊 Narration.** The teacher speaks each line aloud with **Kokoro** (default voice **Bella**, af_bella) while the pen draws that line's picture. The chat text types at the speaking pace, and the next sentence waits until the current one is spoken and drawn.
+- **Where the voice is made:** by default the local server generates it natively on your computer, using every CPU core. It's fast and works the same in Safari and Chrome. ⚙ → Narration → *Run the voice on* can switch to generating it inside the browser instead (CPU, or GPU with a one-time 310 MB download).
+- **Voices:** Bella, Heart, Nicole, Sarah, Michael, Fenrir, Puck (US), Emma, Isabella, George and Fable (UK). Pick one and press **▶ Preview voice** to hear it. The line under it tells you which voice is actually speaking and why.
+- **When Kokoro can't keep up** (e.g. in-browser on a slow CPU), the app switches to the browser's built-in voice instead of stalling and says so. Changing any voice setting or pressing Preview tries Kokoro again.
+- **Muting:** 🔊 in the toolbar mutes narration.
 
 **⏯ Steps and timeline.** Every spoken line, plus the drawing that goes with it, is recorded as a step. Your own moves, erases and sketches are recorded too. The bar at the bottom of the board lets you:
 - step back and forward with ‹ › or the ← → keys,
@@ -88,6 +95,8 @@ There's no save button. Every lesson (topic, board, camera position and chat) is
 | `DEFAULT_MODEL` | `deepseek-v4.1-flash` |
 | `PORT` / `HOST` | `5173` / `127.0.0.1` |
 | `OPENCODE_GO_API_BASE` | `https://opencode.ai/zen/go/v1` |
+| `TTS` | set to `off` to disable the server voice |
+| `TTS_DTYPE` | voice model precision: `q8` (default), `fp16`, `fp32` |
 
 ## Files
 
@@ -97,6 +106,11 @@ public/index.html  layout
 public/style.css   styles
 public/app.js      board engine, pen animation, components, motion, timeline, chat, prompt, sessions
 public/voice.js    narration engine (Kokoro / browser voice), paced with the pen
-public/tts-worker.js  Kokoro TTS in a Web Worker
+public/tts-worker.js  Kokoro TTS in a Web Worker (fallback when the server has no voice)
 sessions/          auto-saved lessons (created on first use, git-ignored)
 ```
+
+## Troubleshooting
+
+- **Robotic voice:** run `npm install` and restart the server. ⚙ → Narration should then say *"generated on this computer (fast)"*.
+- **An answer seems stuck:** open ⚙, press **Copy debug log** and share it. It records what the app was waiting on.

@@ -1,19 +1,20 @@
 /* Narration engine for Whiteboard Teacher.
- * Modes: 'kokoro' (Kokoro-82M in a Web Worker, default voice af_bella), 'browser' (speechSynthesis), 'off'.
+ * Voice sources, best first:
+ *   1. Kokoro on the local server (/api/tts): native, uses every CPU core, works in every browser.
+ *   2. Kokoro in the browser (Web Worker, CPU or WebGPU): used when the server has no voice installed.
+ *   3. The browser's built-in speech: used when Kokoro is unavailable or too slow to keep up.
  * prepare(text) starts synthesis early so audio is ready when the pen reaches that step.
  * play(handle) resolves when audio starts, with {duration, done} so the caller can pace typing and drawing.
  */
 window.Voice = (() => {
   'use strict';
-  let cfg = { mode: 'kokoro', voice: 'af_bella', speed: 1, device: 'wasm' };
+  let cfg = { mode: 'kokoro', voice: 'af_bella', speed: 1, engine: 'server' };
+  let serverState = 'unknown';         // unknown | loading | ready | unavailable
   let worker = null, workerReady = null, workerDevice = null, loadFailed = false;
-  let ctx = null, current = null, epoch = 0, speakingNow = false, reqId = 0, slowCount = 0, tooSlow = false;
-  const log = (...a) => { try { window.wbtLog && window.wbtLog('voice', ...a); } catch {} };
-  const pending = new Map();      // id -> {resolve, reject}
-  const cache = new Map();        // key -> Promise<AudioBuffer>
-  const listeners = new Set();
+  let ctx = null, current = null, epoch = 0, speakingNow = false, reqId = 0, slowCount = 0, tooSlow = false, lastSource = '';
+  const pending = new Map(), cache = new Map(), listeners = new Set();
   let status = { state: 'idle', text: '' };
-
+  const log = (...a) => { try { window.wbtLog && window.wbtLog('voice', ...a); } catch {} };
   const setStatus = (state, text = '') => { status = { state, text }; listeners.forEach(f => { try { f(status); } catch {} }); };
 
   function speakable(t) {
@@ -28,26 +29,61 @@ window.Voice = (() => {
       .replace(/²/g, ' squared').replace(/³/g, ' cubed')
       .replace(/\s+/g, ' ').trim();
   }
-
   function ensureCtx() {
     if (!ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) ctx = new AC(); }
     if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
     return ctx;
   }
+  const INSTALL_HINT = 'The fast voice isn’t installed yet: run npm install in the project folder, then restart the server. Using the slower in-browser voice for now.';
+  const useServer = () => cfg.engine === 'server' && serverState !== 'unavailable';
 
+  // ---------- 1. Kokoro on the local server ----------
+  let polling = false;
+  async function checkServer() {
+    if (polling) return; polling = true;
+    try {
+      for (let i = 0; i < 900; i++) {
+        const r = await fetch('/api/tts/status'); const j = await r.json();
+        if (j.state === 'ready') { serverState = 'ready'; if (cfg.engine === 'server' && status.state !== 'slow') setStatus('ready', ''); break; }
+        if (j.state === 'unavailable' || j.state === 'error') {
+          serverState = 'unavailable'; log('server voice unavailable:', j.error);
+          if (cfg.engine === 'server' && cfg.mode === 'kokoro') { setStatus('info', INSTALL_HINT); startWorker().catch(() => {}); }
+          break;
+        }
+        serverState = 'loading';
+        if (cfg.engine === 'server') setStatus('loading', j.progress ? `Preparing the voice on this computer ${j.progress}% (first time only)` : 'Preparing the voice on this computer…');
+        await new Promise(r2 => setTimeout(r2, 1000));
+      }
+    } catch (e) { log('status check failed', String(e)); }
+    polling = false;
+  }
+  async function synthServer(text) {
+    const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: cfg.voice, speed: cfg.speed }) });
+    if (r.status === 501) { serverState = 'unavailable'; checkServer(); throw Object.assign(new Error('server voice unavailable'), { fallback: true }); }
+    if (!r.ok) throw new Error('server voice error ' + r.status);
+    const genMs = Number(r.headers.get('X-Gen-Ms') || 0);
+    const arr = await r.arrayBuffer();
+    const c = ensureCtx();
+    const buf = await new Promise((res, rej) => { const p = c.decodeAudioData(arr, res, rej); if (p && p.catch) p.catch(rej); });
+    trackSpeed(genMs, buf.duration, 'server');
+    return buf;
+  }
+
+  // ---------- 2. Kokoro in the browser ----------
   function startWorker() {
-    if (worker || loadFailed) return workerReady;
+    if (worker || loadFailed) return workerReady || Promise.reject(new Error('no worker'));
     try { worker = new Worker('tts-worker.js', { type: 'module' }); }
-    catch (e) { loadFailed = true; setStatus('error', 'Voice model cannot run in this browser'); return Promise.reject(e); }
-    setStatus('loading', 'Loading voice…');
+    catch (e) { loadFailed = true; setStatus('error', 'The voice model cannot run in this browser.'); return Promise.reject(e); }
+    if (!useServer() && status.state !== 'info') setStatus('loading', 'Loading voice…');
     workerReady = new Promise((resolve, reject) => {
       worker.onmessage = e => {
         const m = e.data;
         if (m.type === 'progress') {
           const pct = m.total ? Math.min(99, Math.round(m.loaded / m.total * 100)) : 0;
-          setStatus('loading', `Downloading voice ${pct}% (first time only)`);
-        } else if (m.type === 'ready') { workerDevice = m.device; setStatus('ready', ''); resolve(); }
-        else if (m.type === 'error') { loadFailed = true; setStatus('error', 'Voice model failed to load: ' + m.message); reject(new Error(m.message)); }
+          if (status.state === 'info') setStatus('info', INSTALL_HINT + ` Downloading it into the browser: ${pct}%.`);
+          else if (!useServer()) setStatus('loading', `Downloading voice into the browser ${pct}% (first time only)`);
+        } else if (m.type === 'ready') { workerDevice = m.device; if (status.state === 'info') setStatus('info', INSTALL_HINT); else if (!useServer()) setStatus('ready', ''); resolve(); }
+        else if (m.type === 'error') { loadFailed = true; setStatus('error', 'The voice model failed to load: ' + m.message); reject(new Error(m.message)); }
         else if (m.type === 'audio' || m.type === 'audio-error') {
           const p = pending.get(m.id); if (!p) return; pending.delete(m.id);
           if (m.type === 'audio') p.resolve(m); else p.reject(new Error(m.message));
@@ -55,74 +91,58 @@ window.Voice = (() => {
       };
       worker.onerror = e => {
         loadFailed = true; log('worker error', e.message);
-        setStatus('error', 'Voice worker error: ' + (e.message || 'unknown'));
+        setStatus('error', 'The voice worker crashed: ' + (e.message || 'unknown'));
         for (const [, p] of pending) p.reject(new Error('voice worker crashed'));
         pending.clear(); reject(new Error(e.message));
       };
     });
-    worker.postMessage({ type: 'load', device: cfg.device });
+    worker.postMessage({ type: 'load', device: cfg.engine === 'webgpu' ? 'webgpu' : 'wasm' });
     return workerReady;
+  }
+  async function synthWorker(text) {
+    await startWorker();
+    const id = ++reqId;
+    const m = await new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ type: 'speak', id, text, voice: cfg.voice, speed: cfg.speed, device: cfg.engine === 'webgpu' ? 'webgpu' : 'wasm' }); });
+    const c = ensureCtx();
+    const buf = c.createBuffer(1, m.audio.length, m.sr); buf.copyToChannel(m.audio, 0);
+    trackSpeed(m.genMs, buf.duration, 'browser');
+    return buf;
+  }
+
+  function trackSpeed(genMs, dur, where) {
+    if (!genMs || dur < 0.8) return;
+    log(where, 'generated', dur.toFixed(1) + 's audio in', (genMs / 1000).toFixed(1) + 's');
+    slowCount = genMs / 1000 > dur * 1.1 ? slowCount + 1 : Math.max(0, slowCount - 1);
+    if (slowCount >= 2) markTooSlow(where);
+  }
+  function markTooSlow(where) {
+    if (tooSlow) return;
+    tooSlow = true; log('kokoro too slow (' + where + '), using the browser voice');
+    setStatus('slow', where === 'server'
+      ? 'The natural voice is generating slower than it speaks on this computer, so the browser’s built-in voice is speaking instead. Press Preview in ⚙ to try the natural voice again.'
+      : 'The natural voice is too slow inside this browser, so the browser’s built-in voice is speaking instead. For the fast natural voice, run npm install in the project folder and restart the server.');
   }
 
   function synthKokoro(text) {
-    const key = `${cfg.voice}|${cfg.speed}|${text}`;
+    const key = `${useServer() ? 'server' : cfg.engine}|${cfg.voice}|${cfg.speed}|${text}`;
     if (cache.has(key)) return cache.get(key);
     const p = (async () => {
-      await startWorker();
-      const id = ++reqId;
-      const m = await new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        worker.postMessage({ type: 'speak', id, text, voice: cfg.voice, speed: cfg.speed, device: cfg.device });
-      });
-      const c = ensureCtx();
-      const dur = m.audio.length / m.sr;
-      if (m.genMs && dur > 0.8) {
-        slowCount = m.genMs / 1000 > dur * 1.1 ? slowCount + 1 : Math.max(0, slowCount - 1);
-        log('generated', dur.toFixed(1) + 's audio in', (m.genMs / 1000).toFixed(1) + 's');
-        if (slowCount >= 2 && workerDevice !== 'webgpu') markTooSlow();
+      if (useServer()) {
+        try { return await synthServer(text); }
+        catch (e) { if (!e.fallback) throw e; }
       }
-      const buf = c.createBuffer(1, m.audio.length, m.sr);
-      buf.copyToChannel(m.audio, 0);
-      return buf;
+      return synthWorker(text);
     })();
     p.catch(() => cache.delete(key));
     cache.set(key, p);
     if (cache.size > 300) cache.delete(cache.keys().next().value);
     return p;
   }
-
-  // Kokoro slower than real time would stall the lesson: switch to the browser voice for now.
-  function markTooSlow() {
-    if (tooSlow) return;
-    tooSlow = true; log('kokoro too slow, using browser voice');
-    setStatus('slow', 'The natural voice is too slow in this browser, so the browser\u2019s built-in voice is speaking instead. For the Kokoro voice, tick GPU in \u2699 (one-time 310 MB download), or use Chrome.');
-  }
   const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), { timeout: true })), ms))]);
 
-  // ---- public API ----
-  function configure(next) {
-    const old = cfg; cfg = { ...cfg, ...next };
-    if (old.device !== cfg.device && worker) {
-      worker.terminate(); worker = null; workerReady = null; loadFailed = false; cache.clear();
-      for (const [, p] of pending) p.reject(new Error('voice restarted')); pending.clear();
-    }
-    if (old.device !== cfg.device || old.mode !== cfg.mode) { tooSlow = false; slowCount = 0; }
-    if (cfg.mode === 'kokoro') startWorker().catch(() => {});
-    else setStatus('idle', '');
-  }
-  const enabled = () => cfg.mode !== 'off';
-  function unlock() { if (cfg.mode === 'kokoro') ensureCtx(); }
-
-  function prepare(text) {
-    const clean = speakable(text);
-    const h = { text: clean, raw: text, audio: null };
-    if (!clean || cfg.mode !== 'kokoro' || loadFailed || tooSlow) return h;
-    h.audio = synthKokoro(clean);
-    h.audio.catch(() => {});
-    return h;
-  }
-
+  // ---------- 3. the browser's built-in voice ----------
   function browserSpeak(text, myEpoch) {
+    lastSource = 'browser';
     return new Promise(resolveStart => {
       if (!('speechSynthesis' in window)) return resolveStart({ duration: text.length / 14, done: Promise.resolve() });
       const u = new SpeechSynthesisUtterance(text);
@@ -135,36 +155,60 @@ window.Voice = (() => {
       const start = () => { if (started) return; started = true; resolveStart({ duration: text.length / (14 * u.rate), done }); };
       u.onstart = start;
       u.onend = u.onerror = () => { speakingNow = false; doneResolve(); start(); };
-      // some browsers drop onend: finish by an estimate so the lesson never stalls
       setTimeout(() => { speakingNow = false; doneResolve(); }, (text.length / (11 * u.rate) + 4) * 1000);
       current = { stop: () => { speechSynthesis.cancel(); doneResolve(); } };
       speakingNow = true;
       if (myEpoch !== epoch) { speakingNow = false; doneResolve(); return start(); }
       speechSynthesis.speak(u);
-      setTimeout(start, 600); // some browsers never fire onstart
+      setTimeout(start, 600);
     });
   }
 
-  // Resolves when the audio starts: {duration, done, cancelled?}
+  // ---------- public API ----------
+  function configure(next) {
+    const old = cfg; cfg = { ...cfg, ...next };
+    if (!['server', 'wasm', 'webgpu'].includes(cfg.engine)) cfg.engine = 'server';
+    const changed = Object.keys(cfg).some(k => cfg[k] !== old[k]);
+    if (changed) { tooSlow = false; slowCount = 0; }                       // any change gives the natural voice another chance
+    if (old.engine !== cfg.engine && worker && ((old.engine === 'webgpu') !== (cfg.engine === 'webgpu'))) {
+      worker.terminate(); worker = null; workerReady = null; loadFailed = false;
+      for (const [, p] of pending) p.reject(new Error('voice restarted')); pending.clear();
+    }
+    if (cfg.mode !== 'kokoro') { setStatus('idle', ''); return; }
+    if (changed && status.state === 'slow') setStatus('idle', '');
+    if (cfg.engine === 'server') {
+      if (serverState === 'unavailable') { setStatus('info', INSTALL_HINT); startWorker().catch(() => {}); }
+      else checkServer();
+    } else startWorker().catch(() => {});
+  }
+  const enabled = () => cfg.mode !== 'off';
+  function unlock() { if (cfg.mode === 'kokoro') ensureCtx(); }
+
+  function prepare(text) {
+    const clean = speakable(text);
+    const h = { text: clean, raw: text, audio: null };
+    if (!clean || cfg.mode !== 'kokoro' || tooSlow || (loadFailed && !useServer())) return h;
+    h.audio = synthKokoro(clean); h.audio.catch(() => {});
+    return h;
+  }
+
   async function play(h) {
     const myEpoch = epoch;
     const none = { duration: 0, done: Promise.resolve(), cancelled: true };
     if (!h || !h.text || cfg.mode === 'off') return none;
-    if (cfg.mode === 'browser' || (cfg.mode === 'kokoro' && (loadFailed || tooSlow || !h.audio))) {
-      if (cfg.mode === 'kokoro' && !loadFailed && !tooSlow && !h.audio) h.audio = synthKokoro(h.text);
-      else return browserSpeak(h.text, myEpoch);
-    }
-    let buf;
-    // wait a bounded time for the audio: longer while the model is still downloading
-    const limit = status.state === 'loading' ? 90000 : Math.max(12000, h.text.length * 120);
+    if (cfg.mode === 'browser' || tooSlow || (loadFailed && !useServer())) return browserSpeak(h.text, myEpoch);
+    if (!h.audio) h.audio = synthKokoro(h.text);
+    // bounded wait: longer while a model is still downloading
+    const limit = status.state === 'loading' ? 120000 : Math.max(12000, h.text.length * 120);
     const t0 = performance.now();
+    let buf;
     try { buf = await withTimeout(h.audio, limit); }
     catch (e) {
       log(e.timeout ? 'audio not ready after ' + limit + 'ms' : 'synthesis failed: ' + e.message);
-      if (e.timeout) markTooSlow();
+      if (e.timeout) markTooSlow(useServer() ? 'server' : 'browser');
       return myEpoch === epoch ? browserSpeak(h.text, myEpoch) : none;
     }
-    if (performance.now() - t0 > 8000 && status.state !== 'loading') slowCount++;
+    if (performance.now() - t0 > 8000 && status.state !== 'loading') { slowCount++; if (slowCount >= 2) markTooSlow(useServer() ? 'server' : 'browser'); }
     if (myEpoch !== epoch) return none;
     const c = ensureCtx();
     const src = c.createBufferSource(); src.buffer = buf; src.connect(c.destination);
@@ -175,8 +219,8 @@ window.Voice = (() => {
     speakingNow = true;
     if (c.state !== 'running') { c.resume().catch(() => {}); log('audio context was', c.state); }
     src.start();
-    // safety net: if the browser never reports the end (e.g. audio blocked), move on anyway
-    setTimeout(finish, (buf.duration + 1.5) * 1000);
+    lastSource = useServer() ? 'kokoro-server' : 'kokoro-browser';
+    setTimeout(finish, (buf.duration + 1.5) * 1000);   // never wait forever for onended
     return { duration: buf.duration, done };
   }
 
@@ -187,15 +231,34 @@ window.Voice = (() => {
     speakingNow = false;
   }
 
+  const VOICES = [
+    ['af_bella', 'Bella (US, female)'], ['af_heart', 'Heart (US, female)'], ['af_nicole', 'Nicole (US, female, soft)'], ['af_sarah', 'Sarah (US, female)'],
+    ['am_michael', 'Michael (US, male)'], ['am_fenrir', 'Fenrir (US, male)'], ['am_puck', 'Puck (US, male)'],
+    ['bf_emma', 'Emma (UK, female)'], ['bf_isabella', 'Isabella (UK, female)'], ['bm_george', 'George (UK, male)'], ['bm_fable', 'Fable (UK, male)'],
+  ];
+  const voiceName = () => (VOICES.find(v => v[0] === cfg.voice) || [, cfg.voice])[1];
+
+  // Which voice is (or will be) speaking, in plain words for the settings panel.
+  function describe() {
+    if (cfg.mode === 'off') return 'Narration is off.';
+    if (cfg.mode === 'browser') return 'Speaking with the browser’s built-in voice.';
+    if (tooSlow) return `Using the browser’s built-in voice for now (Kokoro was too slow). Press Preview or change a setting to try ${voiceName()} again.`;
+    if (useServer()) return serverState === 'ready' ? `Speaking with Kokoro · ${voiceName()}, generated on this computer (fast).` : `Kokoro · ${voiceName()} on this computer, getting ready…`;
+    return `Speaking with Kokoro · ${voiceName()} inside the browser (${cfg.engine === 'webgpu' ? 'GPU' : 'CPU'}${loadFailed ? ', failed to load' : ''}).`;
+  }
+  async function preview() {
+    stop(); tooSlow = false; slowCount = 0;
+    if (status.state === 'slow') setStatus(useServer() && serverState === 'ready' ? 'ready' : 'idle', '');
+    return play(prepare(`Hi, I'm ${voiceName().split(' (')[0]}. Let's learn something together on the whiteboard.`));
+  }
+
   return {
-    configure, enabled, unlock, prepare, play, stop, speakable,
+    configure, enabled, unlock, prepare, play, stop, speakable, describe, preview,
     speaking: () => speakingNow,
     status: () => status,
-    device: () => workerDevice,
+    device: () => (useServer() ? 'server' : workerDevice),
+    source: () => lastSource,
     onStatus: f => { listeners.add(f); return () => listeners.delete(f); },
-    VOICES: [
-      ['af_bella', 'Bella (US, female)'], ['af_heart', 'Heart (US, female)'], ['af_nicole', 'Nicole (US, female)'],
-      ['am_michael', 'Michael (US, male)'], ['am_fenrir', 'Fenrir (US, male)'], ['bf_emma', 'Emma (UK, female)'], ['bm_george', 'George (UK, male)'],
-    ],
+    VOICES,
   };
 })();

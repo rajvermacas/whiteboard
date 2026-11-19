@@ -1,13 +1,18 @@
 {
   "name": "whiteboard-teacher",
   "version": "1.0.0",
-  "description": "A local AI teacher that explains any topic on an infinite whiteboard while chatting — powered by OpenCode Go.",
+  "description": "A local AI teacher that explains any topic on an infinite whiteboard while talking \u2014 powered by OpenCode Go.",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
-  "engines": { "node": ">=18" },
-  "license": "MIT"
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "kokoro-js": "1.2.1"
+  }
 }

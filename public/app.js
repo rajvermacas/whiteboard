@@ -11,7 +11,7 @@
 // ======================================================================
 const $ = s => document.querySelector(s);
 // ring buffer of recent events; ⚙ → "Copy debug log" puts it on the clipboard
-const debugLog = [];
+const debugLog = window.__debugLog = [];
 window.wbtLog = (area, ...a) => {
   const line = `${new Date().toISOString().slice(11, 23)} [${area}] ${a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ')}`.slice(0, 600);
   debugLog.push(line); if (debugLog.length > 400) debugLog.shift();
@@ -1482,6 +1482,7 @@ function finishTyping() {
 }
 
 function stopAll() {
+  if (queue.length || streaming) dlog('stopAll with', queue.length, 'queued, streaming=' + streaming, (new Error().stack || '').split('\n').slice(2, 5).map(l => l.trim().replace(/^at /, '')).join(' < '));
   gen++;
   queue.length = 0;
   Voice.stop(); narrationDone = Promise.resolve();
@@ -1498,6 +1499,7 @@ function stopAll() {
 function enqueue(item) { queue.push(item); if (!queueRunning) runQueue(); }
 async function runQueue() {
   queueRunning = true; updateSendBtn();
+  for (;;) {
   while (queue.length) {
     const it = queue.shift();
     try {
@@ -1519,6 +1521,7 @@ async function runQueue() {
       continue;
     }
     const run = it.run;
+    dlog('draw', it.cmd.cmd, it.cmd.id || '', run.gen === gen ? '' : '(stale run)');
     if (it.turn.thinking) { const bd = it.turn.el.querySelector('.body'); bd.classList.remove('thinking'); bd.textContent = ''; it.turn.thinking = false; }
     const before = it.cmd.id;
     await execCommand(it.cmd, run, true);
@@ -1530,7 +1533,10 @@ async function runQueue() {
       hideIcon(pen); hideIcon(eraser);
     }
   }
+  // let the last sentence finish; more lines may stream in meanwhile, so check again before going idle
   await Promise.race([narrationDone, sleep(45000)]);
+  if (!queue.length) break;
+  }
   queueRunning = false; updateSendBtn();
 }
 
@@ -1766,8 +1772,8 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
         if (it.say != null) { const t = str(it.say, 1200); enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null }); }
         if (it.cmd || it.type || it.op) {
-          if (turn.cmds >= MAX_CMDS_PER_ANSWER) continue;
-          const c = normalize(it); if (!c) continue;
+          if (turn.cmds >= MAX_CMDS_PER_ANSWER) { dlog('over the per-answer command limit, skipped', it.cmd); continue; }
+          const c = normalize(it); if (!c) { dlog('unknown or invalid command skipped', JSON.stringify(it).slice(0, 160)); continue; }
           turn.cmds++; enqueue({ cmd: c, run, turn });
         }
       }
@@ -1898,11 +1904,11 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // ======================================================================
 // narration settings
 // ======================================================================
-function voiceCfg() { const v = settings.voice || (settings.voice = {}); return { mode: v.mode || 'kokoro', voice: v.voice || 'af_bella', speed: v.speed || 1, gpu: !!v.gpu, lastMode: v.lastMode || 'kokoro' }; }
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); return { mode: v.mode || 'kokoro', voice: v.voice || 'af_bella', speed: v.speed || 1, engine: v.engine || (v.gpu ? 'webgpu' : 'server'), lastMode: v.lastMode || 'kokoro' }; }
 function applyVoice() {
   const v = voiceCfg();
-  Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, device: v.gpu ? 'webgpu' : 'wasm' });
-  $('#voiceMode').value = v.mode; $('#voiceName').value = v.voice; $('#voiceGpu').checked = v.gpu;
+  Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });
+  $('#voiceMode').value = v.mode; $('#voiceName').value = v.voice; $('#voiceEngine').value = v.engine;
   $('#voiceSpeed').value = String(v.speed); $('#voiceSpeedVal').textContent = v.speed.toFixed(2) + '×';
   $('#kokoroRow').hidden = v.mode !== 'kokoro';
   $('#muteBtn').textContent = v.mode === 'off' ? '🔇' : '🔊';
@@ -1912,11 +1918,9 @@ function applyVoice() {
 function setVoice(patch) { settings.voice = { ...voiceCfg(), ...patch }; saveSettings(); applyVoice(); }
 function renderVoiceStatus(st) {
   const v = voiceCfg(), bar = $('#voiceBar');
-  const msg = v.mode !== 'kokoro' ? '' : st.state === 'loading' ? '🔊 ' + st.text : st.state === 'error' ? '🔊 ' + st.text + ' (using the browser voice instead)' : st.state === 'slow' && !v.gpu ? '🐢 ' + st.text : '';
+  const msg = v.mode !== 'kokoro' ? '' : st.state === 'loading' ? '🔊 ' + st.text : st.state === 'error' ? '🔊 ' + st.text + ' (using the browser voice instead)' : st.state === 'slow' ? '🐢 ' + st.text : st.state === 'info' ? 'ℹ️ ' + st.text : '';
   bar.textContent = msg; bar.hidden = !msg;
-  $('#voiceStatus').textContent = v.mode === 'kokoro'
-    ? (st.state === 'ready' || st.state === 'slow' ? `Kokoro ready (${Voice.device() === 'webgpu' ? 'GPU' : 'CPU'}).` : st.text || 'Kokoro loads the first time it speaks.')
-    : v.mode === 'browser' ? 'Uses the voices built into your browser / OS.' : 'Narration is off; the teacher only types.';
+  $('#voiceStatus').textContent = Voice.describe();
 }
 Voice.onStatus(renderVoiceStatus);
 (() => {
@@ -1924,7 +1928,12 @@ Voice.onStatus(renderVoiceStatus);
   for (const [id, label] of Voice.VOICES) { const o = document.createElement('option'); o.value = id; o.textContent = label; sel.appendChild(o); }
   $('#voiceMode').onchange = e => setVoice({ mode: e.target.value, lastMode: e.target.value === 'off' ? voiceCfg().lastMode : e.target.value });
   sel.onchange = e => setVoice({ voice: e.target.value });
-  $('#voiceGpu').onchange = e => setVoice({ gpu: e.target.checked });
+  $('#voiceEngine').onchange = e => setVoice({ engine: e.target.value });
+  $('#voicePreview').onclick = async () => {
+    const b = $('#voicePreview'); Voice.unlock(); b.textContent = '… generating';
+    try { const r = await Voice.preview(); b.textContent = '🔊 playing'; await r.done; } catch (e) { dlog('preview failed', String(e)); }
+    b.textContent = '▶ Preview voice'; renderVoiceStatus(Voice.status());
+  };
   $('#voiceSpeed').oninput = e => setVoice({ speed: Number(e.target.value) });
   $('#muteBtn').onclick = () => { const v = voiceCfg(); if (v.mode === 'off') setVoice({ mode: v.lastMode || 'kokoro' }); else { Voice.stop(); setVoice({ mode: 'off', lastMode: v.mode }); } };
   document.addEventListener('pointerdown', () => Voice.unlock(), { capture: true });

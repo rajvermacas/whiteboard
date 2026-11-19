@@ -211,6 +211,85 @@ async function handleSessions(req, res, url) {
   return sendJSON(res, 405, { error: { code: 'method' } });
 }
 
+// ---------- natural voice (Kokoro) generated natively on this computer ----------
+// Much faster than running the model inside the browser (uses every CPU core), and it works in Safari.
+// Needs the optional `kokoro-js` package (npm install). Without it, the browser falls back to its own engine.
+const TTS_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+const tts = { state: 'idle', progress: 0, error: '', engine: null, chain: Promise.resolve(), cache: new Map() };
+function ttsStatus() { return { state: tts.state, progress: tts.progress, error: tts.error }; }
+function loadTTS() {
+  if (tts.loading) return tts.loading;
+  tts.state = 'loading';
+  tts.loading = (async () => {
+    let KokoroTTS;
+    try { ({ KokoroTTS } = await import('kokoro-js')); }
+    catch (e) { tts.state = 'unavailable'; tts.error = 'kokoro-js is not installed (run npm install)'; throw e; }
+    const files = {};
+    tts.engine = await KokoroTTS.from_pretrained(TTS_MODEL, {
+      dtype: process.env.TTS_DTYPE || 'q8', device: 'cpu',
+      progress_callback: p => {
+        if (p.status === 'progress' && p.file) {
+          files[p.file] = [p.loaded || 0, p.total || 0];
+          let l = 0, t = 0; for (const [a, b] of Object.values(files)) { l += a; t += b; }
+          tts.progress = t ? Math.min(99, Math.round(l / t * 100)) : 0;
+        }
+      },
+    });
+    tts.state = 'ready'; tts.progress = 100;
+    console.log('  Voice: Kokoro ready (generated on this computer)');
+  })().catch(e => {
+    if (tts.state !== 'unavailable') { tts.state = 'error'; tts.error = String(e && e.message || e); console.warn('  Voice: Kokoro failed to load:', tts.error); }
+    else console.log('  Voice: kokoro-js not installed; the browser will generate speech itself (slower). Run `npm install` for the fast voice.');
+  });
+  return tts.loading;
+}
+function sentenceChunks(text) {
+  const parts = text.match(/[^.!?;:]+[.!?;:]*\s*/g) || [text];
+  const out = []; let cur = '';
+  for (const p of parts) { if ((cur + p).length > 280 && cur) { out.push(cur.trim()); cur = p; } else cur += p; }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+function wav(samples, sr) {
+  const buf = Buffer.alloc(44 + samples.length * 2);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + samples.length * 2, 4); buf.write('WAVE', 8); buf.write('fmt ', 12);
+  buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22); buf.writeUInt32LE(sr, 24); buf.writeUInt32LE(sr * 2, 28);
+  buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34); buf.write('data', 36); buf.writeUInt32LE(samples.length * 2, 40);
+  for (let i = 0; i < samples.length; i++) buf.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767))), 44 + i * 2);
+  return buf;
+}
+async function handleTTS(req, res) {
+  let body; try { body = JSON.parse(await readBody(req, 20000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request' } }); }
+  const text = String(body.text || '').slice(0, 1500).trim();
+  const voice = /^[a-z]{2}_[a-z]+$/.test(body.voice || '') ? body.voice : 'af_bella';
+  const speed = Math.max(0.5, Math.min(2, Number(body.speed) || 1));
+  if (!text) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'no text' } });
+  loadTTS();
+  if (tts.state === 'unavailable' || tts.state === 'error') return sendJSON(res, 501, { error: { code: 'tts_unavailable', message: tts.error } });
+  const key = `${voice}|${speed}|${text}`;
+  let job = tts.cache.get(key);
+  if (!job) {
+    // one generation at a time keeps each sentence as fast as possible
+    job = tts.chain = tts.chain.catch(() => {}).then(async () => {
+      await tts.loading;
+      if (tts.state !== 'ready') throw new Error(tts.error || 'voice not ready');
+      const t0 = Date.now(), pieces = []; let sr = 24000, len = 0;
+      for (const c of sentenceChunks(text)) { const a = await tts.engine.generate(c, { voice, speed }); sr = a.sampling_rate; pieces.push(a.audio); len += a.audio.length; }
+      const all = new Float32Array(len); let off = 0; for (const p of pieces) { all.set(p, off); off += p.length; }
+      return { data: wav(all, sr), genMs: Date.now() - t0, seconds: len / sr };
+    });
+    job.catch(() => tts.cache.delete(key));
+    tts.cache.set(key, job);
+    if (tts.cache.size > 300) tts.cache.delete(tts.cache.keys().next().value);
+  }
+  try {
+    const r = await job;
+    if (res.destroyed) return;
+    res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': r.data.length, 'Cache-Control': 'no-store', 'X-Gen-Ms': String(r.genMs), 'X-Audio-Seconds': r.seconds.toFixed(2) });
+    res.end(r.data);
+  } catch (e) { if (!res.headersSent) sendJSON(res, 500, { error: { code: 'tts_failed', message: String(e.message || e) } }); }
+}
+
 // ---------- static files ----------
 function serveStatic(req, res) {
   let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
@@ -236,6 +315,8 @@ const server = http.createServer(async (req, res) => {
       catch (e) { return sendJSON(res, 502, { error: { code: 'upstream_error', message: String(e.message || e) }, models: [{ id: DEFAULT_MODEL, name: DEFAULT_MODEL, efforts: [] }], default: DEFAULT_MODEL }); }
     }
     if (url.pathname === '/api/chat' && req.method === 'POST') return handleChat(req, res);
+    if (url.pathname === '/api/tts' && req.method === 'POST') return handleTTS(req, res);
+    if (url.pathname === '/api/tts/status' && req.method === 'GET') { loadTTS(); return sendJSON(res, 200, ttsStatus()); }
     if (url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) return handleSessions(req, res, url);
     if (req.method === 'GET') return serveStatic(req, res);
     res.writeHead(405); res.end();
@@ -247,4 +328,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`\n  Whiteboard Teacher → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}\n  LLM: OpenCode Go (${API_BASE}), default model ${DEFAULT_MODEL}\n`);
+  if (process.env.TTS !== 'off') loadTTS(); // warm the voice up in the background
 });
