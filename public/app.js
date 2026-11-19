@@ -15,7 +15,7 @@ const LS_SET = 'wbt.settings.v2';
 const MAX_OBJECTS = 400, MAX_CMDS_PER_ANSWER = 60;
 const PALETTE = { blue: '#1d6fb8', amber: '#c48a00', yellow: '#c48a00', green: '#2a8a3e', red: '#d1382c', purple: '#7a48c2', orange: '#e07800', black: '#1f2328', grey: '#7d848c', gray: '#7d848c' };
 const BOXLIKE = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot']);
-const TYPES = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'line', 'arrow', 'highlight', 'update', 'move', 'erase', 'clear', 'wait']);
+const TYPES = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'line', 'arrow', 'highlight', 'flow', 'update', 'animate', 'pulse', 'move', 'erase', 'clear', 'wait']);
 const ALIASES = { text: 'write', label: 'write', rect: 'box', rectangle: 'box', ellipse: 'circle', path: 'line', table: 'matrix', chart: 'bars', graph: 'plot', circle_highlight: 'highlight', delete: 'erase', remove: 'erase', wipe: 'clear' };
 
 const svg = $('#board'), layerObj = $('#layerObjects'), layerOv = $('#layerOverlay'), defs = svg.querySelector('defs'), grid = $('#grid');
@@ -26,10 +26,13 @@ const objs = new Map();        // id -> {cmd, g, bb, off:[dx,dy]}
 let camera = { x: -60, y: -60, scale: 1 };
 let chat = [];                 // [{role:'user'|'assistant'|'error'|'system', text, about?, drew?, meta?}]
 const selection = new Set();
-let settings = { model: null, efforts: {}, slow: false };
+let settings = { model: null, efforts: {}, slow: false, voice: { mode: 'kokoro', voice: 'af_bella', speed: 1, gpu: false } };
 let models = [];
 let gen = 0;                   // animation generation: bump to finish every running tween at once
 let streaming = false, queueRunning = false, replaying = false;
+let steps = [];               // lesson history: [{say, by:'teacher'|'you', cmds:[normalized cmds], t}]
+let scrub = null;             // null = live board; otherwise {i, applied, live:{objs, camera}, playing}
+let narrationDone = Promise.resolve();
 let abortCtl = null, lastUserCamera = 0, autoId = 0;
 const queue = [];
 const typers = new Set();
@@ -123,6 +126,15 @@ function fillColor(c, color) {
   return null;
 }
 
+const PLOT_FN = { exp: Math.exp, sigmoid: x => 1 / (1 + Math.exp(-x)), tanh: Math.tanh, relu: x => Math.max(0, x), gelu: x => 0.5 * x * (1 + Math.tanh(0.7978845608 * (x + 0.044715 * x ** 3))), linear: x => x, square: x => x * x, sin: Math.sin, cos: Math.cos, log: x => Math.log(Math.max(x, 1e-6)) };
+function samplePlot(c) {
+  if (c.points && c.points.length) return { pts: c.points, fn: null };
+  const key = String(c.fn || 'sigmoid').toLowerCase(), fn = PLOT_FN[key] || PLOT_FN.sigmoid;
+  const [a, b] = Array.isArray(c.domain) ? [num(c.domain[0], -4), num(c.domain[1], 4)] : key === 'exp' ? [-2, 2] : key === 'log' ? [0.05, 5] : key === 'sin' || key === 'cos' ? [-6.3, 6.3] : [-4, 4];
+  const pts = []; for (let i = 0; i <= 80; i++) { const x = a + (b - a) * i / 80; pts.push([x, fn(x)]); }
+  return { pts, fn };
+}
+
 const builders = {
   write(c, g, parts) {
     addText(g, parts, c.x, c.y, c.text, { size: c.size, color: c.color, anchor: c.align === 'center' ? 'middle' : 'start', font: c.font });
@@ -189,15 +201,7 @@ const builders = {
   },
   plot(c, g, parts, r) {
     const w = c.w || 280, h = c.h || 170, x0 = c.x, y0 = c.y;
-    const FN = { exp: Math.exp, sigmoid: x => 1 / (1 + Math.exp(-x)), tanh: Math.tanh, relu: x => Math.max(0, x), gelu: x => 0.5 * x * (1 + Math.tanh(0.7978845608 * (x + 0.044715 * x ** 3))), linear: x => x, square: x => x * x, sin: Math.sin, cos: Math.cos, log: x => Math.log(Math.max(x, 1e-6)) };
-    let pts = [], fn = null;
-    if (c.points && c.points.length) pts = c.points;
-    else {
-      fn = FN[String(c.fn || 'sigmoid').toLowerCase()] || FN.sigmoid;
-      const key = String(c.fn || '').toLowerCase();
-      const [a, b] = Array.isArray(c.domain) ? [num(c.domain[0], -4), num(c.domain[1], 4)] : key === 'exp' ? [-2, 2] : key === 'log' ? [0.05, 5] : key === 'sin' || key === 'cos' ? [-6.3, 6.3] : [-4, 4];
-      for (let i = 0; i <= 80; i++) { const x = a + (b - a) * i / 80; pts.push([x, fn(x)]); }
-    }
+    const { pts, fn } = samplePlot(c);
     let xa = Math.min(...pts.map(p => p[0])), xb = Math.max(...pts.map(p => p[0])), ya = Math.min(...pts.map(p => p[1])), yb = Math.max(...pts.map(p => p[1]));
     if (xb - xa < 1e-9) xb = xa + 1; if (yb - ya < 1e-9) yb = ya + 1;
     const pad = (yb - ya) * 0.08; ya -= pad; yb += pad;
@@ -232,6 +236,22 @@ const builders = {
       let nx = -dy / len, ny = dx / len; if (ny > 0) { nx = -nx; ny = -ny; }
       addText(g, parts, mx + nx * 14, my + ny * 14, c.label, { size: 20, color: c.color, anchor: Math.abs(dy) > Math.abs(dx) ? 'start' : 'middle' });
     }
+  },
+  // dots that keep travelling along an arrow or line (data / energy / gradient flowing)
+  flow(c, g, parts) {
+    const t = objs.get(c.on); if (!t) return false;
+    const src = t.g.querySelector('path'); if (!src) return false;
+    const d = src.getAttribute('d');
+    if (t.off[0] || t.off[1]) g.setAttribute('transform', `translate(${f1(t.off[0])} ${f1(t.off[1])})`);
+    const guide = el('path', { d, fill: 'none', stroke: 'none' }, g);
+    const L = guide.getTotalLength();
+    const dots = el('g', null, g);
+    for (let i = 0; i < c.dots; i++) {
+      const dot = el('circle', { r: c.size, fill: c.color, 'fill-opacity': 0.9, stroke: '#fff', 'stroke-width': 1.5 }, dots);
+      if (reduceMotion) { const p = guide.getPointAtLength(L * (i + 0.5) / c.dots); dot.setAttribute('cx', f1(p.x)); dot.setAttribute('cy', f1(p.y)); }
+      else el('animateMotion', { dur: c.speed + 's', repeatCount: 'indefinite', begin: `-${f1(c.speed * i / c.dots)}s`, path: d, calcMode: 'linear' }, dot);
+    }
+    parts.push({ el: dots, kind: 'fade' });
   },
   highlight(c, g, parts, r) {
     const t = objs.get(c.target); if (!t) return false;
@@ -294,6 +314,8 @@ function normalize(raw) {
       if (Array.isArray(raw.area)) c.area = raw.area.slice(0, 4).map(v => num(v, 0));
       return c;
     case 'update': { const rest = { ...raw }; delete rest.cmd; delete rest.type; return { cmd: 'update', id: c.id, fields: rest }; }
+    case 'animate': { const rest = { ...raw }; delete rest.cmd; delete rest.type; delete rest.ms; return { cmd: 'animate', id: c.id, ms: num(raw.ms, 1200, 250, 5000), fields: rest }; }
+    case 'pulse': c.times = num(raw.times, 2, 1, 3); return c;
     case 'move':
       c.x = raw.x != null ? num(raw.x, 0) : null; c.y = raw.y != null ? num(raw.y, 0) : null;
       c.dx = num(raw.dx, 0); c.dy = num(raw.dy, 0); return c;
@@ -316,6 +338,7 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
     case 'plot': c.w = raw.w != null ? num(raw.w, 280, 60, 2000) : null; c.h = raw.h != null ? num(raw.h, 170, 40, 1200) : null; c.fn = str(raw.fn, 20) || null; c.points = Array.isArray(raw.points) ? raw.points.slice(0, 200).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]) : null; c.marks = Array.isArray(raw.marks) ? raw.marks.slice(0, 10) : null; c.domain = Array.isArray(raw.domain) ? raw.domain.slice(0, 2) : null; c.label = label; break;
     case 'line': c.points = (Array.isArray(raw.points) ? raw.points : []).slice(0, 120).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]); if (c.points.length < 2) return null; c.smooth = !!raw.smooth; c.width = num(raw.width, 3, 1, 14); c.dash = !!raw.dash; c.color = col(raw.color, '#1f2328'); break;
     case 'arrow': c.from = Array.isArray(raw.from) ? [num(raw.from[0], 0), num(raw.from[1], 0)] : str(raw.from, 40); c.to = Array.isArray(raw.to) ? [num(raw.to[0], 0), num(raw.to[1], 0)] : str(raw.to, 40); c.label = label; c.curve = num(raw.curve, 0, -1, 1); c.dash = !!raw.dash; c.width = raw.width != null ? num(raw.width, 2.8, 1, 10) : null; break;
+    case 'flow': c.on = str(raw.on ?? raw.target ?? raw.along, 40); c.dots = Math.round(num(raw.dots, 3, 1, 8)); c.speed = num(raw.speed, 2.2, 0.5, 10); c.size = num(raw.size, 5.5, 3, 12); break;
     case 'highlight': c.target = str(raw.target ?? raw.on, 40); c.style = ['circle', 'underline', 'box'].includes(raw.style) ? raw.style : 'circle'; break;
   }
   return c;
@@ -453,7 +476,7 @@ function fit(animate = true) {
 // board operations
 // ======================================================================
 function overlaps(a, b, m = 30) { return a.x < b.x + b.width + m && a.x + a.width + m > b.x && a.y < b.y + b.height + m && a.y + a.height + m > b.y; }
-function dependentsOf(id) { const out = []; for (const [k, o] of objs) if (o.cmd.from === id || o.cmd.to === id || o.cmd.target === id) out.push(k); return out; }
+function dependentsOf(id) { const out = []; for (const [k, o] of objs) if (o.cmd.from === id || o.cmd.to === id || o.cmd.target === id || o.cmd.on === id) out.push(k); return out; }
 function rebuildDependents(id, seen = new Set()) {
   for (const k of dependentsOf(id)) { if (seen.has(k)) continue; seen.add(k); rebuild(k); rebuildDependents(k, seen); }
 }
@@ -575,6 +598,59 @@ async function updateCmd(c, run, animate) {
   drawSelection(); saveSoon();
 }
 
+// ---- motion: tween numbers, positions, sizes, colours and plot curves in place ----
+function decs(v) { const m = String(v).match(/\.(\d+)/); return m ? m[1].length : 0; }
+function isNumLike(v) { return typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && isFinite(Number(v))); }
+function lerpColor(a, b, t) {
+  const hx = h => { h = h.replace('#', ''); if (h.length === 3) h = h.split('').map(x => x + x).join(''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+  try { const A = hx(a), B = hx(b); return '#' + A.map((x, i) => Math.round(x + (B[i] - x) * t).toString(16).padStart(2, '0')).join(''); } catch { return t < 1 ? a : b; }
+}
+function lerpVal(a, b, t) {
+  if (a === b) return a;
+  if (typeof a === 'number' && typeof b === 'number') return a + (b - a) * t;
+  if (isNumLike(a) && isNumLike(b)) { const v = Number(a) + (Number(b) - Number(a)) * t; return typeof b === 'number' ? v : v.toFixed(Math.max(decs(a), decs(b))); }
+  if (typeof a === 'string' && typeof b === 'string' && /^#[0-9a-f]{3,6}$/i.test(a) && /^#[0-9a-f]{3,6}$/i.test(b)) return lerpColor(a, b, t);
+  if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) return a.map((x, i) => lerpVal(x, b[i], t));
+  return t < 1 ? a : b;
+}
+function swapGroup(o, cmd) {
+  const built = buildGroup(cmd); if (!built) return;
+  layerObj.insertBefore(built.g, o.g); o.g.remove();
+  o.g = built.g; o.off = [0, 0]; o.bb = measure(built.g);
+}
+async function animateCmd(c, run, animate) {
+  const o = objs.get(c.id); if (!o) return;
+  const from = o.cmd, type = from.cmd;
+  const fields = { ...c.fields }; delete fields.id;
+  const to = normalizeShape(type, { ...from, ...fields, cmd: type, id: c.id, _placed: true, _seed: from._seed });
+  if (!to) return; to.id = c.id;
+  let A = from, B = to;
+  if (type === 'plot' && (from.fn !== to.fn || JSON.stringify(from.points) !== JSON.stringify(to.points) || JSON.stringify(from.domain) !== JSON.stringify(to.domain))) {
+    A = { ...from, points: samplePlot(from).pts, fn: null }; B = { ...to, points: samplePlot(to).pts, fn: null };
+    if (A.points.length !== B.points.length) { A = from; B = to; }
+  }
+  if (animate && !instantMode() && run.gen === gen) {
+    await ensureVisible(bbOf(o), run);
+    const keys = new Set([...Object.keys(A), ...Object.keys(B)]);
+    await tween(c.ms / speed(), t => {
+      const frame = {};
+      for (const k of keys) frame[k] = k === 'id' || k === 'cmd' || k === '_seed' ? B[k] : lerpVal(A[k], B[k], t);
+      swapGroup(o, frame); rebuildDependents(c.id); drawSelection();
+    }, run, easeInOut);
+  }
+  o.cmd = to; swapGroup(o, to); rebuildDependents(c.id); drawSelection(); saveSoon();
+}
+async function pulseCmd(c, run, animate) {
+  const o = objs.get(c.id); if (!o || !animate || instantMode() || run.gen !== gen) return;
+  await ensureVisible(bbOf(o), run);
+  const b = o.bb, cx = b.x + b.width / 2, cy = b.y + b.height / 2, [ox, oy] = o.off;
+  await tween(650 * c.times / speed(), t => {
+    const s = 1 + 0.11 * Math.abs(Math.sin(Math.PI * t * c.times));
+    o.g.setAttribute('transform', `translate(${f1(ox)} ${f1(oy)}) translate(${f1(cx)} ${f1(cy)}) scale(${s.toFixed(3)}) translate(${f1(-cx)} ${f1(-cy)})`);
+  }, run);
+  if (ox || oy) o.g.setAttribute('transform', `translate(${f1(ox)} ${f1(oy)})`); else o.g.removeAttribute('transform');
+}
+
 async function execCommand(c, run, animate) {
   switch (c.cmd) {
     case 'clear': return clearBoard(run, animate);
@@ -586,6 +662,8 @@ async function execCommand(c, run, animate) {
     }
     case 'update': return updateCmd(c, run, animate);
     case 'move': return moveCmd(c, run, animate);
+    case 'animate': return animateCmd(c, run, animate);
+    case 'pulse': return pulseCmd(c, run, animate);
     default: return drawObject(c, run, animate);
   }
 }
@@ -603,7 +681,7 @@ function drawSelection() {
 }
 function nameOf(id) {
   const o = objs.get(id); if (!o) return id;
-  const c = o.cmd, t = c.label || c.text || (c.cmd === 'highlight' ? `highlight on ${c.target}` : c.cmd === 'arrow' ? `arrow ${typeof c.from === 'string' ? c.from : '·'}→${typeof c.to === 'string' ? c.to : '·'}` : c.id);
+  const c = o.cmd, t = c.label || c.text || (c.cmd === 'highlight' ? `highlight on ${c.target}` : c.cmd === 'flow' ? `flow on ${c.on}` : c.cmd === 'arrow' ? `arrow ${typeof c.from === 'string' ? c.from : '·'}→${typeof c.to === 'string' ? c.to : '·'}` : c.id);
   return String(t).replace(/\n/g, ' ').slice(0, 28);
 }
 function updateSelectionUI() {
@@ -656,7 +734,7 @@ svg.addEventListener('pointermove', e => {
   }
   const dx = e.clientX - gesture.x0, dy = e.clientY - gesture.y0;
   if (gesture.mode === 'pending' && Math.hypot(dx, dy) > 5) {
-    if (gesture.hit && selection.has(gesture.hit)) { gesture.mode = 'drag'; gesture.dragIds = [...selection]; svg.classList.add('dragging'); }
+    if (gesture.hit && selection.has(gesture.hit) && !scrub) { gesture.mode = 'drag'; gesture.dragIds = [...selection]; svg.classList.add('dragging'); }
     else { gesture.mode = 'pan'; svg.classList.add('panning'); }
   }
   if (gesture.mode === 'pan') {
@@ -682,7 +760,7 @@ function endPointer(e) {
     else if (selection.size) setSelection([]);
   } else if (gesture.mode === 'drag' && gesture.last) {
     const [dx, dy] = gesture.last;
-    gesture.dragIds.forEach(id => { const o = objs.get(id); if (!o) return; if (anchorOf(o.cmd)) commitMove(id, dx, dy); else { setOffset(id, 0, 0); rebuildDependents(id); } });
+    gesture.dragIds.forEach(id => { const o = objs.get(id); if (!o) return; if (anchorOf(o.cmd)) { commitMove(id, dx, dy); recordEdit({ cmd: 'move', id, x: null, y: null, dx, dy }); } else { setOffset(id, 0, 0); rebuildDependents(id); } });
     drawSelection(); saveSoon();
   }
   svg.classList.remove('panning', 'dragging');
@@ -723,7 +801,8 @@ document.addEventListener('keydown', e => {
     $('#modelPop').hidden = true;
     return;
   }
-  if (!typing && (e.key === 'Delete' || e.key === 'Backspace') && selection.size) { e.preventDefault(); eraseIds([...selection], { gen }, true); }
+  if (!typing && (e.key === 'Delete' || e.key === 'Backspace') && selection.size && !scrub) { e.preventDefault(); learnerErase([...selection]); }
+  if (!typing && !e.metaKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && navSteps().length) { e.preventDefault(); stepBy(e.key === 'ArrowLeft' ? -1 : 1); }
 });
 
 // ======================================================================
@@ -736,7 +815,7 @@ $('#zoomPct').onclick = () => {
   animateCamera({ scale: s, x: cx - W / s / 2, y: cy - H / s / 2 }, 300);
 };
 $('#fitBtn').onclick = () => fit(true);
-$('#wipeBtn').onclick = () => { if (!objs.size) return; if (confirm('Wipe the whole board? (The chat stays.)')) { stopAll(); clearBoard({ gen }, true); } };
+$('#wipeBtn').onclick = () => { if (!objs.size || scrub) return; if (confirm('Wipe the whole board? (The chat and the step history stay.)')) { stopAll(); recordEdit({ cmd: 'clear' }); clearBoard({ gen }, true); } };
 $('#replayBtn').onclick = replay;
 $('#slowBtn').onclick = () => { settings.slow = !settings.slow; saveSettings(); $('#slowBtn').setAttribute('aria-pressed', settings.slow); };
 $('#fsBtn').onclick = () => { $('#app').classList.contains('fs') ? exitFullscreen() : enterFullscreen(); };
@@ -755,17 +834,139 @@ document.addEventListener('fullscreenchange', () => { if (!document.fullscreenEl
 new ResizeObserver(() => applyCamera()).observe(svg);
 
 async function replay() {
-  if (!objs.size) return;
-  stopAll();
-  const cmds = [...objs.values()].map(o => ({ ...o.cmd }));
-  for (const o of objs.values()) o.g.remove();
-  objs.clear(); selection.clear(); drawSelection(); updateSelectionUI();
-  replaying = true; updateSendBtn();
-  const run = { gen }; lastUserCamera = 0;
-  for (const c of cmds) { if (run.gen !== gen) { await drawObject(c, run, false); continue; } await drawObject(c, run, true); }
-  replaying = false; updateSendBtn(); saveSoon();
+  const nav = navSteps(); if (!nav.length || liveBusy()) return;
+  Voice.unlock();
+  await showStep(nav[0], true);
+  playFrom(nav[0], true);
 }
 function updateEmpty() { $('#emptyHint').style.display = objs.size ? 'none' : ''; }
+
+// ======================================================================
+// steps & timeline: every say line starts a step; its drawing commands belong to it.
+// Learner edits are recorded as 'you' steps so playback always matches the live board.
+// ======================================================================
+const cloneCmd = c => JSON.parse(JSON.stringify(c));
+function trimSteps() {
+  let total = steps.reduce((n, st) => n + st.cmds.length, 0);
+  while (total > 5000 && steps.length > 2) { const a = steps.shift(); steps[0].cmds = a.cmds.concat(steps[0].cmds); total = steps.reduce((n, st) => n + st.cmds.length, 0); }
+}
+function recordSay(turn, say) { steps.push({ say, by: 'teacher', cmds: [], t: turn.key }); trimSteps(); updateTimeline(); }
+function recordCmd(turn, c) {
+  let st = steps[steps.length - 1];
+  if (!st || st.by !== 'teacher' || st.t !== turn.key) { st = { say: '', by: 'teacher', cmds: [], t: turn.key }; steps.push(st); }
+  st.cmds.push(cloneCmd(c)); updateTimeline(); saveSoon();
+}
+function recordEdit(c) {
+  let st = steps[steps.length - 1];
+  if (!st || st.by !== 'you') { st = { say: '', by: 'you', cmds: [] }; steps.push(st); }
+  st.cmds.push(cloneCmd(c)); saveSoon();
+}
+const navSteps = () => steps.map((st, i) => st.by === 'teacher' && (st.say || st.cmds.length) ? i : -1).filter(i => i >= 0);
+function answerNo(i) { const keys = []; for (let j = 0; j <= i; j++) { const t = steps[j].t; if (steps[j].by === 'teacher' && t && keys[keys.length - 1] !== t) keys.push(t); } return keys.length; }
+
+function enterScrub() {
+  if (scrub) return;
+  scrub = { i: -1, applied: -1, token: 0, live: { objs: [...objs.values()].map(o => cloneCmd(o.cmd)), camera: { ...camera } }, playing: false };
+  setSelection([]);
+  document.body.classList.add('scrubbing');
+}
+function exitScrub(keepCamera = false) {
+  if (!scrub) return;
+  const live = scrub.live; scrub = null;
+  stopAll(); resetBoard();
+  for (const c of live.objs) { const cc = cloneCmd(c); cc._placed = true; drawObject(cc, { gen }, false); }
+  if (!keepCamera) { camera = { ...live.camera }; applyCamera(); }
+  document.body.classList.remove('scrubbing');
+  showCaption(''); updateEmpty(); updateTimeline();
+}
+// Show step i. animate=false: the board as it is after step i. animate=true: everything before i, then draw i with narration.
+async function showStep(i, animate) {
+  if (i < 0 || i >= steps.length) return;
+  enterScrub();
+  gen++; Voice.stop(); narrationDone = Promise.resolve(); finishTyping();
+  const run = { gen }, token = ++scrub.token;
+  const target = animate ? i - 1 : i;
+  if (target < scrub.applied) { resetBoard(); scrub.applied = -1; }
+  for (let j = scrub.applied + 1; j <= target; j++) for (const c of steps[j].cmds) await execCommand(cloneCmd(c), run, false);
+  scrub.applied = target; scrub.i = i;
+  updateEmpty(); updateTimeline(); showCaption(steps[i].say);
+  if (!animate) return;
+  lastUserCamera = 0; replaying = true; updateSendBtn();
+  let narration = null;
+  if (steps[i].say && Voice.enabled()) narration = Voice.play(Voice.prepare(steps[i].say));
+  const started = narration ? await narration : null;
+  for (const c of steps[i].cmds) { if (run.gen !== gen) break; await execCommand(cloneCmd(c), run, true); }
+  if (!scrub || scrub.token !== token) { replaying = false; updateSendBtn(); return; } // a newer jump took over
+  if (run.gen === gen) { if (started) await started.done; scrub.applied = i; }
+  else { // stopped mid-step: finish the step instantly so the board is consistent
+    const r2 = { gen };
+    resetBoard(); scrub.applied = -1;
+    for (let j = 0; j <= i; j++) for (const c of steps[j].cmds) await execCommand(cloneCmd(c), r2, false);
+    scrub.applied = i;
+  }
+  replaying = false; updateSendBtn();
+}
+async function playFrom(i, fromReplay = false) {
+  if (!scrub) return;
+  scrub.playing = true; updateTimeline();
+  const nav = navSteps();
+  let k = nav.indexOf(i); if (k < 0) k = 0;
+  if (!fromReplay) await showStep(nav[k], true);
+  while (scrub && scrub.playing && k + 1 < nav.length) {
+    k++;
+    // apply 'you' steps between teacher steps instantly, then animate the next teacher step
+    await showStep(nav[k], true);
+  }
+  if (scrub && scrub.playing) { await sleep(600); if (scrub && scrub.playing && k === nav.length - 1) exitScrub(true); }
+  if (scrub) { scrub.playing = false; updateTimeline(); }
+}
+const liveBusy = () => streaming || (queueRunning && !scrub);
+function stepBy(d) {
+  const nav = navSteps(); if (!nav.length || liveBusy()) return;
+  if (scrub) scrub.playing = false;
+  Voice.unlock();
+  if (!scrub) { if (d < 0) showStep(nav[nav.length - 1], true); return; }
+  const k = nav.indexOf(scrub.i);
+  const nk = k + d;
+  if (nk >= nav.length) { exitScrub(true); return; }
+  if (nk < 0) return;
+  showStep(nav[nk], true);
+}
+function showCaption(text) {
+  const c = $('#caption');
+  c.textContent = text || ''; c.hidden = !text || !scrub;
+}
+function updateTimeline() {
+  const nav = navSteps(), bar = $('#timeline');
+  bar.hidden = !nav.length;
+  if (!nav.length) return;
+  const range = $('#tlRange');
+  range.max = String(nav.length - 1);
+  const k = scrub ? Math.max(0, nav.indexOf(scrub.i)) : nav.length - 1;
+  if (document.activeElement !== range) range.value = String(k);
+  $('#tlLabel').textContent = scrub ? `Step ${k + 1} / ${nav.length} · answer ${answerNo(scrub.i)}` : `${nav.length} steps · live`;
+  $('#tlLive').hidden = !scrub;
+  $('#tlPlay').textContent = scrub && scrub.playing ? '⏸' : '▶';
+  $('#tlPlay').title = scrub && scrub.playing ? 'Pause' : 'Play the lesson from this step, with narration';
+}
+$('#tlPrev').onclick = () => stepBy(-1);
+$('#tlNext').onclick = () => stepBy(1);
+$('#tlLive').onclick = () => exitScrub();
+$('#tlPlay').onclick = () => {
+  Voice.unlock();
+  const nav = navSteps(); if (!nav.length) return;
+  if (scrub && scrub.playing) { stopAll(); scrub.playing = false; updateTimeline(); return; }
+  if (!scrub) { replay(); return; }
+  playFrom(scrub.i);
+};
+let rangeTimer = null;
+$('#tlRange').addEventListener('input', e => {
+  const nav = navSteps(), k = Number(e.target.value);
+  clearTimeout(rangeTimer);
+  if (liveBusy()) return;
+  if (scrub) scrub.playing = false;
+  rangeTimer = setTimeout(() => showStep(nav[k], false), 40);
+});
 
 // ======================================================================
 // persistence: every lesson is a session, auto-saved to the server (sessions/<id>.json)
@@ -774,7 +975,8 @@ function updateEmpty() { $('#emptyHint').style.display = objs.size ? 'none' : ''
 const LS_CURRENT = 'wbt.current.v1';
 let saveTimer = null, serverTimer = null, sessionCreatedAt = null, dirty = false;
 function snapshot() {
-  return { lesson, camera, createdAt: sessionCreatedAt, chat: chat.slice(-300), objs: [...objs.values()].map(o => o.cmd) };
+  const liveObjs = scrub ? scrub.live.objs : [...objs.values()].map(o => o.cmd);
+  return { lesson, camera: scrub ? scrub.live.camera : camera, createdAt: sessionCreatedAt, chat: chat.slice(-300), objs: liveObjs, steps };
 }
 function saveSoon() {
   if (!lesson) return;
@@ -808,7 +1010,8 @@ function resetBoard() {
   objs.clear(); selection.clear(); updateEmpty(); drawSelection(); updateSelectionUI();
 }
 function applySession(d) {
-  stopAll(); resetBoard();
+  stopAll(); scrub = null; resetBoard();
+  steps = Array.isArray(d.steps) ? d.steps : (d.objs && d.objs.length ? [{ say: '', by: 'teacher', cmds: d.objs.map(c => ({ ...c, _placed: true })), t: 'base' }] : []);
   lesson = d.lesson; sessionCreatedAt = d.createdAt || new Date().toISOString();
   chat = Array.isArray(d.chat) ? d.chat : [];
   for (const raw of d.objs || []) {
@@ -818,7 +1021,7 @@ function applySession(d) {
   }
   if (d.camera && Number.isFinite(d.camera.scale)) { camera = { x: num(d.camera.x, 0), y: num(d.camera.y, 0), scale: clamp(d.camera.scale, 0.05, 12) }; applyCamera(); }
   else fit(false);
-  renderTitle(); renderChat(); updateEmpty();
+  renderTitle(); renderChat(); updateEmpty(); updateTimeline();
   saveNow();
 }
 async function fetchSession(id) {
@@ -849,6 +1052,7 @@ async function resumeSession(id) {
 }
 async function loadAll() {
   try { Object.assign(settings, JSON.parse(localStorage.getItem(LS_SET) || '{}')); } catch {}
+  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'kokoro', voice: 'af_bella', speed: 1, gpu: false };
   if (!settings.efforts || typeof settings.efforts !== 'object') settings.efforts = {};
   // migrate the single-board save from the first version
   try {
@@ -941,7 +1145,7 @@ function renderChips() {
   }
 }
 function updateSendBtn() {
-  const working = streaming || queueRunning || replaying || typers.size > 0;
+  const working = streaming || queueRunning || replaying || typers.size > 0 || Voice.speaking();
   sendBtn.textContent = working ? 'Stop' : 'Send';
   sendBtn.classList.toggle('stop', working);
 }
@@ -955,21 +1159,24 @@ $('#composer').addEventListener('submit', e => {
 });
 $('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(); chat = []; renderChat(); saveSoon(); };
 $('#selAsk').onclick = () => input.focus();
-$('#selErase').onclick = () => eraseIds([...selection], { gen }, true);
+$('#selErase').onclick = () => { if (!scrub) learnerErase([...selection]); };
+function learnerErase(ids) { recordEdit({ cmd: 'erase', ids: ids.slice() }); eraseIds(ids, { gen }, true); }
 $('#selClear').onclick = () => setSelection([]);
 
 // typewriter (~60 chars/s) — never blocks the pen
-function typeInto(turn, text) {
+function typeInto(turn, text, cps) {
   const add = (turn.text ? ' ' : '') + text;
   turn.text += add;
   turn.pendingType = (turn.pendingType || '') + add;
+  turn.cps = cps ? clamp(cps, 8, 120) : 60;   // with narration, type at the speaking rate
   if (turn.typing) return;
   turn.typing = true; typers.add(turn); updateSendBtn();
   const body = turn.el.querySelector('.body');
   if (turn.thinking) { body.textContent = ''; body.classList.remove('thinking'); turn.thinking = false; }
+  let acc = 0;
   const tick = () => {
     if (!turn.pendingType) { turn.typing = false; typers.delete(turn); updateSendBtn(); return; }
-    const n = Math.max(1, Math.round(60 * 0.033));
+    acc += turn.cps * 0.033; const n = Math.floor(acc); acc -= n;
     body.textContent += turn.pendingType.slice(0, n); turn.pendingType = turn.pendingType.slice(n);
     scrollChat(); turn.timer = setTimeout(tick, 33);
   };
@@ -983,6 +1190,8 @@ function finishTyping() {
 function stopAll() {
   gen++;
   queue.length = 0;
+  Voice.stop(); narrationDone = Promise.resolve();
+  if (scrub) scrub.playing = false;
   if (abortCtl) { abortCtl.abort(); abortCtl = null; }
   finishTyping();
   hideIcon(pen); hideIcon(eraser);
@@ -997,14 +1206,29 @@ async function runQueue() {
   queueRunning = true; updateSendBtn();
   while (queue.length) {
     const it = queue.shift();
-    if (it.say != null) { typeInto(it.turn, it.say); continue; }
+    if (it.say != null) {
+      recordSay(it.turn, it.say);
+      if (it.voice && Voice.enabled()) {
+        // one narrated sentence at a time: wait until the previous one (and the drawing after it) is done
+        await narrationDone;
+        if (it.run && it.run.gen !== gen) continue;
+        const r = await Voice.play(it.voice);
+        if (it.run && it.run.gen !== gen) continue;
+        typeInto(it.turn, it.say, r.duration ? it.say.length / r.duration : null);
+        narrationDone = r.done.then(() => sleep(250)); r.done.then(updateSendBtn);
+        updateSendBtn();
+      } else typeInto(it.turn, it.say);
+      continue;
+    }
     const run = it.run;
     if (it.turn.thinking) { const bd = it.turn.el.querySelector('.body'); bd.classList.remove('thinking'); bd.textContent = ''; it.turn.thinking = false; }
     const before = it.cmd.id;
     await execCommand(it.cmd, run, true);
+    if (run.gen === gen) recordCmd(it.turn, it.cmd);
     if (before) it.turn.drew.add(before);
     if (it.cmd.cmd === 'erase') it.cmd.ids.forEach(i => it.turn.drew.add('erased ' + i));
   }
+  await narrationDone;
   queueRunning = false; updateSendBtn();
 }
 
@@ -1031,6 +1255,7 @@ function boardSummary() {
       if (c.values) bits.push('values ' + JSON.stringify(c.values).slice(0, 80));
       if (c.cmd === 'arrow') bits.push(`from ${JSON.stringify(c.from)} to ${JSON.stringify(c.to)}`);
       if (c.cmd === 'highlight') bits.push(`on ${c.target}`);
+      if (c.cmd === 'flow') bits.push(`dots moving along ${c.on}`);
       bits.push(`box x${r(bb.x)} y${r(bb.y)} w${r(bb.width)} h${r(bb.height)}`);
       lines.push('- ' + bits.join(' · '));
     }
@@ -1069,11 +1294,16 @@ Board commands (every line has "cmd"):
 {"cmd":"update","id":"b1","label":"Decoder","color":"#d1382c"}   (redraw that object in place with merged fields)
 {"cmd":"move","id":"b1","x":400,"y":0}  or  {"cmd":"move","id":"b1","dx":50,"dy":0}   (slides it; attached arrows follow)
 {"cmd":"erase","ids":["a1","h1"]}  or  {"cmd":"erase","area":[x,y,w,h]}
+{"cmd":"flow","id":"fl1","on":"a1","color":"#1d6fb8","dots":3,"speed":2}   (dots that keep travelling along an arrow or line: data, signal, gradient or energy flowing)
+{"cmd":"animate","id":"v1","values":[0.1,0.9,0.0],"ms":1500}   (smoothly change an object's numbers, position, size, colour or a plot's fn/points in place: show a value changing over time)
+{"cmd":"pulse","id":"b1"}   (a brief bounce to point at an object while you talk about it)
 {"cmd":"clear"}   {"cmd":"wait","ms":600}
 A new object with an existing id replaces the old one. Use short unique ids.
 
 TEACHING RULES
 - ALWAYS teach on the board. Every answer, even to a short, casual or follow-up question, a definition or a yes/no, must draw or change something on the board (at least 4 board commands). The learner never has to ask you to draw. Never reply with say lines only.
+- Say lines are spoken aloud by a narrator while the pen draws, one say line at a time. Write them as natural speech, one or two short sentences each, with the words you would say ("w minus three, squared", not "(w−3)²"). Put the board commands that illustrate a sentence right after it, so each narrated idea has its own drawing.
+- Use motion only where it explains something: flow for things moving through a system, animate for a value or curve changing, pulse to point. At most 1-3 motion commands per answer; never decorative.
 - Start with a short say line and draw at once. Alternate: a say line, then the 1-4 commands it describes, then the next say line, and so on.
 - Keep earlier work and build on it: put new material in free space next to what it relates to, so the board grows. Start a new topic with a heading in fresh space.
 - Do not wipe by default. Erase or clear only when it helps (replace a wrong or outdated picture, show before/after, redo a crowded area) and say why.
@@ -1098,7 +1328,9 @@ function buildMessages(question, selIds) {
 // ======================================================================
 async function send(q) {
   if (!lesson) { openTopic(true); return; }
-  if (streaming || queueRunning || replaying) stopAll();
+  if (streaming || queueRunning || replaying || scrub) stopAll();
+  if (scrub) exitScrub();
+  Voice.unlock();
   $('#modelPop').hidden = true;
   const selIds = [...selection].filter(id => objs.has(id));
   const messages = buildMessages(q, selIds);
@@ -1106,7 +1338,7 @@ async function send(q) {
   chat.push(userMsg); bubble(userMsg);
   const am = { role: 'assistant', text: '', drew: [], meta: '' };
   chat.push(am);
-  const turn = { msg: am, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0 };
+  const turn = { msg: am, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36) };
   const body = turn.el.querySelector('.body'); body.classList.add('thinking');
   renderChips(); saveSoon();
 
@@ -1166,7 +1398,7 @@ async function send(q) {
       if (turn.thinking && !failed) { body.classList.remove('thinking'); body.textContent = am.drew.length ? '(drew on the board)' : '(no answer)'; turn.thinking = false; }
       renderChips(); saveSoon();
     };
-    const waitDone = () => { if (queueRunning || typers.size) setTimeout(waitDone, 200); else finalize(); };
+    const waitDone = () => { if (queueRunning || typers.size || Voice.speaking()) setTimeout(waitDone, 200); else finalize(); };
     finalize(); waitDone();
   }
 }
@@ -1191,7 +1423,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
-        if (it.say != null) enqueue({ say: str(it.say, 1200), turn });
+        if (it.say != null) { const t = str(it.say, 1200); enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null }); }
         if (it.cmd || it.type || it.op) {
           if (turn.cmds >= MAX_CMDS_PER_ANSWER) continue;
           const c = normalize(it); if (!c) continue;
@@ -1200,7 +1432,8 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       }
     } else {
       jsonBuf = null;
-      enqueue({ say: line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200), turn });
+      const t = line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200);
+      enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
     }
   };
 
@@ -1304,6 +1537,41 @@ $('#modelSelect').onchange = e => { settings.model = e.target.value; saveSetting
 document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e.target.closest('#modelPop') && !e.target.closest('#modelBtn')) $('#modelPop').hidden = true; });
 
 // ======================================================================
+// narration settings
+// ======================================================================
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); return { mode: v.mode || 'kokoro', voice: v.voice || 'af_bella', speed: v.speed || 1, gpu: !!v.gpu, lastMode: v.lastMode || 'kokoro' }; }
+function applyVoice() {
+  const v = voiceCfg();
+  Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, device: v.gpu ? 'webgpu' : 'wasm' });
+  $('#voiceMode').value = v.mode; $('#voiceName').value = v.voice; $('#voiceGpu').checked = v.gpu;
+  $('#voiceSpeed').value = String(v.speed); $('#voiceSpeedVal').textContent = v.speed.toFixed(2) + '×';
+  $('#kokoroRow').hidden = v.mode !== 'kokoro';
+  $('#muteBtn').textContent = v.mode === 'off' ? '🔇' : '🔊';
+  $('#muteBtn').setAttribute('aria-pressed', v.mode !== 'off');
+  renderVoiceStatus(Voice.status());
+}
+function setVoice(patch) { settings.voice = { ...voiceCfg(), ...patch }; saveSettings(); applyVoice(); }
+function renderVoiceStatus(st) {
+  const v = voiceCfg(), bar = $('#voiceBar');
+  const msg = v.mode !== 'kokoro' ? '' : st.state === 'loading' ? '🔊 ' + st.text : st.state === 'error' ? '🔊 ' + st.text + ' (using the browser voice instead)' : st.state === 'slow' && !v.gpu ? '🐢 ' + st.text : '';
+  bar.textContent = msg; bar.hidden = !msg;
+  $('#voiceStatus').textContent = v.mode === 'kokoro'
+    ? (st.state === 'ready' || st.state === 'slow' ? `Kokoro ready (${Voice.device() === 'webgpu' ? 'GPU' : 'CPU'}).` : st.text || 'Kokoro loads the first time it speaks.')
+    : v.mode === 'browser' ? 'Uses the voices built into your browser / OS.' : 'Narration is off; the teacher only types.';
+}
+Voice.onStatus(renderVoiceStatus);
+(() => {
+  const sel = $('#voiceName');
+  for (const [id, label] of Voice.VOICES) { const o = document.createElement('option'); o.value = id; o.textContent = label; sel.appendChild(o); }
+  $('#voiceMode').onchange = e => setVoice({ mode: e.target.value, lastMode: e.target.value === 'off' ? voiceCfg().lastMode : e.target.value });
+  sel.onchange = e => setVoice({ voice: e.target.value });
+  $('#voiceGpu').onchange = e => setVoice({ gpu: e.target.checked });
+  $('#voiceSpeed').oninput = e => setVoice({ speed: Number(e.target.value) });
+  $('#muteBtn').onclick = () => { const v = voiceCfg(); if (v.mode === 'off') setVoice({ mode: v.lastMode || 'kokoro' }); else { Voice.stop(); setVoice({ mode: 'off', lastMode: v.mode }); } };
+  document.addEventListener('pointerdown', () => Voice.unlock(), { capture: true });
+})();
+
+// ======================================================================
 // topic dialog
 // ======================================================================
 const dlg = $('#topicDlg');
@@ -1327,7 +1595,7 @@ $('#topicForm').addEventListener('submit', async e => {
   if (topicIsNew || !lesson) {
     // the current lesson is already auto-saved; start a fresh one
     if (lesson) { saveNow(); await saveToServer(); }
-    stopAll(); resetBoard(); chat = [];
+    stopAll(); if (scrub) exitScrub(); resetBoard(); chat = []; steps = []; updateTimeline();
     lesson = { ...next, plan: null, session: 'wbt-' + uuid() };
     sessionCreatedAt = new Date().toISOString();
     camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
@@ -1353,10 +1621,11 @@ function renderTitle() {
   const had = await loadAll();
   updateEmpty();
   $('#slowBtn').setAttribute('aria-pressed', !!settings.slow);
+  applyVoice(); updateTimeline();
   renderTitle(); renderChat(); applyCamera();
   await loadModels();
   if (!had) { const list = await listSessions(); if (list.length) openSessions(); else openTopic(true); }
   // test hook (used by the automated check only)
-  window.__wbt = { objs, camera: () => camera, execCommand: (raw, animate = true) => { const c = normalize(raw); return c && execCommand(c, { gen }, animate); }, selection, stopAll, send, lesson: () => lesson };
+  window.__wbt = { objs, camera: () => camera, execCommand: (raw, animate = true) => { const c = normalize(raw); return c && execCommand(c, { gen }, animate); }, selection, stopAll, send, lesson: () => lesson, steps: () => steps, scrub: () => scrub, showStep, stepBy, exitScrub };
 })();
 })();
