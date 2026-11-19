@@ -155,3 +155,4 @@ foreignObject .katex { font-size: 1em; }
 #penBar button.primary { background: #1d6fb8; color: #fff; border-color: #1d6fb8; font-weight: 600; }
 .msg.user img.thumb { display: block; max-width: 180px; max-height: 120px; margin-top: 6px; border-radius: 6px; background: #fff; }
 #modelPop { max-height: min(70vh, calc(100% - 60px)); overflow-y: auto; }
+#modelPop .linkish { border: 1px solid #d0d5db; background: #fff; border-radius: 8px; padding: 5px 10px; font-size: 12px; color: #444c56; }

@@ -7,7 +7,8 @@ window.Voice = (() => {
   'use strict';
   let cfg = { mode: 'kokoro', voice: 'af_bella', speed: 1, device: 'wasm' };
   let worker = null, workerReady = null, workerDevice = null, loadFailed = false;
-  let ctx = null, current = null, epoch = 0, speakingNow = false, reqId = 0, slowCount = 0;
+  let ctx = null, current = null, epoch = 0, speakingNow = false, reqId = 0, slowCount = 0, tooSlow = false;
+  const log = (...a) => { try { window.wbtLog && window.wbtLog('voice', ...a); } catch {} };
   const pending = new Map();      // id -> {resolve, reject}
   const cache = new Map();        // key -> Promise<AudioBuffer>
   const listeners = new Set();
@@ -52,7 +53,12 @@ window.Voice = (() => {
           if (m.type === 'audio') p.resolve(m); else p.reject(new Error(m.message));
         }
       };
-      worker.onerror = e => { loadFailed = true; setStatus('error', 'Voice worker error: ' + (e.message || 'unknown')); reject(new Error(e.message)); };
+      worker.onerror = e => {
+        loadFailed = true; log('worker error', e.message);
+        setStatus('error', 'Voice worker error: ' + (e.message || 'unknown'));
+        for (const [, p] of pending) p.reject(new Error('voice worker crashed'));
+        pending.clear(); reject(new Error(e.message));
+      };
     });
     worker.postMessage({ type: 'load', device: cfg.device });
     return workerReady;
@@ -72,7 +78,8 @@ window.Voice = (() => {
       const dur = m.audio.length / m.sr;
       if (m.genMs && dur > 0.8) {
         slowCount = m.genMs / 1000 > dur * 1.1 ? slowCount + 1 : Math.max(0, slowCount - 1);
-        if (slowCount >= 2 && workerDevice !== 'webgpu' && status.state !== 'slow') setStatus('slow', 'The voice is generating slower than it speaks on this computer, so the lesson will pause between sentences. For smooth narration, tick GPU in ⚙ (one-time 310 MB download).');
+        log('generated', dur.toFixed(1) + 's audio in', (m.genMs / 1000).toFixed(1) + 's');
+        if (slowCount >= 2 && workerDevice !== 'webgpu') markTooSlow();
       }
       const buf = c.createBuffer(1, m.audio.length, m.sr);
       buf.copyToChannel(m.audio, 0);
@@ -84,10 +91,22 @@ window.Voice = (() => {
     return p;
   }
 
+  // Kokoro slower than real time would stall the lesson: switch to the browser voice for now.
+  function markTooSlow() {
+    if (tooSlow) return;
+    tooSlow = true; log('kokoro too slow, using browser voice');
+    setStatus('slow', 'The natural voice is too slow in this browser, so the browser\u2019s built-in voice is speaking instead. For the Kokoro voice, tick GPU in \u2699 (one-time 310 MB download), or use Chrome.');
+  }
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), { timeout: true })), ms))]);
+
   // ---- public API ----
   function configure(next) {
     const old = cfg; cfg = { ...cfg, ...next };
-    if (old.device !== cfg.device && worker) { worker.terminate(); worker = null; workerReady = null; loadFailed = false; cache.clear(); }
+    if (old.device !== cfg.device && worker) {
+      worker.terminate(); worker = null; workerReady = null; loadFailed = false; cache.clear();
+      for (const [, p] of pending) p.reject(new Error('voice restarted')); pending.clear();
+    }
+    if (old.device !== cfg.device || old.mode !== cfg.mode) { tooSlow = false; slowCount = 0; }
     if (cfg.mode === 'kokoro') startWorker().catch(() => {});
     else setStatus('idle', '');
   }
@@ -97,7 +116,7 @@ window.Voice = (() => {
   function prepare(text) {
     const clean = speakable(text);
     const h = { text: clean, raw: text, audio: null };
-    if (!clean || cfg.mode !== 'kokoro' || loadFailed) return h;
+    if (!clean || cfg.mode !== 'kokoro' || loadFailed || tooSlow) return h;
     h.audio = synthKokoro(clean);
     h.audio.catch(() => {});
     return h;
@@ -116,6 +135,8 @@ window.Voice = (() => {
       const start = () => { if (started) return; started = true; resolveStart({ duration: text.length / (14 * u.rate), done }); };
       u.onstart = start;
       u.onend = u.onerror = () => { speakingNow = false; doneResolve(); start(); };
+      // some browsers drop onend: finish by an estimate so the lesson never stalls
+      setTimeout(() => { speakingNow = false; doneResolve(); }, (text.length / (11 * u.rate) + 4) * 1000);
       current = { stop: () => { speechSynthesis.cancel(); doneResolve(); } };
       speakingNow = true;
       if (myEpoch !== epoch) { speakingNow = false; doneResolve(); return start(); }
@@ -129,21 +150,33 @@ window.Voice = (() => {
     const myEpoch = epoch;
     const none = { duration: 0, done: Promise.resolve(), cancelled: true };
     if (!h || !h.text || cfg.mode === 'off') return none;
-    if (cfg.mode === 'browser' || (cfg.mode === 'kokoro' && (loadFailed || !h.audio))) {
-      if (cfg.mode === 'kokoro' && !loadFailed && !h.audio) h.audio = synthKokoro(h.text);
+    if (cfg.mode === 'browser' || (cfg.mode === 'kokoro' && (loadFailed || tooSlow || !h.audio))) {
+      if (cfg.mode === 'kokoro' && !loadFailed && !tooSlow && !h.audio) h.audio = synthKokoro(h.text);
       else return browserSpeak(h.text, myEpoch);
     }
     let buf;
-    try { buf = await h.audio; }
-    catch { return myEpoch === epoch ? browserSpeak(h.text, myEpoch) : none; }
+    // wait a bounded time for the audio: longer while the model is still downloading
+    const limit = status.state === 'loading' ? 90000 : Math.max(12000, h.text.length * 120);
+    const t0 = performance.now();
+    try { buf = await withTimeout(h.audio, limit); }
+    catch (e) {
+      log(e.timeout ? 'audio not ready after ' + limit + 'ms' : 'synthesis failed: ' + e.message);
+      if (e.timeout) markTooSlow();
+      return myEpoch === epoch ? browserSpeak(h.text, myEpoch) : none;
+    }
+    if (performance.now() - t0 > 8000 && status.state !== 'loading') slowCount++;
     if (myEpoch !== epoch) return none;
     const c = ensureCtx();
     const src = c.createBufferSource(); src.buffer = buf; src.connect(c.destination);
     let doneResolve; const done = new Promise(r => { doneResolve = r; });
-    src.onended = () => { if (current && current.src === src) { current = null; speakingNow = false; } doneResolve(); };
-    current = { src, stop: () => { try { src.stop(); } catch {} doneResolve(); } };
+    const finish = () => { if (current && current.src === src) { current = null; speakingNow = false; } doneResolve(); };
+    src.onended = finish;
+    current = { src, stop: () => { try { src.stop(); } catch {} speakingNow = false; doneResolve(); } };
     speakingNow = true;
+    if (c.state !== 'running') { c.resume().catch(() => {}); log('audio context was', c.state); }
     src.start();
+    // safety net: if the browser never reports the end (e.g. audio blocked), move on anyway
+    setTimeout(finish, (buf.duration + 1.5) * 1000);
     return { duration: buf.duration, done };
   }
 

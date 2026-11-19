@@ -10,6 +10,16 @@
 // constants & state
 // ======================================================================
 const $ = s => document.querySelector(s);
+// ring buffer of recent events; ⚙ → "Copy debug log" puts it on the clipboard
+const debugLog = [];
+window.wbtLog = (area, ...a) => {
+  const line = `${new Date().toISOString().slice(11, 23)} [${area}] ${a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ')}`.slice(0, 600);
+  debugLog.push(line); if (debugLog.length > 400) debugLog.shift();
+  if (/error|fail|stall|timeout|skip/i.test(line)) console.warn(line); else console.debug(line);
+};
+const dlog = (...a) => window.wbtLog('app', ...a);
+window.addEventListener('error', e => dlog('page error', e.message, (e.filename || '').split('/').pop() + ':' + e.lineno));
+window.addEventListener('unhandledrejection', e => dlog('unhandled rejection', String(e.reason && e.reason.stack || e.reason).slice(0, 300)));
 const NS = 'http://www.w3.org/2000/svg';
 const LS_SET = 'wbt.settings.v2';
 const MAX_OBJECTS = 400, MAX_CMDS_PER_ANSWER = 60;
@@ -557,10 +567,10 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
 // ======================================================================
 function tween(ms, fn, run, ease) {
   return new Promise(res => {
-    if (instantMode() || !run || run.gen !== gen || ms <= 0) { fn(1); return res(); }
+    if (instantMode() || !run || run.gen !== gen || ms <= 0 || document.hidden) { fn(1); return res(); }
     const t0 = performance.now();
     const step = now => {
-      if (run.gen !== gen) { fn(1); return res(); }
+      if (run.gen !== gen || document.hidden) { fn(1); return res(); }
       const t = clamp((now - t0) / ms, 0, 1);
       fn(ease ? ease(t) : t);
       if (t < 1) requestAnimationFrame(step); else res();
@@ -1490,14 +1500,18 @@ async function runQueue() {
   queueRunning = true; updateSendBtn();
   while (queue.length) {
     const it = queue.shift();
+    try {
     if (it.say != null) {
       recordSay(it.turn, it.say);
       if (it.voice && Voice.enabled()) {
         // one narrated sentence at a time: wait until the previous one (and the drawing after it) is done
-        await narrationDone;
+        const w0 = Date.now();
+        await Promise.race([narrationDone, sleep(45000)]);
+        if (Date.now() - w0 > 44000) dlog('narration wait timed out; continuing');
         if (it.run && it.run.gen !== gen) continue;
-        const r = await Voice.play(it.voice);
+        const r = await Promise.race([Voice.play(it.voice), sleep(100000).then(() => { dlog('voice.play timed out'); return { duration: 0, done: Promise.resolve() }; })]);
         if (it.run && it.run.gen !== gen) continue;
+        dlog('say', r.duration ? r.duration.toFixed(1) + 's' : 'no audio', JSON.stringify(it.say.slice(0, 50)));
         typeInto(it.turn, it.say, r.duration ? it.say.length / r.duration : null);
         narrationDone = r.done.then(() => sleep(250)); r.done.then(updateSendBtn);
         updateSendBtn();
@@ -1511,8 +1525,12 @@ async function runQueue() {
     if (run.gen === gen) recordCmd(it.turn, it.cmd);
     if (before) it.turn.drew.add(before);
     if (it.cmd.cmd === 'erase') it.cmd.ids.forEach(i => it.turn.drew.add('erased ' + i));
+    } catch (err) {
+      dlog('skipped a queue item after an error:', String(err && err.stack || err).slice(0, 300), JSON.stringify(it.cmd || { say: it.say }).slice(0, 200));
+      hideIcon(pen); hideIcon(eraser);
+    }
   }
-  await narrationDone;
+  await Promise.race([narrationDone, sleep(45000)]);
   queueRunning = false; updateSendBtn();
 }
 
@@ -1683,13 +1701,15 @@ async function send(q) {
     failed = true;
     if (err.name === 'AbortError' || myAbort.signal.aborted) { if (turn.thinking) { body.classList.remove('thinking'); body.textContent = '(stopped)'; turn.thinking = false; } }
     else {
-      if (turn.thinking && !turn.cmds) { turn.el.remove(); chat.splice(chat.indexOf(am), 1); }
       const code = err.code || 'network';
+      dlog('answer failed', code, err.message);
+      if (turn.thinking && !turn.cmds) { turn.el.remove(); chat.splice(chat.indexOf(am), 1); }
       const text = code === 'rate_limited' ? 'Rate limited by OpenCode Go. Wait a moment and ask again.'
         : code === 'thinking_budget' ? `${modelName(model)} used its whole token budget thinking and never wrote an answer. Pick a lower reasoning level (⚙ in the chat header) or another model, then ask again.`
         : code === 'not_granted' ? `The API key was rejected (${err.message}). Check OPENCODE_API_KEY in .env and restart the server.`
         : code === 'no_api_key' ? 'No API key on the server. Put OPENCODE_API_KEY in .env and restart.'
         : code === 'empty' ? `${modelName(model)} returned an empty answer. Try again, or pick another model.`
+        : code === 'stalled' ? `${modelName(model)} stopped responding mid-answer. What arrived is shown; ask again or pick another model.`
         : code === 'network' || err instanceof TypeError ? 'Cannot reach the local server. Is `npm start` still running?'
         : `Something went wrong (${code})${err.message ? ': ' + err.message : ''}`;
       const em = { role: 'error', text }; chat.push(em); bubble(em);
@@ -1698,14 +1718,15 @@ async function send(q) {
     clearInterval(thinkTimer);
     streaming = false; if (abortCtl === myAbort) abortCtl = null;
     updateSendBtn();
-    const finalize = () => {
+    const finalize = (final) => {
       am.text = turn.text.trim(); am.drew = [...turn.drew].slice(0, 80);
       am.meta = `${modelApplied || model || 'model'}${effort ? ' · ' + effort : ''} · ${Math.round((Date.now() - t0) / 1000)}s`;
       const meta = turn.el.querySelector('.meta'); if (meta) meta.textContent = am.meta;
-      if (turn.thinking && !failed) { body.classList.remove('thinking'); body.textContent = am.drew.length ? '(drew on the board)' : '(no answer)'; turn.thinking = false; }
+      if (final && turn.thinking && !failed) { body.classList.remove('thinking'); body.textContent = am.drew.length ? '(drew on the board)' : '(no answer)'; turn.thinking = false; }
       renderChips(); saveSoon();
     };
-    const waitDone = () => { if (queueRunning || typers.size || Voice.speaking()) setTimeout(waitDone, 200); else finalize(); };
+    const tEnd = Date.now();
+    const waitDone = () => { if ((queueRunning || typers.size || Voice.speaking()) && Date.now() - tEnd < 600000) setTimeout(waitDone, 200); else finalize(true); };
     finalize(); waitDone();
   }
 }
@@ -1713,19 +1734,32 @@ async function send(q) {
 // One streamed Chat Completions call. Say lines and board commands are queued as each line completes.
 async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning }) {
   let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, reasoned = 0;
+  // brace depth outside strings: >0 means the JSON object continues on the next line
+  const depthOf = t => { let d = 0, q = false, esc = false; for (const ch of t) { if (esc) { esc = false; continue; } if (ch === '\\') { esc = true; continue; } if (ch === '"') q = !q; else if (!q) { if (ch === '{' || ch === '[') d++; else if (ch === '}' || ch === ']') d--; } } return d; };
+  const tryParse = t => {
+    t = t.replace(/,\s*$/, '');
+    try { return JSON.parse(t); } catch {}
+    if (/}\s*,?\s*{/.test(t)) { try { return JSON.parse('[' + t.replace(/}\s*,?\s*{/g, '},{') + ']'); } catch {} } // {"say":..}{"cmd":..}
+    try { return JSON.parse(t.replace(/,\s*([}\]])/g, '$1')); } catch {}                                         // trailing commas
+    const m = t.match(/^\{\s*"say"\s*:\s*"(.*)"\s*\}?$/s); if (m) return { say: m[1].replace(/\\"/g, '"').replace(/\\n/g, ' ') }; // a say line with a bad escape
+    return undefined;
+  };
   const handleLine = rawLine => {
     let line = rawLine.trim();
     if (!line || /^```/.test(line)) return;
-    if (jsonBuf != null) { jsonBuf += '\n' + line; line = jsonBuf; }
+    if (jsonBuf != null) {
+      // a fresh JSON line while a broken one is buffered: drop the broken one
+      // (pretty-printed continuation lines never start with {"say"/{"cmd", so a line that does is a new object)
+      if (/^\{\s*"(say|cmd|plan|type|op)"/.test(line)) { dlog('dropped unparsable line', jsonBuf.slice(0, 160)); jsonBuf = null; }
+      else { jsonBuf += '\n' + line; line = jsonBuf; }
+    }
     if (line.startsWith('{') || line.startsWith('[')) {
-      let obj;
-      try { obj = JSON.parse(line.replace(/,\s*$/, '')); jsonBuf = null; }
-      catch {
-        // several objects glued on one line: {"say":..}{"cmd":..}
-        if (jsonBuf == null && /}\s*{/.test(line)) { try { obj = JSON.parse('[' + line.replace(/}\s*,?\s*{/g, '},{') + ']'); } catch {} }
-        if (!obj) { if (jsonBuf == null) jsonBuf = line; else if (jsonBuf.length > 6000) jsonBuf = null; return; }
-        jsonBuf = null;
+      let obj = tryParse(line);
+      if (obj === undefined) {
+        if (depthOf(line) > 0 && line.length < 8000) { jsonBuf = line; return; }  // continues on the next line
+        dlog('dropped unparsable line', line.slice(0, 160)); jsonBuf = null; return;
       }
+      jsonBuf = null;
       const items = Array.isArray(obj) ? obj : [obj];
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
@@ -1754,10 +1788,20 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   }
   modelApplied = res.headers.get('X-Model');
   const reader = res.body.getReader(), dec = new TextDecoder();
-  let sse = '';
+  let sse = '', bytes = 0;
+  const t0 = Date.now();
+  dlog('stream start', model, effort || 'auto');
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    // no bytes for 120 s means the model stalled (reasoning models still stream while thinking)
+    let stallTimer;
+    const stall = new Promise((_, rej) => { stallTimer = setTimeout(() => rej(Object.assign(new Error('The model stopped sending anything for 2 minutes.'), { code: 'stalled' })), window.__wbtStallMs || 120000); });
+    let chunk;
+    try { chunk = await Promise.race([reader.read(), stall]); }
+    catch (e) { try { reader.cancel().catch(() => {}); } catch {} if (e.code === 'stalled') dlog('stream stalled after', bytes, 'bytes'); throw e; }
+    finally { clearTimeout(stallTimer); }
+    const { done, value } = chunk;
+    if (done) { dlog('stream end', bytes, 'bytes in', ((Date.now() - t0) / 1000).toFixed(1) + 's', 'finish', finish || '-'); break; }
+    bytes += value.length;
     sse += dec.decode(value, { stream: true });
     let nl;
     while ((nl = sse.indexOf('\n')) >= 0) {
@@ -1839,6 +1883,14 @@ async function loadModels() {
   sel.value = settings.model || '';
   renderEffort(); renderModelLabel();
 }
+$('#copyLogBtn').onclick = async () => {
+  const info = [`Whiteboard Teacher debug log`, `browser: ${navigator.userAgent}`, `isolated: ${self.crossOriginIsolated}, cores: ${navigator.hardwareConcurrency}, webgpu: ${!!navigator.gpu}`,
+    `model: ${settings.model} · ${currentEffort()} · voice: ${JSON.stringify(voiceCfg())} · voice status: ${JSON.stringify(Voice.status())} (${Voice.device() || '-'})`,
+    `queue: ${queue.length} waiting, running=${queueRunning}, streaming=${streaming}, speaking=${Voice.speaking()}`, '', ...debugLog].join('\n');
+  try { await navigator.clipboard.writeText(info); $('#copyLogBtn').textContent = 'Copied ✓'; }
+  catch { const w = window.open('', '_blank'); if (w) { w.document.body.innerText = info; } }
+  setTimeout(() => { $('#copyLogBtn').textContent = 'Copy debug log'; }, 2000);
+};
 $('#modelBtn').onclick = e => { e.stopPropagation(); $('#modelPop').hidden = !$('#modelPop').hidden; };
 $('#modelSelect').onchange = e => { settings.model = e.target.value; saveSettings(); renderEffort(); renderModelLabel(); };
 document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e.target.closest('#modelPop') && !e.target.closest('#modelBtn')) $('#modelPop').hidden = true; });
