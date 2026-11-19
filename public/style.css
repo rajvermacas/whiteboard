@@ -142,3 +142,16 @@ body.scrubbing #boardWrap { box-shadow: inset 0 0 0 3px #f5c6c0; }
 #voiceBar[hidden] { display: none; }
 #muteBtn[aria-pressed="false"] { opacity: .6; }
 #modelPop .vrow[hidden] { display: none; }
+.mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+foreignObject .katex { font-size: 1em; }
+
+/* ---------- learner pen ---------- */
+#board.penMode { cursor: crosshair; }
+#penBar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; align-items: center; background: rgba(255,255,255,.97); border: 1px solid #e3e6ea; border-radius: 999px; padding: 5px 8px; box-shadow: 0 4px 18px rgba(0,0,0,.08); z-index: 4; }
+#penBar[hidden] { display: none; }
+#penBar .sw { width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; background: var(--c); box-shadow: 0 0 0 1px #d0d5db; padding: 0; }
+#penBar .sw.on { box-shadow: 0 0 0 2px var(--c); }
+#penBar button:not(.sw) { border: 1px solid #d0d5db; background: #fff; border-radius: 999px; padding: 4px 11px; font-size: 13px; white-space: nowrap; }
+#penBar button.primary { background: #1d6fb8; color: #fff; border-color: #1d6fb8; font-weight: 600; }
+.msg.user img.thumb { display: block; max-width: 180px; max-height: 120px; margin-top: 6px; border-radius: 6px; background: #fff; }
+#modelPop { max-height: min(70vh, calc(100% - 60px)); overflow-y: auto; }

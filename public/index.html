@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -27,6 +29,7 @@
         <button id="zoomPct" title="Reset zoom">100%</button>
         <button id="zoomIn" title="Zoom in">+</button>
       </span>
+      <button id="penBtn" title="Draw on the board yourself" aria-pressed="false">✏️ <span class="lbl">Draw</span></button>
       <button id="muteBtn" title="Narration on/off">🔊</button>
       <button id="slowBtn" title="Slow pen" aria-pressed="false">🐢</button>
       <button id="fsBtn" title="Full screen">⛶</button>
@@ -45,6 +48,15 @@
         <g id="layerObjects"></g>
         <g id="layerOverlay"></g>
       </svg>
+      <div id="penBar" hidden>
+        <button class="sw on" data-c="#d1382c" style="--c:#d1382c" title="Red"></button>
+        <button class="sw" data-c="#1f2328" style="--c:#1f2328" title="Black"></button>
+        <button class="sw" data-c="#1d6fb8" style="--c:#1d6fb8" title="Blue"></button>
+        <button class="sw" data-c="#2a8a3e" style="--c:#2a8a3e" title="Green"></button>
+        <button id="penUndo" title="Undo last stroke">↶</button>
+        <button id="penCheck" class="primary">Check my drawing</button>
+        <button id="penDone">Done</button>
+      </div>
       <div id="caption" hidden></div>
       <div id="timeline" hidden>
         <button id="tlPrev" title="Previous step (←)">‹</button>

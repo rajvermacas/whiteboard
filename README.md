@@ -27,6 +27,35 @@ browser (public/)  ──POST /api/chat──▶  server.js  ──stream──�
 * Each request gets a fresh prompt containing the lesson, the colour code, a summary of the board (bounds, free space, up to 70 objects), your selection and the last 8 turns.
 * Generated content is never executed: numbers are clamped, text is inserted as text, and lists are capped (60 commands per answer, 400 objects on the board).
 
+## What the teacher can do
+
+**🔊 Narration.** The teacher speaks each line aloud with **Kokoro (voice af_bella)**, while the pen draws that line's picture. The chat text types at the speaking pace, and the next sentence waits until the current one is spoken and drawn. Kokoro runs entirely in your browser. The model downloads once (~90 MB on CPU, or ~310 MB with the faster GPU option) and is then cached. ⚙ → Narration lets you pick the voice (Bella, Heart, Nicole, Michael, Emma, George…), the speed, CPU or GPU, the browser's built-in voice, or off. 🔊 in the toolbar mutes. If your CPU generates speech slower than it speaks, a hint suggests turning on GPU.
+
+**⏯ Steps and timeline.** Every spoken line, plus the drawing that goes with it, is recorded as a step. Your own moves, erases and sketches are recorded too. The bar at the bottom of the board lets you:
+- step back and forward with ‹ › or the ← → keys,
+- drag the slider to any step,
+- press ▶ to replay the lesson from that step with narration,
+- press **Live** to return to the current board.
+
+**Replay** plays the whole lesson. Steps are saved with the session.
+
+**🎞 Motion.** Movement is used only where it explains something:
+- `flow`: dots travelling along an arrow or line (data, signal, gradient),
+- `animate`: smoothly change numbers, positions, sizes, colours or a plot's curve (e.g. sigmoid → tanh),
+- `pulse`: a brief bounce to point at something.
+
+**∑ Maths and code.** `math` typesets LaTeX with KaTeX. `code` draws a syntax-highlighted code block with line numbers.
+
+**🧩 Components.** You give the structure and the app lays it out without overlaps:
+- `network`: neural-network layers,
+- `tree`,
+- `graph`: flowcharts and pipelines, laid out in columns, in a circle or in a grid; feedback loops are drawn as curves,
+- `numberline`,
+- `timeline`,
+- `table`.
+
+**✏️ Draw back.** Press **Draw** to sketch on the board yourself (4 colours, undo). Then press **Check my drawing**, or just ask a question. A picture of your sketch and the drawings around it is sent to the model, and the teacher says what's right or wrong and draws the correction next to your sketch. If the selected model can't see images, DeepSeek V4.1 Flash checks it for that question.
+
 ## Using the board
 
 | Action | How |
@@ -38,6 +67,8 @@ browser (public/)  ──POST /api/chat──▶  server.js  ──stream──�
 | Erase | Delete/Backspace, or **Erase** in the "Selected" line |
 | Ask about it | select, then use the chips or type ("What is X?", "Change X to another example", Hinglish…) |
 | Replay / Wipe / Fit / Full screen | toolbar · 🐢 slows the pen |
+| Steps | timeline bar at the bottom · ← → keys · ▶ replays with narration · **Live** returns |
+| Draw yourself | **✏️ Draw** → sketch → **Check my drawing** |
 
 **Model picker** (⚙ in the chat header): every model on your OpenCode Go plan, grouped as Featured, Free and All others, with the exact name and id from the API. Models whose native format isn't Chat Completions (Muse Spark, GPT, Grok, Claude, Qwen, MiniMax M3, Gemini) work too, because OpenCode translates the request. The **reasoning** buttons show only the levels that model supports (None, Minimal, Low, Medium, High, X-High, **Max**), plus Auto (the model's own default). The choice is remembered per model. Lower levels start drawing sooner. Free models with no adjustable level (LongCat, Iceman, MiMo, Kimi Code) can take 1–2 minutes to think before they draw.
 
@@ -64,6 +95,8 @@ There's no save button. Every lesson (topic, board, camera position and chat) is
 server.js          Node server + OpenCode Go proxy (no deps)
 public/index.html  layout
 public/style.css   styles
-public/app.js      board engine, pen animation, camera, chat, prompt, sessions
+public/app.js      board engine, pen animation, components, motion, timeline, chat, prompt, sessions
+public/voice.js    narration engine (Kokoro / browser voice), paced with the pen
+public/tts-worker.js  Kokoro TTS in a Web Worker
 sessions/          auto-saved lessons (created on first use, git-ignored)
 ```

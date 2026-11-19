@@ -90,12 +90,24 @@ async function getModels() {
         output: (m.limit && m.limit.output) || 32000,
         api: m.recommended_api || '',
         free: /free/i.test(m.id) || /free/i.test(m.name || ''),
+        vision: !!(m.modalities && Array.isArray(m.modalities.input) && m.modalities.input.some(x => /image/.test(x))),
         featured: !!(m.go && m.go.featured),
       };
     });
   modelCache = { models: list, default: list.some(m => m.id === DEFAULT_MODEL) ? DEFAULT_MODEL : (list[0] && list[0].id) };
   modelCacheAt = Date.now();
   return modelCache;
+}
+
+// text, or (for a learner sketch) an array of text and image_url parts
+function cleanContent(c) {
+  if (!Array.isArray(c)) return String(c || '');
+  const parts = [];
+  for (const p of c.slice(0, 6)) {
+    if (p && p.type === 'text') parts.push({ type: 'text', text: String(p.text || '') });
+    else if (p && p.type === 'image_url' && p.image_url && /^data:image\/(png|jpeg|webp);base64,/.test(String(p.image_url.url || ''))) parts.push({ type: 'image_url', image_url: { url: String(p.image_url.url) } });
+  }
+  return parts.length ? parts : '';
 }
 
 async function maxTokensFor(model) {
@@ -106,14 +118,14 @@ async function maxTokensFor(model) {
 // ---------- /api/chat : streaming proxy ----------
 async function handleChat(req, res) {
   let body;
-  try { body = JSON.parse(await readBody(req)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
+  try { body = JSON.parse(await readBody(req, 12_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
   if (!API_KEY) return sendJSON(res, 500, { error: { code: 'no_api_key', message: 'OPENCODE_API_KEY is not set on the server (.env).' } });
 
   const messages = Array.isArray(body.messages) ? body.messages.slice(-40) : [];
   if (!messages.length) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'No messages' } });
   const payload = {
     model: typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL,
-    messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : m.role === 'system' ? 'system' : 'user', content: String(m.content || '') })),
+    messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : m.role === 'system' ? 'system' : 'user', content: cleanContent(m.content) })),
     stream: true,
     // Reasoning models can spend thousands of tokens thinking before they write; leave room for both.
     max_tokens: await maxTokensFor(body.model),

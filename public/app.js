@@ -14,9 +14,9 @@ const NS = 'http://www.w3.org/2000/svg';
 const LS_SET = 'wbt.settings.v2';
 const MAX_OBJECTS = 400, MAX_CMDS_PER_ANSWER = 60;
 const PALETTE = { blue: '#1d6fb8', amber: '#c48a00', yellow: '#c48a00', green: '#2a8a3e', red: '#d1382c', purple: '#7a48c2', orange: '#e07800', black: '#1f2328', grey: '#7d848c', gray: '#7d848c' };
-const BOXLIKE = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot']);
-const TYPES = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'line', 'arrow', 'highlight', 'flow', 'update', 'animate', 'pulse', 'move', 'erase', 'clear', 'wait']);
-const ALIASES = { text: 'write', label: 'write', rect: 'box', rectangle: 'box', ellipse: 'circle', path: 'line', table: 'matrix', chart: 'bars', graph: 'plot', circle_highlight: 'highlight', delete: 'erase', remove: 'erase', wipe: 'clear' };
+const BOXLIKE = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table']);
+const TYPES = new Set(['math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table', 'ink', 'write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'line', 'arrow', 'highlight', 'flow', 'update', 'animate', 'pulse', 'move', 'erase', 'clear', 'wait']);
+const ALIASES = { latex: 'math', equation: 'math', formula: 'math', nn: 'network', neuralnet: 'network', flowchart: 'graph', diagram: 'graph', 'number_line': 'numberline', numline: 'numberline', grid: 'table', text: 'write', label: 'write', rect: 'box', rectangle: 'box', ellipse: 'circle', path: 'line', chart: 'bars', circle_highlight: 'highlight', delete: 'erase', remove: 'erase', wipe: 'clear' };
 
 const svg = $('#board'), layerObj = $('#layerObjects'), layerOv = $('#layerOverlay'), defs = svg.querySelector('defs'), grid = $('#grid');
 const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -135,6 +135,23 @@ function samplePlot(c) {
   return { pts, fn };
 }
 
+function niceStep(raw) { const p = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1e-9)))), m = raw / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
+const col_ = v => col(v, '#1d6fb8');
+const CODE_KW = /^(?:def|class|return|if|elif|else|for|while|in|not|and|or|import|from|as|with|try|except|finally|raise|lambda|yield|pass|break|continue|function|const|let|var|new|this|async|await|of|switch|case|default|public|private|static|void|int|float|double|bool|boolean|string|struct|fn|pub|impl|use|mod|match|SELECT|FROM|WHERE|JOIN|GROUP|BY|ORDER|INSERT|UPDATE|DELETE|None|True|False|null|true|false|undefined)$/;
+function highlightCode(line, lang) {
+  const out = [], re = /(#.*$|\/\/.*$|--.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`[^`]*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][\w]*)|(\s+)|([^\sA-Za-z_\d"'`#]+)/g;
+  let m;
+  while ((m = re.exec(line))) {
+    if (m[1]) out.push([m[1], '#7d848c']);
+    else if (m[2]) out.push([m[2], '#2a8a3e']);
+    else if (m[3]) out.push([m[3], '#c48a00']);
+    else if (m[4]) out.push([m[4], CODE_KW.test(m[4]) ? '#7a48c2' : /^[A-Z]/.test(m[4]) ? '#1d6fb8' : '#1f2328']);
+    else out.push([m[0], '#1f2328']);
+    if (m[0] === '') re.lastIndex++;
+  }
+  return out.length ? out : [[' ', '#1f2328']];
+}
+
 const builders = {
   write(c, g, parts) {
     addText(g, parts, c.x, c.y, c.text, { size: c.size, color: c.color, anchor: c.align === 'center' ? 'middle' : 'start', font: c.font });
@@ -237,6 +254,183 @@ const builders = {
       addText(g, parts, mx + nx * 14, my + ny * 14, c.label, { size: 20, color: c.color, anchor: Math.abs(dy) > Math.abs(dx) ? 'start' : 'middle' });
     }
   },
+  // ---- feature 4: real maths (KaTeX) and code blocks ----
+  math(c, g, parts) {
+    const size = c.size;
+    let w, h, node;
+    if (window.katex) {
+      const holder = document.createElement('div');
+      holder.style.cssText = `position:absolute;left:-9999px;top:0;font-size:${size}px;color:${c.color};white-space:nowrap;`;
+      try { window.katex.render(c.tex, holder, { throwOnError: false, displayMode: false, output: 'html' }); } catch { holder.textContent = c.tex; }
+      document.body.appendChild(holder); const r = holder.getBoundingClientRect(); w = Math.ceil(r.width) + 8; h = Math.ceil(r.height) + 8; holder.remove();
+      const fo = el('foreignObject', { x: c.x, y: c.y - h * 0.72, width: w, height: h }, g);
+      node = document.createElement('div'); node.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+      node.style.cssText = `font-size:${size}px;color:${c.color};white-space:nowrap;padding:4px;line-height:1.2;`;
+      try { window.katex.render(c.tex, node, { throwOnError: false, displayMode: false, output: 'html' }); } catch { node.textContent = c.tex; }
+      fo.appendChild(node);
+      parts.push({ el: fo, kind: 'text', chars: Math.min(50, c.tex.length), color: c.color });
+    } else addText(g, parts, c.x, c.y, c.tex.replace(/\\[a-zA-Z]+/g, m => ({ '\\alpha': 'α', '\\beta': 'β', '\\sigma': 'σ', '\\theta': 'θ', '\\eta': 'η', '\\lambda': 'λ', '\\sum': 'Σ', '\\cdot': '·', '\\times': '×', '\\nabla': '∇', '\\partial': '∂', '\\sqrt': '√', '\\pi': 'π' })[m] || '').replace(/[{}]/g, ''), { size, color: c.color, font: 'math' });
+    if (c.label) addText(g, parts, c.x, c.y - (h ? h * 0.72 : size) - 10, c.label, { size: 20, color: '#7d848c' });
+  },
+  code(c, g, parts, r) {
+    const size = c.size, lh = Math.round(size * 1.45), lines = c.code.split('\n');
+    const t = el('text', { 'font-size': size, class: 'mono', x: 0, y: 0, opacity: 0 }, g);
+    let maxW = 0; for (const ln of lines) { t.textContent = ln || ' '; maxW = Math.max(maxW, t.getComputedTextLength()); } t.remove();
+    const pad = 14, top = c.title ? 30 : 0, w = Math.max(160, maxW + pad * 2 + 30), h = lines.length * lh + pad * 2 + top;
+    addFill(g, parts, `M${c.x} ${c.y} h${w} v${h} h${-w} Z`, '#f6f8fa', 1);
+    addStroke(g, parts, roughRect(c.x, c.y, w, h, r), '#7d848c', { width: 1.6 });
+    if (c.title) addText(g, parts, c.x + pad, c.y + 22, c.title, { size: 18, color: '#5b636b' });
+    lines.forEach((ln, i) => {
+      const y = c.y + top + pad + lh * i + size;
+      const num = el('text', { x: c.x + pad + 14, y, 'font-size': size * 0.8, class: 'mono', fill: '#b3b9c0', 'text-anchor': 'end' }, g); num.textContent = String(i + 1);
+      parts.push({ el: num, kind: 'fade' });
+      const tx = el('text', { x: c.x + pad + 26, y, 'font-size': size, class: 'mono', 'xml:space': 'preserve' }, g);
+      for (const [tok, color] of highlightCode(ln, c.lang)) { const sp = el('tspan', { fill: color }, tx); sp.textContent = tok; }
+      parts.push({ el: tx, kind: 'text', chars: Math.min(ln.length, 40), color: '#1f2328' });
+    });
+  },
+
+  // ---- feature 5: components the app lays out from structure ----
+  network(c, g, parts, r) {
+    const L = c.layers, maxN = Math.max(...L.map(n => Math.min(n, 8))), gapX = c.gap || 150, gapY = 54, R = 17;
+    const H = (maxN - 1) * gapY, pos = [];
+    L.forEach((n, li) => {
+      const shown = Math.min(n, 8), col = [];
+      for (let k = 0; k < shown; k++) col.push([c.x + li * gapX, c.y + 40 + H / 2 - (shown - 1) * gapY / 2 + k * gapY]);
+      pos.push(col);
+    });
+    let d = '';
+    for (let li = 0; li + 1 < pos.length; li++) for (const a of pos[li]) for (const b of pos[li + 1]) d += `M${f1(a[0] + R)} ${f1(a[1])} L${f1(b[0] - R)} ${f1(b[1])} `;
+    if (d) { const p = el('path', { d, fill: 'none', stroke: '#9aa1a9', 'stroke-width': 1.1, 'stroke-opacity': 0.55 }, g); parts.push({ el: p, kind: 'fade' }); }
+    pos.forEach((col, li) => {
+      const colr = li === c.active ? '#e07800' : li === 0 ? c.color : li === pos.length - 1 ? '#2a8a3e' : '#7a48c2';
+      const fills = col.map(([x, y]) => `M${x - R} ${y} a${R} ${R} 0 1 0 ${2 * R} 0 a${R} ${R} 0 1 0 ${-2 * R} 0`).join(' ');
+      addFill(g, parts, fills, colr, 0.16);
+      addStroke(g, parts, col.map(([x, y]) => roughEllipse(x, y, R, R, r, 1.02)).join(' '), colr, { width: 2.4 });
+      if (L[li] > 8) addText(g, parts, col[0][0], col[col.length - 1][1] + 34, `… ${L[li]}`, { size: 18, color: '#7d848c', anchor: 'middle' });
+      if (c.labels && c.labels[li]) addText(g, parts, col[0][0], c.y + 16, str(c.labels[li], 24), { size: 20, color: colr, anchor: 'middle', weight: 700 });
+      (c.nodeLabels && c.nodeLabels[li] || []).slice(0, col.length).forEach((t, k) => addText(g, parts, col[k][0], col[k][1] + 6, str(t, 4), { size: 15, anchor: 'middle' }));
+    });
+  },
+  tree(c, g, parts, r) {
+    const levelGap = 96, nodeGap = 26, sizeT = 20;
+    const nodes = [];
+    const walk = (n, depth) => {
+      const node = { label: str(n.label ?? n.name ?? n, 30), depth, kids: [] };
+      nodes.push(node);
+      if (depth < 6 && nodes.length < 40) for (const ch of (Array.isArray(n.children) ? n.children : []).slice(0, 8)) node.kids.push(walk(ch, depth + 1));
+      return node;
+    };
+    const root = walk(c.root, 0);
+    nodes.forEach(n => { n.w = Math.max(70, measureW(g, n.label, sizeT) + 26); });
+    const span = n => n.kids.length ? Math.max(n.w, n.kids.reduce((s2, k) => s2 + span(k), 0) + nodeGap * (n.kids.length - 1)) : n.w;
+    const place = (n, left) => {
+      const sp = span(n); n.cx = left + sp / 2; n.cy = c.y + n.depth * levelGap + 22;
+      let x = left + (sp - (n.kids.reduce((s2, k) => s2 + span(k), 0) + nodeGap * Math.max(0, n.kids.length - 1))) / 2;
+      for (const k of n.kids) { place(k, x); x += span(k) + nodeGap; }
+    };
+    place(root, c.x);
+    let d = ''; for (const n of nodes) for (const k of n.kids) d += roughSeg(n.cx, n.cy + 22, k.cx, k.cy - 22, r, 0.6) + ' ';
+    if (d) addStroke(g, parts, d, '#7d848c', { width: 2 });
+    for (const n of nodes) {
+      const col = n.depth === 0 ? c.color : n.kids.length ? '#7a48c2' : '#2a8a3e';
+      addFill(g, parts, `M${n.cx - n.w / 2} ${n.cy - 22} h${n.w} v44 h${-n.w} Z`, col, 0.12);
+      addStroke(g, parts, roughRect(n.cx - n.w / 2, n.cy - 22, n.w, 44, r), col, { width: 2.2 });
+      addText(g, parts, n.cx, n.cy + 7, n.label, { size: sizeT, color: col, anchor: 'middle', weight: 700 });
+    }
+  },
+  graph(c, g, parts, r) {
+    const sizeT = 20, ids = c.nodes.map(n => n.id), byId = new Map();
+    c.nodes.forEach(n => { n.w = Math.max(64, measureW(g, n.label, sizeT) + 26); byId.set(n.id, n); });
+    const N = c.nodes.length;
+    if (c.layout === 'circle') {
+      const R = Math.max(110, N * 34);
+      c.nodes.forEach((n, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / N; n.cx = c.x + R + Math.cos(a) * R; n.cy = c.y + R + Math.sin(a) * R; });
+    } else if (c.layout === 'grid') {
+      const cols = Math.ceil(Math.sqrt(N)), cw = Math.max(...c.nodes.map(n => n.w)) + 70;
+      c.nodes.forEach((n, i) => { n.cx = c.x + (i % cols) * cw + cw / 2; n.cy = c.y + Math.floor(i / cols) * 110 + 30; });
+    } else { // layered: longest-path layering, left to right (good for flows and DAGs)
+      // drop back edges (found by DFS) so cycles don't scramble the columns, then longest-path layering
+      const out = new Map(ids.map(i => [i, []])); for (const [a, b] of c.edges) if (out.has(a) && out.has(b) && a !== b) out.get(a).push(b);
+      const state = new Map(), forward = [];
+      const dfs = u => { state.set(u, 1); for (const v of out.get(u)) { if (state.get(v) === 1) continue; forward.push([u, v]); if (!state.get(v)) dfs(v); } state.set(u, 2); };
+      for (const i of ids) if (!state.get(i)) dfs(i);
+      const level = new Map(ids.map(i => [i, 0]));
+      for (let it = 0; it < N; it++) for (const [a, b] of forward) if (level.get(b) < level.get(a) + 1) level.set(b, level.get(a) + 1);
+      const cols = []; for (const n of c.nodes) { const l = level.get(n.id); (cols[l] = cols[l] || []).push(n); }
+      let x = c.x; const tallest = Math.max(...cols.filter(Boolean).map(cc => cc.length));
+      cols.forEach(col => { if (!col) return; const cw = Math.max(...col.map(n => n.w)); col.forEach((n, k) => { n.cx = x + cw / 2; n.cy = c.y + 30 + (k + (tallest - col.length) / 2) * 100; }); x += cw + 110; });
+    }
+    let d = '', heads = '';
+    const edgeLabels = [], pairCount = new Map();
+    for (const [a, b, lab] of c.edges) {
+      const A = byId.get(a), B = byId.get(b); if (!A || !B || A === B) continue;
+      const bx = n => ({ x: n.cx - n.w / 2, y: n.cy - 22, width: n.w, height: 44 });
+      // curve edges that would cut through other nodes: back edges, long skips, and the 2nd edge of a pair
+      const key = [a, b].sort().join('\u0000'), dup = pairCount.get(key) || 0; pairCount.set(key, dup + 1);
+      const between = c.nodes.some(n => n !== A && n !== B && Math.abs(n.cy - A.cy) < 30 && Math.abs(n.cy - B.cy) < 30 && (n.cx - A.cx) * (n.cx - B.cx) < 0);
+      const back = c.layout === 'layered' && B.cx <= A.cx;
+      const bend = between || back || dup ? (back ? 1 : -1) * (60 + Math.hypot(B.cx - A.cx, B.cy - A.cy) * 0.18) * (dup ? -1 : 1) : 0;
+      const mx = (A.cx + B.cx) / 2, my = (A.cy + B.cy) / 2, len = Math.hypot(B.cx - A.cx, B.cy - A.cy) || 1;
+      const ctl = [mx - (B.cy - A.cy) / len * bend, my + (B.cx - A.cx) / len * bend];
+      const p1 = edgePoint(bx(A), bend ? ctl : [B.cx, B.cy]), p2 = edgePoint(bx(B), bend ? ctl : [A.cx, A.cy]);
+      d += bend ? `M${f1(p1[0])} ${f1(p1[1])} Q${f1(ctl[0])} ${f1(ctl[1])} ${f1(p2[0])} ${f1(p2[1])} ` : `M${f1(p1[0])} ${f1(p1[1])} L${f1(p2[0])} ${f1(p2[1])} `;
+      const from = bend ? ctl : p1, ang = Math.atan2(p2[1] - from[1], p2[0] - from[0]);
+      if (c.directed) heads += `M${f1(p2[0] - 13 * Math.cos(ang - 0.45))} ${f1(p2[1] - 13 * Math.sin(ang - 0.45))} L${f1(p2[0])} ${f1(p2[1])} L${f1(p2[0] - 13 * Math.cos(ang + 0.45))} ${f1(p2[1] - 13 * Math.sin(ang + 0.45))} `;
+      if (lab) { const lx = bend ? 0.25 * p1[0] + 0.5 * ctl[0] + 0.25 * p2[0] : (p1[0] + p2[0]) / 2, ly = bend ? 0.25 * p1[1] + 0.5 * ctl[1] + 0.25 * p2[1] : (p1[1] + p2[1]) / 2; edgeLabels.push([lx, ly - 8, str(lab, 20)]); }
+    }
+    if (d) addStroke(g, parts, d + heads, '#5b636b', { width: 2.2 });
+    for (const [x, y, t] of edgeLabels) addText(g, parts, x, y, t, { size: 17, color: '#7d848c', anchor: 'middle' });
+    for (const n of c.nodes) {
+      const col = n.color ? col_(n.color) : c.color;
+      addFill(g, parts, `M${n.cx - n.w / 2} ${n.cy - 22} h${n.w} v44 h${-n.w} Z`, col, 0.12);
+      addStroke(g, parts, roughRect(n.cx - n.w / 2, n.cy - 22, n.w, 44, r), col, { width: 2.2 });
+      addText(g, parts, n.cx, n.cy + 7, n.label, { size: sizeT, color: col, anchor: 'middle', weight: 700 });
+    }
+  },
+  numberline(c, g, parts, r) {
+    const w = c.w, a = c.from, b = c.to, X = v => c.x + (v - a) / (b - a || 1) * w, y = c.y;
+    let d = roughSeg(c.x - 10, y, c.x + w + 14, y, r) + ` M${c.x + w + 4} ${y - 7} L${c.x + w + 14} ${y} L${c.x + w + 4} ${y + 7}`;
+    const step = c.step || niceStep((b - a) / 10), ticks = [];
+    for (let v = Math.ceil(a / step) * step, k = 0; v <= b + 1e-9 && k < 60; v += step, k++) ticks.push(+v.toFixed(6));
+    for (const v of ticks) d += ` M${f1(X(v))} ${y - 7} L${f1(X(v))} ${y + 7}`;
+    addStroke(g, parts, d, '#1f2328', { width: 2.2 });
+    for (const v of ticks) addText(g, parts, X(v), y + 30, String(v), { size: 17, color: '#5b636b', anchor: 'middle' });
+    if (c.label) addText(g, parts, c.x + w / 2, y - 46, c.label, { size: 22, color: c.color, anchor: 'middle', weight: 700 });
+    for (const m of c.marks) {
+      const dot = el('circle', { cx: f1(X(m.at)), cy: y, r: 7, fill: m.color || c.color }, g); parts.push({ el: dot, kind: 'fade' });
+      if (m.label) addText(g, parts, X(m.at), y - 16, m.label, { size: 19, color: m.color || c.color, anchor: 'middle' });
+    }
+  },
+  timeline(c, g, parts, r) {
+    const ev = c.events, w = c.w || Math.max(300, ev.length * 150), y = c.y + 60;
+    addStroke(g, parts, roughSeg(c.x, y, c.x + w, y, r) + ` M${c.x + w - 10} ${y - 7} L${c.x + w} ${y} L${c.x + w - 10} ${y + 7}`, '#1f2328', { width: 2.4 });
+    if (c.label) addText(g, parts, c.x, c.y, c.label, { size: 24, color: c.color, weight: 700 });
+    ev.forEach((e, i) => {
+      const x = c.x + 30 + (ev.length === 1 ? 0 : i * (w - 70) / (ev.length - 1)), up = i % 2 === 0;
+      const dot = el('circle', { cx: f1(x), cy: y, r: 7, fill: c.color }, g); parts.push({ el: dot, kind: 'fade' });
+      if (e.at) addText(g, parts, x, up ? y + 28 : y - 16, e.at, { size: 17, color: '#7d848c', anchor: 'middle' });
+      addText(g, parts, x, up ? y - 18 : y + 34, e.label, { size: 20, color: '#1f2328', anchor: 'middle' });
+    });
+  },
+  table(c, g, parts, r) {
+    const size = 19, rows = [c.header, ...c.rows].filter(Boolean), nc = Math.max(...rows.map(rw => rw.length)), rh = 38;
+    const cw = []; for (let j = 0; j < nc; j++) cw[j] = Math.max(60, ...rows.map(rw => measureW(g, str(rw[j] ?? '', 30), size) + 24));
+    const W = cw.reduce((a2, b2) => a2 + b2, 0), H = rows.length * rh, x0 = c.x, y0 = c.y + (c.label ? 30 : 0);
+    if (c.label) addText(g, parts, x0, c.y + 18, c.label, { size: 22, color: c.color, weight: 700 });
+    if (c.header) addFill(g, parts, `M${x0} ${y0} h${W} v${rh} h${-W} Z`, c.color, 0.15);
+    let d = roughRect(x0, y0, W, H, r), xx = x0;
+    for (let i = 1; i < rows.length; i++) d += ' ' + roughSeg(x0, y0 + i * rh, x0 + W, y0 + i * rh, r, 0.4);
+    for (let j = 0; j < nc - 1; j++) { xx += cw[j]; d += ' ' + roughSeg(xx, y0, xx, y0 + H, r, 0.4); }
+    addStroke(g, parts, d, c.color, { width: 2 });
+    rows.forEach((rw, i) => { let x = x0; for (let j = 0; j < nc; j++) { const v = str(rw[j] ?? '', 30); if (v) addText(g, parts, x + cw[j] / 2, y0 + i * rh + rh / 2 + 7, v, { size, anchor: 'middle', weight: i === 0 && c.header ? 700 : null, color: i === 0 && c.header ? c.color : '#1f2328' }); x += cw[j]; } });
+  },
+  // ---- feature 6: the learner's own pen strokes ----
+  ink(c, g, parts) {
+    const p = el('path', { d: smoothPath(c.points), fill: 'none', stroke: c.color, 'stroke-width': c.width, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);
+    parts.push({ el: p, kind: 'stroke', color: c.color });
+  },
+
   // dots that keep travelling along an arrow or line (data / energy / gradient flowing)
   flow(c, g, parts) {
     const t = objs.get(c.on); if (!t) return false;
@@ -338,6 +532,20 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
     case 'plot': c.w = raw.w != null ? num(raw.w, 280, 60, 2000) : null; c.h = raw.h != null ? num(raw.h, 170, 40, 1200) : null; c.fn = str(raw.fn, 20) || null; c.points = Array.isArray(raw.points) ? raw.points.slice(0, 200).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]) : null; c.marks = Array.isArray(raw.marks) ? raw.marks.slice(0, 10) : null; c.domain = Array.isArray(raw.domain) ? raw.domain.slice(0, 2) : null; c.label = label; break;
     case 'line': c.points = (Array.isArray(raw.points) ? raw.points : []).slice(0, 120).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]); if (c.points.length < 2) return null; c.smooth = !!raw.smooth; c.width = num(raw.width, 3, 1, 14); c.dash = !!raw.dash; c.color = col(raw.color, '#1f2328'); break;
     case 'arrow': c.from = Array.isArray(raw.from) ? [num(raw.from[0], 0), num(raw.from[1], 0)] : str(raw.from, 40); c.to = Array.isArray(raw.to) ? [num(raw.to[0], 0), num(raw.to[1], 0)] : str(raw.to, 40); c.label = label; c.curve = num(raw.curve, 0, -1, 1); c.dash = !!raw.dash; c.width = raw.width != null ? num(raw.width, 2.8, 1, 10) : null; break;
+    case 'math': c.tex = str(raw.tex ?? raw.latex ?? raw.text, 400) || 'x'; c.size = num(raw.size, 30, 14, 80); c.color = col(raw.color, '#1f2328'); c.label = label; break;
+    case 'code': c.code = str(raw.code ?? raw.text, 4000).split('\n').slice(0, 40).map(l => l.slice(0, 100).replace(/\t/g, '  ')).join('\n'); c.lang = str(raw.lang, 20) || null; c.title = str(raw.title ?? raw.label, 60) || null; c.size = num(raw.size, 17, 11, 30); break;
+    case 'network': c.layers = (Array.isArray(raw.layers) ? raw.layers : [3, 4, 2]).slice(0, 8).map(n => Math.round(num(n, 1, 1, 512))); c.labels = Array.isArray(raw.labels) ? raw.labels.slice(0, 8) : null; c.nodeLabels = Array.isArray(raw.nodeLabels) ? raw.nodeLabels.slice(0, 8).map(l => Array.isArray(l) ? l.slice(0, 8) : []) : null; c.active = raw.active != null ? num(raw.active, -1, -1, 8) : null; c.gap = raw.gap != null ? num(raw.gap, 150, 70, 400) : null; break;
+    case 'tree': { let count = 0; const san = (n, d) => { count++; const o = { label: str(n && typeof n === 'object' ? (n.label ?? n.name ?? '') : n, 30) }; const ch = n && typeof n === 'object' && Array.isArray(n.children) ? n.children : []; o.children = d < 6 ? ch.slice(0, 8).filter(() => count < 40).map(k => san(k, d + 1)) : []; return o; }; c.root = san(raw.root && typeof raw.root === 'object' ? raw.root : { label: raw.label || 'root', children: raw.children }, 0); break; }
+    case 'graph': {
+      const nodes = (Array.isArray(raw.nodes) ? raw.nodes : []).slice(0, 30).map(n => typeof n === 'object' && n ? { id: str(n.id ?? n.label, 30), label: str(n.label ?? n.id, 30), color: n.color || null } : { id: str(n, 30), label: str(n, 30), color: null });
+      const edges = (Array.isArray(raw.edges) ? raw.edges : []).slice(0, 60).map(e => Array.isArray(e) ? [str(e[0], 30), str(e[1], 30), e[2] != null ? str(e[2], 20) : null] : e && typeof e === 'object' ? [str(e.from, 30), str(e.to, 30), e.label != null ? str(e.label, 20) : null] : null).filter(Boolean);
+      for (const [a, b] of edges) for (const id of [a, b]) if (!nodes.some(n => n.id === id) && nodes.length < 30) nodes.push({ id, label: id, color: null });
+      c.nodes = nodes; c.edges = edges; c.layout = ['circle', 'grid', 'layered'].includes(raw.layout) ? raw.layout : 'layered'; c.directed = raw.directed !== false; break;
+    }
+    case 'numberline': c.from = num(raw.from, 0); c.to = num(raw.to, 10); if (c.to <= c.from) c.to = c.from + 1; c.step = raw.step != null ? num(raw.step, 1, 1e-6, 1e6) : null; c.w = num(raw.w, 420, 100, 3000); c.label = label; c.marks = (Array.isArray(raw.marks) ? raw.marks : []).slice(0, 20).map(m => typeof m === 'object' && m ? { at: num(m.at ?? m.x, 0), label: str(m.label, 24) || null, color: m.color ? col(m.color) : null } : { at: num(m, 0), label: null, color: null }); break;
+    case 'timeline': c.events = (Array.isArray(raw.events) ? raw.events : []).slice(0, 12).map(e => typeof e === 'object' && e ? { label: str(e.label ?? e.text, 28), at: str(e.at ?? e.date ?? e.time, 16) || null } : { label: str(e, 28), at: null }); c.w = raw.w != null ? num(raw.w, 600, 150, 3000) : null; c.label = label; break;
+    case 'table': c.header = Array.isArray(raw.header) ? raw.header.slice(0, 8) : null; c.rows = (Array.isArray(raw.rows) ? raw.rows : []).slice(0, 14).map(rw => (Array.isArray(rw) ? rw : [rw]).slice(0, 8)); c.label = label; if (!c.header && !c.rows.length) c.rows = [['']]; break;
+    case 'ink': c.points = (Array.isArray(raw.points) ? raw.points : []).slice(0, 2000).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]); if (c.points.length < 2) return null; c.width = num(raw.width, 3.5, 1, 20); c.color = col(raw.color, '#1f2328'); c.by = 'you'; break;
     case 'flow': c.on = str(raw.on ?? raw.target ?? raw.along, 40); c.dots = Math.round(num(raw.dots, 3, 1, 8)); c.speed = num(raw.speed, 2.2, 0.5, 10); c.size = num(raw.size, 5.5, 3, 12); break;
     case 'highlight': c.target = str(raw.target ?? raw.on, 40); c.style = ['circle', 'underline', 'box'].includes(raw.style) ? raw.style : 'circle'; break;
   }
@@ -353,7 +561,7 @@ function tween(ms, fn, run, ease) {
     const t0 = performance.now();
     const step = now => {
       if (run.gen !== gen) { fn(1); return res(); }
-      const t = Math.min(1, (now - t0) / ms);
+      const t = clamp((now - t0) / ms, 0, 1);
       fn(ease ? ease(t) : t);
       if (t < 1) requestAnimationFrame(step); else res();
     };
@@ -555,12 +763,12 @@ async function clearBoard(run, animate) {
 }
 function anchorShift(c, dx, dy) {
   if (c.x != null && BOXLIKE.has(c.cmd)) { c.x += dx; c.y += dy; }
-  if (c.cmd === 'line') c.points = c.points.map(p => [p[0] + dx, p[1] + dy]);
+  if (c.cmd === 'line' || c.cmd === 'ink') c.points = c.points.map(p => [p[0] + dx, p[1] + dy]);
   if (c.cmd === 'arrow') { if (Array.isArray(c.from)) c.from = [c.from[0] + dx, c.from[1] + dy]; if (Array.isArray(c.to)) c.to = [c.to[0] + dx, c.to[1] + dy]; }
 }
 function anchorOf(c) {
   if (BOXLIKE.has(c.cmd)) return [c.x, c.y];
-  if (c.cmd === 'line') return c.points[0];
+  if (c.cmd === 'line' || c.cmd === 'ink') return c.points[0];
   if (c.cmd === 'arrow') return Array.isArray(c.from) ? c.from : Array.isArray(c.to) ? c.to : null;
   return null;
 }
@@ -708,22 +916,36 @@ function hitTest(px, py) {
 // ======================================================================
 const pointers = new Map();
 let gesture = null;
+let penMode = false, penColor = '#d1382c';
+const inkSinceAsk = new Set();
+const inkPreview = el('path', { fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'pointer-events': 'none' }, layerOv);
 svg.addEventListener('pointerdown', e => {
   svg.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()];
     gesture = { mode: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, mid0: [(a.x + b.x) / 2, (a.y + b.y) / 2], cam0: { ...camera } };
-    if (gesture.dragIds) gesture.dragIds.forEach(id => setOffset(id, 0, 0));
+    inkPreview.setAttribute('d', '');
     return;
   }
   if (pointers.size > 2) return;
+  if (penMode && !scrub) {
+    const [bx, by] = screenToBoard(e.clientX, e.clientY);
+    gesture = { mode: 'ink', pts: [[bx, by]], width: clamp(3.5 / camera.scale, 0.8, 30) };
+    inkPreview.setAttribute('stroke', penColor); inkPreview.setAttribute('stroke-width', gesture.width); inkPreview.setAttribute('d', '');
+    return;
+  }
   gesture = { mode: 'pending', x0: e.clientX, y0: e.clientY, hit: hitTest(e.clientX, e.clientY), cam0: { ...camera }, mods: e.shiftKey || e.ctrlKey || e.metaKey };
 });
 svg.addEventListener('pointermove', e => {
   if (!pointers.has(e.pointerId)) { svg.classList.toggle('overObj', !!hitTest(e.clientX, e.clientY)); return; }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (!gesture) return;
+  if (gesture.mode === 'ink') {
+    const [bx, by] = screenToBoard(e.clientX, e.clientY), last = gesture.pts[gesture.pts.length - 1];
+    if (Math.hypot(bx - last[0], by - last[1]) * camera.scale > 2 && gesture.pts.length < 2000) { gesture.pts.push([bx, by]); inkPreview.setAttribute('d', smoothPath(gesture.pts)); }
+    return;
+  }
   if (gesture.mode === 'pinch' && pointers.size >= 2) {
     const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y) || 1, mid = [(a.x + b.x) / 2, (a.y + b.y) / 2];
     const r = svg.getBoundingClientRect(), c0 = gesture.cam0;
@@ -751,6 +973,15 @@ function endPointer(e) {
   pointers.delete(e.pointerId);
   if (!gesture) return;
   if (gesture.mode === 'pinch') { if (pointers.size === 0) gesture = null; else gesture = { mode: 'none' }; return; }
+  if (gesture.mode === 'ink') {
+    inkPreview.setAttribute('d', '');
+    const pts = gesture.pts.map(p => [f1(p[0]), f1(p[1])]);
+    if (pts.length === 1) pts.push([pts[0][0] + 0.5, pts[0][1] + 0.5]); // a dot
+    let n = objs.size; while (objs.has('ink' + n)) n++;
+    const c = normalizeShape('ink', { cmd: 'ink', id: 'ink' + n, points: pts, color: penColor, width: gesture.width });
+    if (c) { c.id = 'ink' + n; c._placed = true; drawObject(c, { gen }, false); recordEdit(c); inkSinceAsk.add(c.id); renderChips(); }
+    gesture = null; return;
+  }
   if (gesture.mode === 'pending' && e.type === 'pointerup') {
     const id = gesture.hit;
     const now = Date.now(), lt = lastTap;
@@ -839,6 +1070,54 @@ async function replay() {
   await showStep(nav[0], true);
   playFrom(nav[0], true);
 }
+function setPen(on) {
+  penMode = on; svg.classList.toggle('penMode', on);
+  $('#penBtn').setAttribute('aria-pressed', on); $('#penBar').hidden = !on;
+  if (on) setSelection([]);
+}
+$('#penBtn').onclick = () => { if (!scrub) setPen(!penMode); };
+$('#penDone').onclick = () => setPen(false);
+$('#penCheck').onclick = () => { setPen(false); send('Check my drawing: is it right? Tell me what is correct and what is off, and draw the correction next to it.'); };
+$('#penUndo').onclick = () => {
+  const last = [...inkSinceAsk].pop() || [...objs.keys()].reverse().find(k => objs.get(k).cmd.cmd === 'ink');
+  if (!last) return; inkSinceAsk.delete(last); recordEdit({ cmd: 'erase', ids: [last] }); eraseIds([last], { gen }, false); renderChips();
+};
+document.querySelectorAll('#penBar .sw').forEach(b => b.onclick = () => { penColor = b.dataset.c; document.querySelectorAll('#penBar .sw').forEach(x => x.classList.toggle('on', x === b)); });
+
+// Render part of the board to a PNG (for image-capable models). Fonts/maths are approximated; the content is what matters.
+async function boardImage(region) {
+  const pad = 40, b = { x: region.x - pad, y: region.y - pad, width: region.width + 2 * pad, height: region.height + 2 * pad };
+  const scale = clamp(1024 / Math.max(b.width, b.height), 0.25, 3);
+  const W = Math.round(b.width * scale), H = Math.round(b.height * scale);
+  const clone = svg.cloneNode(true);
+  clone.querySelector('#layerOverlay')?.remove(); clone.querySelector('#grid')?.remove();
+  clone.querySelectorAll('foreignObject').forEach(fo => { // KaTeX html would taint the canvas: swap for its source text
+    const t = document.createElementNS(NS, 'text'); t.setAttribute('x', fo.getAttribute('x')); t.setAttribute('y', +fo.getAttribute('y') + (+fo.getAttribute('height')) * 0.72);
+    t.setAttribute('font-size', 24); t.setAttribute('class', 'math'); t.textContent = fo.textContent.slice(0, 120); fo.replaceWith(t);
+  });
+  clone.querySelectorAll('animateMotion').forEach(a => a.remove());
+  clone.setAttribute('viewBox', `${b.x} ${b.y} ${b.width} ${b.height}`); clone.setAttribute('width', W); clone.setAttribute('height', H);
+  const style = document.createElementNS(NS, 'style');
+  style.textContent = `.hand{font-family:Caveat,'Comic Sans MS',cursive}.math{font-family:'Times New Roman',serif;font-style:italic}.mono{font-family:Menlo,Consolas,monospace}`;
+  clone.insertBefore(style, clone.firstChild);
+  const xml = new XMLSerializer().serializeToString(clone);
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml); });
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.drawImage(img, 0, 0, W, H);
+  return cv.toDataURL('image/png');
+}
+function inkRegion(ids) {
+  let r = null;
+  for (const id of ids) { const o = objs.get(id); if (!o) continue; const b = bbOf(o); r = r ? { x: Math.min(r.x, b.x), y: Math.min(r.y, b.y), width: Math.max(r.x + r.width, b.x + b.width) - Math.min(r.x, b.x), height: Math.max(r.y + r.height, b.y + b.height) - Math.min(r.y, b.y) } : b; }
+  if (!r) return null;
+  // include nearby teacher drawings for context
+  const grow = 260;
+  const area = { x: r.x - grow, y: r.y - grow, width: r.width + 2 * grow, height: r.height + 2 * grow };
+  for (const o of objs.values()) { const b = bbOf(o); if (overlaps(area, b, 0)) r = { x: Math.min(r.x, b.x), y: Math.min(r.y, b.y), width: Math.max(r.x + r.width, b.x + b.width) - Math.min(r.x, b.x), height: Math.max(r.y + r.height, b.y + b.height) - Math.min(r.y, b.y) }; }
+  return r;
+}
+
 function updateEmpty() { $('#emptyHint').style.display = objs.size ? 'none' : ''; }
 
 // ======================================================================
@@ -1114,7 +1393,7 @@ function bubble(m) {
   const d = document.createElement('div');
   d.className = 'msg ' + m.role;
   const body = document.createElement('span'); body.className = 'body'; body.textContent = m.text || ''; d.appendChild(body);
-  if (m.role === 'user' && m.about && m.about.length) { const a = document.createElement('span'); a.className = 'about'; a.textContent = 'about ' + m.about.join(', '); d.appendChild(a); }
+  if (m.role === 'user' && ((m.about && m.about.length) || m.sketch)) { const a = document.createElement('span'); a.className = 'about'; a.textContent = [m.about && m.about.length ? 'about ' + m.about.join(', ') : '', m.sketch ? 'with your sketch' : ''].filter(Boolean).join(' · '); d.appendChild(a); }
   if (m.role === 'assistant') { const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = m.meta || ''; d.appendChild(meta); }
   msgBox.appendChild(d); scrollChat();
   return d;
@@ -1132,6 +1411,11 @@ function renderChips() {
   const add = (label, q, primary) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (primary) b.className = 'primary'; b.onclick = () => send(q || label); box.appendChild(b); };
   if (!lesson) { add('Choose a topic', null, true); box.lastChild.onclick = openTopic; return; }
   const ids = [...selection].filter(id => objs.has(id));
+  if ([...inkSinceAsk].some(id => objs.has(id))) {
+    add('Check my drawing', 'Check my drawing: is it right? Tell me what is correct and what is off, and draw the correction next to it.', true);
+    add('What did I get wrong?'); add('Turn my sketch into a clean diagram'); add('Mera drawing check karo (Hinglish)');
+    return;
+  }
   if (ids.length === 1) {
     const n = nameOf(ids[0]);
     add(`What is “${n}”?`); add(`Why is “${n}” drawn like this?`); add(`Change “${n}” to another example`); add(`Hinglish mein samjhao: “${n}”`);
@@ -1256,6 +1540,10 @@ function boardSummary() {
       if (c.cmd === 'arrow') bits.push(`from ${JSON.stringify(c.from)} to ${JSON.stringify(c.to)}`);
       if (c.cmd === 'highlight') bits.push(`on ${c.target}`);
       if (c.cmd === 'flow') bits.push(`dots moving along ${c.on}`);
+      if (c.cmd === 'ink') bits.push("the learner's own pen sketch");
+      if (c.cmd === 'math') bits.push('tex ' + JSON.stringify(c.tex.slice(0, 60)));
+      if (c.cmd === 'graph') bits.push(`nodes ${c.nodes.map(n => n.id).join(',').slice(0, 80)}`);
+      if (c.cmd === 'network') bits.push(`layers ${c.layers.join('-')}`);
       bits.push(`box x${r(bb.x)} y${r(bb.y)} w${r(bb.width)} h${r(bb.height)}`);
       lines.push('- ' + bits.join(' · '));
     }
@@ -1294,6 +1582,16 @@ Board commands (every line has "cmd"):
 {"cmd":"update","id":"b1","label":"Decoder","color":"#d1382c"}   (redraw that object in place with merged fields)
 {"cmd":"move","id":"b1","x":400,"y":0}  or  {"cmd":"move","id":"b1","dx":50,"dy":0}   (slides it; attached arrows follow)
 {"cmd":"erase","ids":["a1","h1"]}  or  {"cmd":"erase","area":[x,y,w,h]}
+{"cmd":"math","id":"e1","x":0,"y":0,"tex":"w \\leftarrow w - \\eta \\nabla L(w)","size":32,"color":"#1f2328"}   (real typeset maths in LaTeX; x,y = left of the baseline. Use this for every formula)
+{"cmd":"code","id":"k1","x":0,"y":0,"code":"for x in data:\n    loss += (w*x - y)**2","lang":"python","title":"train.py"}   (a highlighted code block, max 40 lines)
+Components: you give the structure, the app lays it out neatly (x,y = top-left):
+{"cmd":"network","id":"nn1","x":0,"y":0,"layers":[3,4,2],"labels":["input","hidden","output"],"active":1}   (neural-network layers, nodes fully connected; active highlights a layer)
+{"cmd":"tree","id":"tr1","x":0,"y":0,"root":{"label":"root","children":[{"label":"left","children":[]},{"label":"right"}]}}
+{"cmd":"graph","id":"g1","x":0,"y":0,"nodes":["Client","API","DB"],"edges":[["Client","API","request"],["API","DB"]],"layout":"layered|circle|grid","directed":true}   (flowcharts, pipelines, state machines, graphs)
+{"cmd":"numberline","id":"nl1","x":0,"y":0,"from":0,"to":10,"w":420,"marks":[{"at":3,"label":"w*"}],"label":"w"}
+{"cmd":"timeline","id":"tl1","x":0,"y":0,"events":[{"label":"Perceptron","at":"1958"},{"label":"Backprop","at":"1986"}],"label":"History"}
+{"cmd":"table","id":"tb1","x":0,"y":0,"header":["Model","Params"],"rows":[["GPT-2","1.5B"],["BERT","340M"]],"label":"Sizes"}
+Prefer these components over hand-placing many boxes and arrows: they never overlap.
 {"cmd":"flow","id":"fl1","on":"a1","color":"#1d6fb8","dots":3,"speed":2}   (dots that keep travelling along an arrow or line: data, signal, gradient or energy flowing)
 {"cmd":"animate","id":"v1","values":[0.1,0.9,0.0],"ms":1500}   (smoothly change an object's numbers, position, size, colour or a plot's fn/points in place: show a value changing over time)
 {"cmd":"pulse","id":"b1"}   (a brief bounce to point at an object while you talk about it)
@@ -1303,6 +1601,7 @@ A new object with an existing id replaces the old one. Use short unique ids.
 TEACHING RULES
 - ALWAYS teach on the board. Every answer, even to a short, casual or follow-up question, a definition or a yes/no, must draw or change something on the board (at least 4 board commands). The learner never has to ask you to draw. Never reply with say lines only.
 - Say lines are spoken aloud by a narrator while the pen draws, one say line at a time. Write them as natural speech, one or two short sentences each, with the words you would say ("w minus three, squared", not "(w−3)²"). Put the board commands that illustrate a sentence right after it, so each narrated idea has its own drawing.
+- Objects of type ink are the learner's own pen sketches. When they ask about their drawing, look at the attached picture if there is one: say plainly what is right and what is off, then draw the correction NEXT to their sketch. Never erase or move their ink unless they ask.
 - Use motion only where it explains something: flow for things moving through a system, animate for a value or curve changing, pulse to point. At most 1-3 motion commands per answer; never decorative.
 - Start with a short say line and draw at once. Alternate: a say line, then the 1-4 commands it describes, then the next say line, and so on.
 - Keep earlier work and build on it: put new material in free space next to what it relates to, so the board grows. Start a new topic with a heading in fresh space.
@@ -1312,14 +1611,15 @@ TEACHING RULES
 - Use real numbers from the reference when there is one; say when numbers are only illustrative.
 - 6-25 board commands per answer. Say lines under about 150 words in total, plain text, in the learner's language and script (use Hinglish in Latin script if they write it or ask for it).`;
 }
-function buildMessages(question, selIds) {
+function buildMessages(question, selIds, inkIds = [], image = null) {
   const msgs = [{ role: 'system', content: systemPrompt(selIds) }];
   const hist = chat.filter(m => m.role === 'user' || m.role === 'assistant').slice(-8);
   for (const m of hist) {
-    if (m.role === 'user') msgs.push({ role: 'user', content: (m.about && m.about.length ? `[About the selected drawings: ${m.about.join(', ')}] ` : '') + m.text });
+    if (m.role === 'user') msgs.push({ role: 'user', content: (m.about && m.about.length ? `[About the selected drawings: ${m.about.join(', ')}] ` : '') + (m.sketch ? `[With my sketch: ${m.sketch.join(', ')}] ` : '') + m.text });
     else msgs.push({ role: 'assistant', content: (m.text || '(drew only)') + (m.drew && m.drew.length ? `\n(On the board I drew or changed: ${m.drew.join(', ')})` : '') });
   }
-  msgs.push({ role: 'user', content: (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + question });
+  const text = (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + (inkIds.length ? `[I drew on the board myself: ${inkIds.join(', ')}${image ? '. A picture of my sketch and the drawings around it is attached.' : '.'}] ` : '') + question;
+  msgs.push({ role: 'user', content: image ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }] : text });
   return msgs;
 }
 
@@ -1333,17 +1633,24 @@ async function send(q) {
   Voice.unlock();
   $('#modelPop').hidden = true;
   const selIds = [...selection].filter(id => objs.has(id));
-  const messages = buildMessages(q, selIds);
-  const userMsg = { role: 'user', text: q, about: selIds.map(nameOf) };
-  chat.push(userMsg); bubble(userMsg);
+  const inkIds = [...inkSinceAsk].filter(id => objs.has(id));
+  let image = null;
+  if (inkIds.length) { try { const reg = inkRegion(inkIds); if (reg) image = await boardImage(reg); } catch (e) { console.warn('sketch image failed', e); } }
+  inkSinceAsk.clear();
+  const messages = buildMessages(q, selIds, inkIds, image);
+  const userMsg = { role: 'user', text: q, about: selIds.map(nameOf), sketch: inkIds.length ? inkIds : undefined };
+  chat.push(userMsg); const ub = bubble(userMsg);
+  if (image) { const im = document.createElement('img'); im.src = image; im.className = 'thumb'; im.alt = 'your sketch'; ub.appendChild(im); }
   const am = { role: 'assistant', text: '', drew: [], meta: '' };
   chat.push(am);
   const turn = { msg: am, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36) };
   const body = turn.el.querySelector('.body'); body.classList.add('thinking');
   renderChips(); saveSoon();
 
-  const model = settings.model || (models[0] && models[0].id);
-  const eff = currentEffort();
+  let model = settings.model || (models[0] && models[0].id);
+  // a sketch needs a model that can see images
+  if (image && !(modelInfo(model) || {}).vision) { const v = models.find(m => m.id === 'deepseek-v4.1-flash' && m.vision) || models.find(m => m.vision); if (v) model = v.id; }
+  const eff = model === settings.model ? currentEffort() : defaultEffort(model);
   const effort = eff === 'auto' ? null : eff;
   const run = { gen };
   abortCtl = new AbortController(); const myAbort = abortCtl;
