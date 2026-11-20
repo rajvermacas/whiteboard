@@ -84,6 +84,9 @@ button { font: inherit; cursor: pointer; }
 #input:focus { border-color: #1d6fb8; }
 #sendBtn { border: 0; background: #1d6fb8; color: #fff; border-radius: 10px; padding: 0 16px; font-weight: 600; }
 #sendBtn.stop { background: #d1382c; }
+#stopBtn { border: 1px solid #f0c4bf; background: #fff; color: #d1382c; border-radius: 10px; padding: 0 12px; font-weight: 600; }
+#stopBtn[hidden] { display: none; }
+.msg.user .steer { display: block; font-size: 11px; opacity: .8; margin-top: 2px; }
 #sendBtn:disabled { opacity: .5; cursor: default; }
 
 /* ---------- topic dialog ---------- */
@@ -152,6 +155,8 @@ foreignObject .katex { font-size: 1em; }
 #penBar .sw { width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; background: var(--c); box-shadow: 0 0 0 1px #d0d5db; padding: 0; }
 #penBar .sw.on { box-shadow: 0 0 0 2px var(--c); }
 #penBar button:not(.sw) { border: 1px solid #d0d5db; background: #fff; border-radius: 999px; padding: 4px 11px; font-size: 13px; white-space: nowrap; }
+#penBar #penRubber.on { background: #fdecea; border-color: #d1382c; color: #d1382c; font-weight: 600; }
+#board.rubberMode { cursor: none; }
 #penBar button.primary { background: #1d6fb8; color: #fff; border-color: #1d6fb8; font-weight: 600; }
 .msg.user img.thumb { display: block; max-width: 180px; max-height: 120px; margin-top: 6px; border-radius: 6px; background: #fff; }
 #modelPop { max-height: min(70vh, calc(100% - 60px)); overflow-y: auto; }

@@ -1089,7 +1089,33 @@ function hitTest(px, py) {
 // ======================================================================
 const pointers = new Map();
 let gesture = null;
-let penMode = false, penColor = '#d1382c';
+let penMode = false, penColor = '#d1382c', rubber = false;
+// rubber: erases the learner's own strokes (ink) it passes over; never the teacher's drawings
+const rubberRing = el('circle', { r: 12, fill: 'rgba(209,56,44,.08)', stroke: '#d1382c', 'stroke-width': 1.5, 'vector-effect': 'non-scaling-stroke', visibility: 'hidden', 'pointer-events': 'none' }, layerOv);
+const RUB_PX = 12;
+function setRubber(on) {
+  rubber = on; $('#penRubber').classList.toggle('on', on); svg.classList.toggle('rubberMode', on && penMode);
+  if (!on) rubberRing.setAttribute('visibility', 'hidden');
+}
+function moveRubberRing(bx, by) { rubberRing.setAttribute('cx', f1(bx)); rubberRing.setAttribute('cy', f1(by)); rubberRing.setAttribute('r', f1(RUB_PX / camera.scale)); rubberRing.setAttribute('visibility', 'visible'); }
+// distance from a point to a polyline, cheap enough per pointer move
+function nearInk(o, bx, by, rad) {
+  const b = bbOf(o); if (bx < b.x - rad || bx > b.x + b.width + rad || by < b.y - rad || by > b.y + b.height + rad) return false;
+  const pts = o.cmd.points, [ox, oy] = o.off, r2 = (rad + (o.cmd.width || 3) / 2) ** 2;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], c = pts[Math.min(i + 1, pts.length - 1)], ax = a[0] + ox, ay = a[1] + oy, dx = c[0] - a[0], dy = c[1] - a[1], L = dx * dx + dy * dy;
+    const t = L ? clamp(((bx - ax) * dx + (by - ay) * dy) / L, 0, 1) : 0, px = ax + t * dx - bx, py = ay + t * dy - by;
+    if (px * px + py * py <= r2) return true;
+  }
+  return false;
+}
+function rubAt(bx, by) {
+  const rad = RUB_PX / camera.scale, hit = [];
+  for (const [id, o] of objs) if (o.cmd.cmd === 'ink' && nearInk(o, bx, by, rad)) hit.push(id);
+  if (!hit.length) return;
+  hit.forEach(id => inkSinceAsk.delete(id));
+  recordEdit({ cmd: 'erase', ids: hit.slice() }); eraseIds(hit, { gen }, false); renderChips();
+}
 const inkSinceAsk = new Set();
 const inkPreview = el('path', { fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'pointer-events': 'none' }, layerOv);
 svg.addEventListener('pointerdown', e => {
@@ -1102,6 +1128,11 @@ svg.addEventListener('pointerdown', e => {
     return;
   }
   if (pointers.size > 2) return;
+  if (penMode && !scrub && rubber) {
+    const [bx, by] = screenToBoard(e.clientX, e.clientY);
+    gesture = { mode: 'rub' }; moveRubberRing(bx, by); rubAt(bx, by);
+    return;
+  }
   if (penMode && !scrub) {
     const [bx, by] = screenToBoard(e.clientX, e.clientY);
     gesture = { mode: 'ink', pts: [[bx, by]], width: clamp(3.5 / camera.scale, 0.8, 30) };
@@ -1111,6 +1142,7 @@ svg.addEventListener('pointerdown', e => {
   gesture = { mode: 'pending', x0: e.clientX, y0: e.clientY, hit: hitTest(e.clientX, e.clientY), cam0: { ...camera }, mods: e.shiftKey || e.ctrlKey || e.metaKey };
 });
 svg.addEventListener('pointermove', e => {
+  if (penMode && rubber) { const [bx, by] = screenToBoard(e.clientX, e.clientY); moveRubberRing(bx, by); if (gesture && gesture.mode === 'rub' && pointers.has(e.pointerId)) { pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); rubAt(bx, by); return; } }
   if (!pointers.has(e.pointerId)) { svg.classList.toggle('overObj', !!hitTest(e.clientX, e.clientY)); return; }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (!gesture) return;
@@ -1146,6 +1178,7 @@ function endPointer(e) {
   pointers.delete(e.pointerId);
   if (!gesture) return;
   if (gesture.mode === 'pinch') { if (pointers.size === 0) gesture = null; else gesture = { mode: 'none' }; return; }
+  if (gesture.mode === 'rub') { gesture = null; showAttach(false); return; }
   if (gesture.mode === 'ink') {
     inkPreview.setAttribute('d', '');
     const pts = gesture.pts.map(p => [f1(p[0]), f1(p[1])]);
@@ -1255,8 +1288,10 @@ $('#attachX').onclick = () => { inkSinceAsk.clear(); showAttach(false); renderCh
 function setPen(on) {
   penMode = on; svg.classList.toggle('penMode', on); if (!on) showAttach(false); else $('#attach').hidden = true;
   $('#penBtn').setAttribute('aria-pressed', on); $('#penBar').hidden = !on;
-  if (on) setSelection([]);
+  if (on) setSelection([]); else setRubber(false);
 }
+$('#penRubber').onclick = () => setRubber(!rubber);
+svg.addEventListener('pointerleave', () => rubberRing.setAttribute('visibility', 'hidden'));
 $('#penBtn').onclick = () => { if (!scrub) setPen(!penMode); };
 $('#penDone').onclick = () => setPen(false);
 $('#penCheck').onclick = () => { setPen(false); showAttach(true); };
@@ -1264,7 +1299,7 @@ $('#penUndo').onclick = () => {
   const last = [...inkSinceAsk].pop() || [...objs.keys()].reverse().find(k => objs.get(k).cmd.cmd === 'ink');
   if (!last) return; inkSinceAsk.delete(last); recordEdit({ cmd: 'erase', ids: [last] }); eraseIds([last], { gen }, false); renderChips();
 };
-document.querySelectorAll('#penBar .sw').forEach(b => b.onclick = () => { penColor = b.dataset.c; document.querySelectorAll('#penBar .sw').forEach(x => x.classList.toggle('on', x === b)); });
+document.querySelectorAll('#penBar .sw').forEach(b => b.onclick = () => { penColor = b.dataset.c; setRubber(false); document.querySelectorAll('#penBar .sw').forEach(x => x.classList.toggle('on', x === b)); });
 
 // Render part of the board to a PNG (for image-capable models). Fonts/maths are approximated; the content is what matters.
 async function boardImage(region) {
@@ -1580,6 +1615,7 @@ function bubble(m) {
   d.className = 'msg ' + m.role;
   const body = document.createElement('span'); body.className = 'body'; body.textContent = m.text || ''; d.appendChild(body);
   if (m.role === 'user' && ((m.about && m.about.length) || m.sketch)) { const a = document.createElement('span'); a.className = 'about'; a.textContent = [m.about && m.about.length ? 'about ' + m.about.join(', ') : '', m.sketch ? 'with your sketch' : ''].filter(Boolean).join(' · '); d.appendChild(a); }
+  if (m.role === 'user' && m.steer) { const a = document.createElement('span'); a.className = 'steer'; a.textContent = '↪ sent while the teacher was answering'; d.appendChild(a); }
   if (m.role === 'assistant') { const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = m.meta || ''; d.appendChild(meta); }
   msgBox.appendChild(d); scrollChat();
   return d;
@@ -1620,18 +1656,21 @@ function renderChips() {
 }
 function updateSendBtn() {
   const working = streaming || queueRunning || replaying || typers.size > 0 || Voice.speaking();
-  sendBtn.textContent = working ? 'Stop' : 'Send';
-  sendBtn.classList.toggle('stop', working);
+  // while the teacher works you can still send: the message steers the answer (Stop is its own button)
+  $('#stopBtn').hidden = !working;
+  sendBtn.title = working ? 'Send now: the teacher finishes its sentence, then takes your message into account' : '';
+  input.placeholder = working ? 'Add something while the teacher answers…' : (inkSinceAsk.size && !penMode ? input.placeholder : 'Ask the teacher…');
 }
+$('#stopBtn').onclick = () => stopAll();
 input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#composer').requestSubmit(); } });
 input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(120, input.scrollHeight) + 'px'; });
 $('#composer').addEventListener('submit', e => {
   e.preventDefault();
-  if (sendBtn.classList.contains('stop')) { stopAll(); return; }
   let q = input.value.trim();
   if (!q && [...inkSinceAsk].some(id => objs.has(id))) q = 'Check my drawing.';
   if (!q) return;
-  input.value = ''; input.style.height = 'auto'; send(q);
+  input.value = ''; input.style.height = 'auto';
+  send(q, { steer: !scrub && (streaming || queueRunning) });
 });
 $('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(); chat = []; renderChat(); saveSoon(); };
 $('#selAsk').onclick = () => input.focus();
@@ -1850,14 +1889,14 @@ EXAMPLE of the balance wanted (a different topic; notice every spoken line gives
 {"say":"So a cache is a bet on reuse: win it often, and slow storage feels fast."}
 {"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}`;
 }
-function buildMessages(question, selIds, inkIds = [], image = null) {
+function buildMessages(question, selIds, inkIds = [], image = null, steer = false) {
   const msgs = [{ role: 'system', content: systemPrompt(selIds) }];
   const hist = chat.filter(m => m.role === 'user' || m.role === 'assistant').slice(-8);
   for (const m of hist) {
     if (m.role === 'user') msgs.push({ role: 'user', content: (m.about && m.about.length ? `[About the selected drawings: ${m.about.join(', ')}] ` : '') + (m.sketch ? `[With my sketch: ${m.sketch.join(', ')}] ` : '') + m.text });
-    else msgs.push({ role: 'assistant', content: (m.text || '(drew only)') + (m.drew && m.drew.length ? `\n(On the board I drew or changed: ${m.drew.join(', ')})` : '') });
+    else msgs.push({ role: 'assistant', content: (m.text || '(drew only)') + (m.interrupted ? '\n(The learner interrupted me here with their next message.)' : '') + (m.drew && m.drew.length ? `\n(On the board I drew or changed: ${m.drew.join(', ')})` : '') });
   }
-  const text = (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + (inkIds.length ? `[I drew a sketch on the board (${inkIds.join(', ')}). ${image ? 'A picture of it, with the drawings around it, is attached: work out what it shows from the picture.' : 'Its strokes are listed in the board summary.'}] ` : '') + question;
+  const text = (steer ? '[I sent this while you were still answering, so you stopped after your current sentence. Take it into account now: answer or adjust as it asks, then carry on with whatever part of your previous answer still matters, without repeating what is already on the board.] ' : '') + (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + (inkIds.length ? `[I drew a sketch on the board (${inkIds.join(', ')}). ${image ? 'A picture of it, with the drawings around it, is attached: work out what it shows from the picture.' : 'Its strokes are listed in the board summary.'}] ` : '') + question;
   msgs.push({ role: 'user', content: image ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }] : text });
   return msgs;
 }
@@ -1982,9 +2021,27 @@ function outlinePrompt() {
   return `\nLESSON IN PROGRESS (taught: ${o.done} of ${o.parts.length} parts):\n${o.parts.map((x, i) => `${i < o.done ? '✓' : '·'} ${i + 1}. ${x}`).join('\n')}\n`;
 }
 
-async function send(q) {
+// Steering: a message sent mid-answer. The model stops writing, the board finishes the sentence it is on
+// (voice and pen), the rest of that answer is dropped, and the new message is answered with that context.
+let steering = false;
+async function softStop() {
+  steering = true;
+  if (abortCtl) abortCtl.abort();
+  const k = queue.findIndex(x => x.say != null);
+  if (k >= 0) { dlog('steer: dropped', queue.length - k, 'queued lines'); if (queue[k].turn) queue[k].turn.msg.interrupted = true; queue.splice(k); }
+  const t0 = Date.now();
+  while ((streaming || queueRunning) && Date.now() - t0 < 25000) await sleep(80);
+  if (streaming || queueRunning) stopAll();
+  steering = false;
+}
+async function send(q, opts = {}) {
   if (!lesson) { openTopic(true); return; }
-  if (streaming || queueRunning || replaying || scrub) stopAll();
+  if (opts.steer && (streaming || queueRunning) && !scrub) {
+    const um = { role: 'user', text: q, steer: true }; // shown right away; the answer follows once the sentence ends
+    const pendingEl = bubble(um); pendingEl.classList.add('pending');
+    await softStop();
+    pendingEl.remove();
+  } else if (streaming || queueRunning || replaying || scrub) stopAll();
   if (scrub) exitScrub();
   Voice.unlock();
   $('#modelPop').hidden = true;
@@ -1993,8 +2050,8 @@ async function send(q) {
   let image = null;
   if (inkIds.length) { try { const reg = inkRegion(inkIds); if (reg) image = await boardImage(reg); } catch (e) { console.warn('sketch image failed', e); } }
   inkSinceAsk.clear(); $('#attach').hidden = true; input.placeholder = 'Ask the teacher…';
-  const messages = buildMessages(q, selIds, inkIds, image);
-  const userMsg = { role: 'user', text: q, about: selIds.map(nameOf), sketch: inkIds.length ? inkIds : undefined };
+  const messages = buildMessages(q, selIds, inkIds, image, !!opts.steer);
+  const userMsg = { role: 'user', text: q, about: selIds.map(nameOf), sketch: inkIds.length ? inkIds : undefined, steer: opts.steer || undefined };
   chat.push(userMsg); const ub = bubble(userMsg);
   if (image) { const im = document.createElement('img'); im.src = image; im.className = 'thumb'; im.alt = 'your sketch'; ub.appendChild(im); }
   const am = { role: 'assistant', text: '', drew: [], meta: '' };
@@ -2043,7 +2100,7 @@ async function send(q) {
       await tidyPass({ question: q, answer, model, run, turn, signal: myAbort.signal });
   } catch (err) {
     failed = true;
-    if (err.name === 'AbortError' || myAbort.signal.aborted) { if (turn.thinking) { body.classList.remove('thinking'); body.textContent = '(stopped)'; turn.thinking = false; } }
+    if (err.name === 'AbortError' || myAbort.signal.aborted) { if (steering) am.interrupted = true; if (turn.thinking) { body.classList.remove('thinking'); body.textContent = '(stopped)'; turn.thinking = false; } }
     else {
       const code = err.code || 'network';
       dlog('answer failed', code, err.message);

@@ -55,6 +55,8 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
 
 **Suggested questions.** Each answer ends with 3 follow-up questions about what was just drawn. They appear as chips above the input, next to *Quiz me on this* and *Hinglish mein samjhao*.
 
+**Talk while it teaches.** You can send a message while an answer is still being drawn, for example "simpler please" or "wait, why 4×?". The teacher finishes the sentence it is on (voice and pen), drops the rest of that answer, and responds to you, knowing it was interrupted and where. **Stop** is a separate button.
+
 **Replay** plays the whole lesson. Your own moves, erases and sketches are recorded too, so replays match the board.
 
 **✏️ Draw back.** Press **Draw** and sketch (4 colours, undo), then press **Check my drawing**. The sketch is attached to your next message, with a thumbnail above the input. Type a question about it, or just press Send. The teacher works out from the picture what you drew, so you never have to describe it. It says what it sees, answers or checks it, and draws the corrected version next to your sketch. ✕ removes the attachment. If the selected model can't see images, DeepSeek V4.1 Flash checks the sketch for that question.
@@ -79,6 +81,8 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
 | Ask about it | select, then use the chips or type ("What is X?", "Change X to another example", Hinglish…) |
 | Steps | timeline bar under the board · ← → keys · ▶ replays · **Live** returns |
 | Draw yourself | **✏️ Draw** → sketch → **Check my drawing** → ask (optional) → Send |
+| Erase your sketch | **✏️ Draw** → **🧽 Rubber** → drag over your strokes (only your own sketches are erased) |
+| Interrupt the teacher | type while it answers and press Send: it finishes its sentence, then takes your message into account · **Stop** ends the answer |
 | Replay / Wipe / Fit / Full screen | toolbar |
 | Rename the session | click its name at the top left |
 
