@@ -14,6 +14,13 @@ window.Voice = (() => {
   let ctx = null, current = null, epoch = 0, speakingNow = false, reqId = 0, slowCount = 0, tooSlow = false, lastSource = '';
   const pending = new Map(), cache = new Map(), listeners = new Set();
   let status = { state: 'idle', text: '' };
+  // pause: the learner froze the lesson. Audio is suspended, and every timer below counts only unpaused time.
+  let paused = false, resumeWaiters = [];
+  const whenResumed = () => paused ? new Promise(r => resumeWaiters.push(r)) : Promise.resolve();
+  function activeTimeout(ms, fn) {
+    let left = ms, last = performance.now();
+    const id = setInterval(() => { const now = performance.now(); if (!paused) left -= now - last; last = now; if (left <= 0) { clearInterval(id); fn(); } }, 100);
+  }
   const log = (...a) => { try { window.wbtLog && window.wbtLog('voice', ...a); } catch {} };
   const setStatus = (state, text = '') => { status = { state, text }; listeners.forEach(f => { try { f(status); } catch {} }); };
 
@@ -38,11 +45,12 @@ window.Voice = (() => {
   }
   function ensureCtx() {
     if (!ctx || ctx.state === 'closed') newCtx();
-    if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
+    if (ctx && ctx.state !== 'running' && !paused) ctx.resume().catch(() => {});
     return ctx;
   }
   // called from a click / key press: the only moment Safari lets audio start
   function unlockAudio() {
+    if (paused) return;   // a click while paused must not restart the audio
     if (ctx && ctx.state !== 'running' && ctx.state !== 'closed' && ctx._gestured) newCtx();   // a resume in an earlier gesture didn't take
     const c = ensureCtx(); if (!c) return;
     c._gestured = true;
@@ -175,7 +183,7 @@ window.Voice = (() => {
       const start = () => { if (started) return; started = true; resolveStart({ duration: text.length / (14 * u.rate), done }); };
       u.onstart = start;
       u.onend = u.onerror = () => { speakingNow = false; doneResolve(); start(); };
-      setTimeout(() => { speakingNow = false; doneResolve(); }, (text.length / (11 * u.rate) + 4) * 1000);
+      activeTimeout((text.length / (11 * u.rate) + 4) * 1000, () => { speakingNow = false; doneResolve(); });
       current = { stop: () => { speechSynthesis.cancel(); doneResolve(); } };
       speakingNow = true;
       if (myEpoch !== epoch) { speakingNow = false; doneResolve(); return start(); }
@@ -230,6 +238,8 @@ window.Voice = (() => {
     }
     if (performance.now() - t0 > 8000 && status.state !== 'loading') { slowCount++; if (slowCount >= 2) markTooSlow(useServer() ? 'server' : 'browser'); }
     if (myEpoch !== epoch) return none;
+    await whenResumed();
+    if (myEpoch !== epoch) return none;
     const c = ensureCtx();
     if (!(await running(c))) {
       // never "play" into a muted context: speak with the browser voice and say why in the log
@@ -245,10 +255,21 @@ window.Voice = (() => {
     speakingNow = true;
     src.start();
     lastSource = useServer() ? 'kokoro-server' : 'kokoro-browser';
-    setTimeout(finish, (buf.duration + 1.5) * 1000);   // never wait forever for onended
+    activeTimeout((buf.duration + 1.5) * 1000, finish);   // never wait forever for onended
     return { duration: buf.duration, done };
   }
 
+  function pause() {
+    if (paused) return; paused = true;
+    if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {});
+    if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.pause();
+  }
+  function resume() {
+    if (!paused) return; paused = false;
+    if (ctx && ctx.state !== 'closed') ctx.resume().catch(() => {});
+    if ('speechSynthesis' in window) speechSynthesis.resume();
+    resumeWaiters.splice(0).forEach(f => f());
+  }
   function stop() {
     epoch++;
     if (current) { const c = current; current = null; c.stop(); }
@@ -278,7 +299,7 @@ window.Voice = (() => {
   }
 
   return {
-    configure, enabled, unlock, prepare, play, stop, speakable, describe, preview,
+    configure, enabled, unlock, prepare, play, stop, pause, resume, speakable, describe, preview,
     speaking: () => speakingNow,
     status: () => status,
     device: () => (useServer() ? 'server' : workerDevice),

@@ -46,6 +46,15 @@ let steps = [];               // lesson history: [{say, by:'teacher'|'you', cmds
 let scrub = null;             // null = live board; otherwise {i, applied, live:{objs, camera}, playing}
 let narrationDone = Promise.resolve();
 let abortCtl = null, lastUserCamera = 0, autoId = 0;
+// Pause: a lesson clock that stops while paused. Pen tweens, pacing and typing run on it, so a paused
+// lesson freezes mid-stroke and resumes exactly there. The model's text keeps arriving in the background.
+let pausedAt = null, pausedTotal = 0;
+const pauseWaiters = [];
+const clock = () => (pausedAt ?? performance.now()) - pausedTotal;
+const isPaused = () => pausedAt != null;
+const whilePaused = () => pausedAt == null ? Promise.resolve() : new Promise(r => pauseWaiters.push(r));
+let activeStreams = 0;          // answers whose model stream is open (a paused, set-aside answer may keep streaming)
+let parked = null;              // {turn, abort, say}: an answer set aside to answer a question asked while paused
 const queue = [];
 const typers = new Set();
 
@@ -739,10 +748,10 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
 function tween(ms, fn, run, ease) {
   return new Promise(res => {
     if (instantMode() || !run || run.gen !== gen || ms <= 0 || document.hidden) { fn(1); return res(); }
-    const t0 = performance.now();
-    const step = now => {
+    const t0 = clock();
+    const step = () => {
       if (run.gen !== gen || document.hidden) { fn(1); return res(); }
-      const t = clamp((now - t0) / ms, 0, 1);
+      const t = clamp((clock() - t0) / ms, 0, 1);
       fn(ease ? ease(t) : t);
       if (t < 1) requestAnimationFrame(step); else res();
     };
@@ -786,9 +795,9 @@ function showPart(p) {
 // of what is left, and its strokes are slowed down or sped up (within limits) to fill that share.
 let pace = null, paceShare = null;
 const SPEAK_CPS = 14;                     // speaking pace used when narration is off (characters per second)
-function beginPace(seconds) { pace = seconds > 0.3 ? { until: performance.now() + seconds * 1000 } : null; }
+function beginPace(seconds) { pace = seconds > 0.3 ? { until: clock() + seconds * 1000 } : null; }
 function setPaceShare(remainingCmds) {
-  const left = pace ? pace.until - performance.now() : 0;
+  const left = pace ? pace.until - clock() : 0;
   paceShare = left > 200 ? left / Math.max(1, remainingCmds) : null;
 }
 const naturalMs = p => p.kind === 'stroke' ? Math.min(1400, Math.max(200, p.len * 1.3)) : p.kind === 'text' ? Math.min(2200, Math.max(220, p.chars * 55)) : 200;
@@ -1655,13 +1664,71 @@ function renderChips() {
   }
 }
 function updateSendBtn() {
-  const working = streaming || queueRunning || replaying || typers.size > 0 || Voice.speaking();
+  const working = streamingLive() || queueRunning || replaying || typers.size > 0 || Voice.speaking(), p = isPaused();
+  const pb = $('#pauseBtn'); pb.hidden = !working && !p; pb.textContent = p ? '▶' : '⏸'; pb.classList.toggle('on', p);
+  pb.title = p ? 'Resume the lesson' : 'Pause the lesson (you can ask something while paused)';
+  renderResumeBar();
   // while the teacher works you can still send: the message steers the answer (Stop is its own button)
   $('#stopBtn').hidden = !working;
   sendBtn.title = working ? 'Send now: the teacher finishes its sentence, then takes your message into account' : '';
-  input.placeholder = working ? 'Add something while the teacher answers…' : (inkSinceAsk.size && !penMode ? input.placeholder : 'Ask the teacher…');
+  input.placeholder = p ? 'Ask about it while paused… (▶ to resume)' : working ? 'Add something while the teacher answers…' : (inkSinceAsk.size && !penMode ? input.placeholder : 'Ask the teacher…');
 }
 $('#stopBtn').onclick = () => stopAll();
+$('#pauseBtn').onclick = () => setPaused(!isPaused());
+$('#resumeGo').onclick = () => continueParked();
+$('#resumeX').onclick = () => dropParked();
+
+function setPaused(on) {
+  if (on && pausedAt == null) { pausedAt = performance.now(); Voice.pause(); dlog('paused'); }
+  else if (!on && pausedAt != null) { pausedTotal += performance.now() - pausedAt; pausedAt = null; Voice.resume(); pauseWaiters.splice(0).forEach(f => f()); dlog('resumed'); }
+  document.body.classList.toggle('paused', isPaused());
+  updateSendBtn();
+}
+// a parked answer may still be streaming in the background: it does not count as "the teacher is answering"
+function streamingLive() { return activeStreams - (parked && !parked.turn.streamDone ? 1 : 0) > 0; }
+// A question asked while paused: set the paused answer aside (what is left of it, plus the sentence that was
+// cut short), answer the question, and offer to continue from there.
+let liveTurn = null;
+function parkLive() {
+  // already holding an answer to continue (this is a question about a side answer): keep the original lesson,
+  // just stop the side answer
+  if (parked) { stopAll(false); return; }
+  const t = liveTurn;
+  const busy = t && (!t.streamDone || queue.length || queueBusy || Voice.speaking());
+  if (!busy) { setPaused(false); return; }
+  t.parkedQ = queue.splice(0);
+  const cut = lastSay && lastSay.turn === t && (queueBusy || Voice.speaking() || (t.parkedQ.length && t.parkedQ[0].say == null));
+  if (cut) t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? Voice.prepare(lastSay.say) : null });
+  if (currentItem && currentItem.cmd && currentItem.turn === t) currentItem.keep = true;
+  parked = { turn: t, abort: t.abort, say: lastSay && lastSay.turn === t ? lastSay.say : '' };
+  dlog('set aside the paused answer:', t.parkedQ.length, 'lines', t.streamDone ? '' : '(still streaming)');
+  gen++; Voice.stop(); narrationDone = Promise.resolve(); finishTyping(); hideIcon(pen); hideIcon(eraser);
+  setPaused(false);
+}
+function continueParked() {
+  const p = parked; if (!p || streamingLive() || queueRunning) return;
+  parked = null;
+  const t = p.turn, items = t.parkedQ || []; t.parkedQ = null;
+  t.run.gen = gen;                                   // its remaining lines animate again
+  t.el = bubble({ role: 'assistant', text: '', meta: '' });
+  const lab = document.createElement('span'); lab.className = 'cont'; lab.textContent = '↩ continuing where we left off'; t.el.insertBefore(lab, t.el.firstChild);
+  Voice.unlock();
+  items.forEach(enqueue);
+  updateSendBtn();
+}
+function dropParked() {
+  const p = parked; if (!p) return;
+  parked = null;
+  if (p.abort && !p.turn.streamDone) p.abort.abort();
+  p.turn.parkedQ = null; p.turn.msg.interrupted = true;
+  updateSendBtn();
+}
+function renderResumeBar() {
+  const bar = $('#resumeBar'); if (!bar) return;
+  const show = !!parked && !streamingLive() && !queueRunning && ((parked.turn.parkedQ && parked.turn.parkedQ.length) || !parked.turn.streamDone);
+  bar.hidden = !show;
+  if (show) $('#resumeText').textContent = `⏸ Paused at: “${parked.say || 'the previous answer'}”`;
+}
 input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#composer').requestSubmit(); } });
 input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(120, input.scrollHeight) + 'px'; });
 $('#composer').addEventListener('submit', e => {
@@ -1670,7 +1737,8 @@ $('#composer').addEventListener('submit', e => {
   if (!q && [...inkSinceAsk].some(id => objs.has(id))) q = 'Check my drawing.';
   if (!q) return;
   input.value = ''; input.style.height = 'auto';
-  send(q, { steer: !scrub && (streaming || queueRunning) });
+  if (isPaused() && !scrub) send(q, { side: true });
+  else send(q, { steer: !scrub && (streamingLive() || queueRunning) });
 });
 $('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(); chat = []; renderChat(); saveSoon(); };
 $('#selAsk').onclick = () => input.focus();
@@ -1691,6 +1759,7 @@ function typeInto(turn, text, cps) {
   let acc = 0;
   const tick = () => {
     if (!turn.pendingType) { turn.typing = false; typers.delete(turn); updateSendBtn(); return; }
+    if (isPaused()) { turn.timer = setTimeout(tick, 100); return; }
     acc += turn.cps * 0.033; const n = Math.floor(acc); acc -= n;
     body.textContent += turn.pendingType.slice(0, n); turn.pendingType = turn.pendingType.slice(n);
     scrollChat(); turn.timer = setTimeout(tick, 33);
@@ -1702,13 +1771,15 @@ function finishTyping() {
   typers.clear(); updateSendBtn();
 }
 
-function stopAll() {
+function stopAll(dropPark = true) {
   if (queue.length || streaming) dlog('stopAll with', queue.length, 'queued, streaming=' + streaming, (new Error().stack || '').split('\n').slice(2, 5).map(l => l.trim().replace(/^at /, '')).join(' < '));
   gen++;
   queue.length = 0;
   Voice.stop(); narrationDone = Promise.resolve();
   if (scrub) scrub.playing = false;
   if (abortCtl) { abortCtl.abort(); abortCtl = null; }
+  if (isPaused()) setPaused(false);
+  if (dropPark) dropParked();
   finishTyping();
   hideIcon(pen); hideIcon(eraser);
   updateSendBtn();
@@ -1718,29 +1789,38 @@ function stopAll() {
 // queue: say lines type while the commands after them draw
 // ======================================================================
 let queueBusy = false;       // a board command is being drawn right now
-function enqueue(item) { queue.push(item); if (!queueRunning) runQueue(); }
+// sleep that only counts unpaused time, so a long pause never makes the queue give up and skip ahead
+function psleep(ms) { return new Promise(res => { let left = ms, last = performance.now(); const id = setInterval(() => { const now = performance.now(); if (!isPaused()) left -= now - last; last = now; if (left <= 0) { clearInterval(id); res(); } }, 100); }); }
+let currentItem = null, lastSay = null;
+function enqueue(item) {
+  if (item.turn && item.turn.parkedQ) { item.turn.parkedQ.push(item); return; }   // its answer is set aside: keep for Continue
+  queue.push(item); if (!queueRunning) runQueue();
+}
 async function runQueue() {
   queueRunning = true; updateSendBtn();
   for (;;) {
   while (queue.length) {
-    const it = queue.shift();
+    await whilePaused();
+    const it = queue.shift(); if (!it) continue;
+    currentItem = it;
     try {
     if (it.say != null) {
+      lastSay = it;
       recordSay(it.turn, it.say);
       if (it.voice && Voice.enabled()) {
         // one narrated sentence at a time: wait until the previous one (and the drawing after it) is done
         const w0 = Date.now();
-        await Promise.race([narrationDone, sleep(45000)]);
-        if (Date.now() - w0 > 44000) dlog('narration wait timed out; continuing');
+        await Promise.race([narrationDone, psleep(45000)]);
+        if (Date.now() - w0 > 44000 && !isPaused()) dlog('narration wait timed out; continuing');
         if (it.run && it.run.gen !== gen) continue;
-        const r = await Promise.race([Voice.play(it.voice), sleep(100000).then(() => { dlog('voice.play timed out'); return { duration: 0, done: Promise.resolve() }; })]);
+        const r = await Promise.race([Voice.play(it.voice), psleep(100000).then(() => { dlog('voice.play timed out'); return { duration: 0, done: Promise.resolve() }; })]);
         if (it.run && it.run.gen !== gen) continue;
         dlog('say', r.duration ? r.duration.toFixed(1) + 's' : 'no audio', JSON.stringify(it.say.slice(0, 50)));
         beginPace(r.duration || it.say.length / SPEAK_CPS);
-        typeInto(it.turn, it.say, r.duration ? it.say.length / r.duration : null);
+        if (!it.repeat) typeInto(it.turn, it.say, r.duration ? it.say.length / r.duration : null);
         narrationDone = r.done.then(() => sleep(250)); r.done.then(updateSendBtn);
         updateSendBtn();
-      } else { beginPace(it.say.length / SPEAK_CPS); typeInto(it.turn, it.say, SPEAK_CPS); }
+      } else { beginPace(it.say.length / SPEAK_CPS); if (!it.repeat) typeInto(it.turn, it.say, SPEAK_CPS); }
       continue;
     }
     const run = it.run;
@@ -1752,7 +1832,7 @@ async function runQueue() {
     setPaceShare(1 + (nextSay < 0 ? queue.length : nextSay));
     await execCommand(it.cmd, run, true);
     paceShare = null; queueBusy = false;
-    if (run.gen === gen) recordCmd(it.turn, it.cmd);
+    if (run.gen === gen || it.keep) recordCmd(it.turn, it.cmd);   // keep: finished instantly when its answer was set aside
     if (before) it.turn.drew.add(before);
     if (it.cmd.cmd === 'erase') it.cmd.ids.forEach(i => it.turn.drew.add('erased ' + i));
     } catch (err) {
@@ -1761,10 +1841,10 @@ async function runQueue() {
     }
   }
   // let the last sentence finish; more lines may stream in meanwhile, so check again before going idle
-  await Promise.race([narrationDone, sleep(45000)]);
+  await Promise.race([narrationDone, psleep(45000)]);
   if (!queue.length) break;
   }
-  queueRunning = false; updateSendBtn();
+  queueRunning = false; currentItem = null; updateSendBtn(); renderResumeBar();
 }
 
 // ======================================================================
@@ -2031,17 +2111,18 @@ async function softStop() {
   if (k >= 0) { dlog('steer: dropped', queue.length - k, 'queued lines'); if (queue[k].turn) queue[k].turn.msg.interrupted = true; queue.splice(k); }
   const t0 = Date.now();
   while ((streaming || queueRunning) && Date.now() - t0 < 25000) await sleep(80);
-  if (streaming || queueRunning) stopAll();
+  if (streamingLive() || queueRunning) stopAll(false);
   steering = false;
 }
 async function send(q, opts = {}) {
   if (!lesson) { openTopic(true); return; }
-  if (opts.steer && (streaming || queueRunning) && !scrub) {
+  if (opts.side) parkLive();
+  else if (opts.steer && (streamingLive() || queueRunning) && !scrub) {
     const um = { role: 'user', text: q, steer: true }; // shown right away; the answer follows once the sentence ends
     const pendingEl = bubble(um); pendingEl.classList.add('pending');
     await softStop();
     pendingEl.remove();
-  } else if (streaming || queueRunning || replaying || scrub) stopAll();
+  } else if (streamingLive() || queueRunning || replaying || scrub) stopAll(false);
   if (scrub) exitScrub();
   Voice.unlock();
   $('#modelPop').hidden = true;
@@ -2067,7 +2148,8 @@ async function send(q, opts = {}) {
   const effort = eff === 'auto' ? null : eff;
   const run = { gen };
   abortCtl = new AbortController(); const myAbort = abortCtl;
-  streaming = true; updateSendBtn();
+  turn.run = run; turn.abort = myAbort; liveTurn = turn;
+  activeStreams++; streaming = true; updateSendBtn();
 
   // live "thinking" indicator so a slow reasoning model never looks frozen
   const t0 = Date.now(); let reasoningChars = 0;
@@ -2117,7 +2199,8 @@ async function send(q, opts = {}) {
     }
   } finally {
     clearInterval(thinkTimer);
-    streaming = false; if (abortCtl === myAbort) abortCtl = null;
+    activeStreams = Math.max(0, activeStreams - 1); streaming = activeStreams > 0; turn.streamDone = true;
+    if (abortCtl === myAbort) abortCtl = null;
     updateSendBtn();
     const finalize = (final) => {
       am.text = turn.text.trim(); am.drew = [...turn.drew].slice(0, 80);
@@ -2129,7 +2212,8 @@ async function send(q, opts = {}) {
       renderChips(); saveSoon();
     };
     const tEnd = Date.now();
-    const waitDone = () => { if ((queueRunning || typers.size || Voice.speaking()) && Date.now() - tEnd < 600000) setTimeout(waitDone, 200); else finalize(true); };
+    // an answer set aside (paused + a question) is finalized only once it is continued or dropped
+    const waitDone = () => { if (turn.parkedQ || ((queueRunning || typers.size || Voice.speaking()) && Date.now() - tEnd < 600000)) setTimeout(waitDone, 200); else finalize(true); };
     finalize(); waitDone();
   }
 }

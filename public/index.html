@@ -116,6 +116,11 @@
         <span id="selText"></span>
         <button id="selAsk">Ask</button><button id="selErase">Erase</button><button id="selClear" title="Clear selection">✕</button>
       </div>
+      <div id="resumeBar" hidden>
+        <span id="resumeText"></span>
+        <button id="resumeGo" type="button">▶ Continue</button>
+        <button id="resumeX" type="button" title="Drop the rest of that answer">✕</button>
+      </div>
       <div id="chips"></div>
       <div id="attach" hidden>
         <img id="attachImg" alt="your drawing">
@@ -124,6 +129,7 @@
       </div>
       <form id="composer">
         <textarea id="input" rows="1" placeholder="Ask the teacher…"></textarea>
+        <button id="pauseBtn" type="button" hidden title="Pause the lesson (you can ask something while paused)">⏸</button>
         <button id="stopBtn" type="button" hidden title="Stop the teacher">Stop</button>
         <button id="sendBtn" type="submit">Send</button>
       </form>
