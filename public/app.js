@@ -1808,6 +1808,7 @@ async function runQueue() {
     if (it.say != null) {
       lastSay = it;
       recordSay(it.turn, it.say);
+      if (EMBED) liveCaption(it.say);
       if (it.voice && Voice.enabled()) {
         // one narrated sentence at a time: wait until the previous one (and the drawing after it) is done
         const w0 = Date.now();
@@ -2522,6 +2523,15 @@ function renderTitle() {
 // (/api/board/*). Questions are asked in opencode; the chat here shows the teacher's captions.
 // ======================================================================
 const MCP_MODE = new URLSearchParams(location.search).get('mode') === 'mcp';
+// embed=1: shown inside opencode Desktop's side panel, next to opencode's own chat, so the chat column is hidden
+// and each spoken line shows as a caption over the board instead.
+const EMBED = MCP_MODE && new URLSearchParams(location.search).get('embed') === '1';
+let captionTimer = null;
+function liveCaption(text) {
+  if (scrub) return;
+  const c = $('#caption'); c.textContent = text; c.hidden = false;
+  clearTimeout(captionTimer); captionTimer = setTimeout(() => { if (!scrub) c.hidden = true; }, Math.max(4000, text.length / SPEAK_CPS * 1000 + 1500));
+}
 let mcpTurn = null;
 // Draw calls that come in close together belong to one answer (one chat bubble, one answer on the timeline).
 function mcpTurnNow() {
@@ -2632,6 +2642,7 @@ function mcpConnect() {
 }
 function mcpSetup() {
   document.body.classList.add('mcpMode');
+  if (EMBED) document.body.classList.add('embed');
   $('#modelSelect').closest('label').hidden = true;
   $('#tidyChk').closest('label').hidden = true;
   $('#emptyHint').textContent = 'Ask in opencode → its answer is drawn here';

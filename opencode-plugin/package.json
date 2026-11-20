@@ -1,0 +1,11 @@
+{
+  "name": "opencode-whiteboard",
+  "version": "0.1.0",
+  "description": "Whiteboard Teacher inside opencode Desktop: a side panel showing the live whiteboard",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./server.js",
+    "./gui-experimental": "./gui.cjs"
+  }
+}

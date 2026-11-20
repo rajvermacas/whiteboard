@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { spawn } = require('child_process');
+const { boardStatus, ensureBoardServer } = require('./launch.cjs');
 
 const BASE = (process.env.WHITEBOARD_URL || `http://127.0.0.1:${process.env.PORT || 5173}`).replace(/\/+$/, '');
 const BOARD_URL = BASE + '/?mode=mcp';
@@ -139,36 +140,23 @@ const PROMPTS = [{
 // reaching the board: server.js, then an open board page
 // ---------------------------------------------------------------------------------------------------------------
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-async function status() {
-  try {
-    const r = await fetch(BASE + '/api/board/status', { signal: AbortSignal.timeout(1500) });
-    if (!r.ok) return { reachable: true, ours: false };
-    const j = await r.json();
-    return { reachable: true, ours: j.app === 'whiteboard-teacher', boards: j.boards || 0 };
-  } catch { return { reachable: false }; }
-}
-let started = false, openedAt = 0;
+// A board inside opencode Desktop's side panel (opencode-plugin) connects on its own once a whiteboard tool runs;
+// give it this long before opening a browser tab instead.
+const OPEN_DELAY = Math.max(0, Number(process.env.WHITEBOARD_OPEN_DELAY_MS ?? 5000) || 0);
+let openedAt = 0;
 async function ensureBoard() {
-  let st = await status();
-  if (!st.reachable && !started) {
-    started = true;
-    const port = new URL(BASE).port || '80';
-    log('starting the board server on port', port);
-    // detached: the board keeps running (and stays open) when the MCP client exits
-    const child = spawn(process.execPath, [path.join(__dirname, 'server.js')], { cwd: __dirname, detached: true, stdio: 'ignore', env: { ...process.env, PORT: port } });
-    child.unref();
-    for (let i = 0; i < 40 && !st.reachable; i++) { await sleep(250); st = await status(); }
-  }
+  let st = await ensureBoardServer(BASE, { log });
   if (!st.reachable) throw new Error(`The whiteboard server is not running and could not be started. Run \`npm start\` in ${__dirname}.`);
   if (!st.ours) throw new Error(`${BASE} answers but has no board bridge: either an older Whiteboard Teacher server is still running (stop it and run \`npm start\` again in ${__dirname}) or another program uses that port (then set WHITEBOARD_URL for the whiteboard MCP server).`);
   if (st.boards) return;
+  for (let t = 0; t < OPEN_DELAY; t += 250) { await sleep(250); if ((st = await boardStatus(BASE)).boards) { await sleep(400); return; } }
   if (AUTO_OPEN && Date.now() - openedAt > 30000) {
     openedAt = Date.now();
     const opener = process.platform === 'darwin' ? ['open', [BOARD_URL]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', BOARD_URL]] : ['xdg-open', [BOARD_URL]];
     try { spawn(opener[0], opener[1], { detached: true, stdio: 'ignore' }).unref(); log('opened', BOARD_URL); } catch (e) { log('could not open a browser:', e.message); }
   }
-  for (let i = 0; i < 60; i++) { await sleep(250); st = await status(); if (st.boards) { await sleep(400); return; } }
-  throw new Error(`No whiteboard is open. Ask the learner to open ${BOARD_URL} in a browser, then try again.`);
+  for (let i = 0; i < 60; i++) { await sleep(250); st = await boardStatus(BASE); if (st.boards) { await sleep(400); return; } }
+  throw new Error(`No whiteboard is open. Open the Whiteboard tab in opencode Desktop (+ in the side panel), or ${BOARD_URL} in a browser, then try again.`);
 }
 async function boardCall(method, params, timeoutMs) {
   await ensureBoard();

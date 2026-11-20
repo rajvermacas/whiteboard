@@ -185,3 +185,7 @@ foreignObject .katex { font-size: 1em; }
 
 /* opencode mode (/?mode=mcp): questions are asked in opencode, so the composer and model controls go away */
 .mcpMode #composer, .mcpMode #chips, .mcpMode #selAsk, .mcpMode .effortRow, .mcpMode #effortNote, .mcpMode #resumeBar { display: none !important; }
+/* embed=1 (inside opencode Desktop's side panel): the board fills the panel; captions show over it */
+.embed #chat { display: none !important; }
+.embed #boardWrap { flex: 1 1 auto !important; }
+.embed #fsBtn { display: none; }

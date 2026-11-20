@@ -161,7 +161,28 @@ opencode ─stdio─▶ mcp.js ─POST /api/board/call─▶ server.js ─SSE─
                     └──────────── result (ids, issues, PNG) ◀── POST /api/board/result
 ```
 
-Options (set in the server entry's `"environment"`): `WHITEBOARD_URL` (default `http://127.0.0.1:5173`), `WHITEBOARD_OPEN=0` to never open a browser.
+Options (set in the server entry's `"environment"`): `WHITEBOARD_URL` (default `http://127.0.0.1:5173`), `WHITEBOARD_OPEN=0` to never open a browser, `WHITEBOARD_OPEN_DELAY_MS` (default 5000) to wait for the Desktop tab before opening one.
+
+## The Whiteboard tab in opencode Desktop (plugin)
+
+`opencode-plugin/` puts the board inside opencode Desktop, as a **Whiteboard** tab in the session's side panel, next to the conversation. It uses opencode's experimental GUI plugin API (`./gui-experimental`), so an opencode update may break it.
+
+- **Opening the tab:** it opens by itself when the model starts drawing (a whiteboard tool call). You can also open it from **+** in the side panel → *Whiteboard*, or with *Toggle whiteboard* in the command palette.
+- **What the tab shows:** the board in embedded mode (`/?mode=mcp&embed=1`). There's no chat column, since opencode's chat is right beside it, and each spoken line shows as a caption over the board. Draw, select, replay, sessions and 🔊 narration all work as in the browser.
+- **The board server:** the plugin's server half starts `server.js` when opencode starts, if it isn't already running. So the tab has a board even before the first drawing.
+- **Drawing:** the plugin only shows the board. Drawing still goes through the MCP server above, so set up both.
+
+**Set up** by adding this next to `"mcp"` in `~/.config/opencode/opencode.json`. `node` is the Node.js binary that runs the board server (the full path from `which node`); `url` is optional (default `http://127.0.0.1:5173`).
+
+```json
+"plugins": [
+  { "package": "/full/path/to/whiteboard/opencode-plugin", "options": { "node": "/full/path/to/node" } }
+]
+```
+
+Then quit and reopen opencode Desktop. *Settings → Extensions → Plugins* should list `whiteboard` as active, and **+** in the side panel offers *Whiteboard*.
+
+When the tab is open, the MCP server draws there and doesn't open a browser tab. It waits `WHITEBOARD_OPEN_DELAY_MS` (default 5000) for the tab to connect before falling back to the browser.
 
 ## Config (.env)
 
@@ -186,6 +207,8 @@ Options (set in the server entry's `"environment"`): `WHITEBOARD_URL` (default `
 ```
 server.js             Node server: OpenCode Go proxy, sessions, Kokoro voice (optional kokoro-js dependency), board bridge for mcp.js
 mcp.js                MCP server (stdio) that lets opencode or another MCP client teach on the board
+launch.cjs            finds or starts the board server (used by mcp.js and the plugin)
+opencode-plugin/      opencode Desktop plugin: the Whiteboard side tab (gui.cjs) and board-server start (server.js)
 public/index.html     layout
 public/style.css      styles
 public/app.js         board engine, pen, drawing tools, layout, timeline, chat, prompt, sessions
