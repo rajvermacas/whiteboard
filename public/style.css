@@ -86,6 +86,7 @@ button { font: inherit; cursor: pointer; }
 #sendBtn.stop { background: #d1382c; }
 #stopBtn { border: 1px solid #f0c4bf; background: #fff; color: #d1382c; border-radius: 10px; padding: 0 12px; font-weight: 600; }
 #stopBtn[hidden] { display: none; }
+#toolbar .newBtn { background: #1d6fb8; color: #fff; border-color: #1d6fb8; font-weight: 600; }
 #pauseBtn { border: 1px solid #cfd8e3; background: #fff; color: #1d6fb8; border-radius: 10px; padding: 0 11px; font-size: 15px; }
 #pauseBtn.on { background: #1d6fb8; color: #fff; border-color: #1d6fb8; }
 #pauseBtn[hidden] { display: none; }

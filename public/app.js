@@ -1492,14 +1492,15 @@ function saveSoon() {
   clearTimeout(serverTimer); serverTimer = setTimeout(saveToServer, 1200);
 }
 function saveNow() {
-  if (!lesson) return;
+  if (!lesson || untouched()) return;
   try {
     localStorage.setItem(LS_CURRENT, lesson.session);
     localStorage.setItem('wbt.s.' + lesson.session, JSON.stringify(snapshot()));
   } catch { /* storage full or blocked: the server copy still works */ }
 }
+const untouched = () => lesson && lesson.autoName && !chat.some(m => m.role === 'user') && !objs.size;
 async function saveToServer(keepalive = false) {
-  if (!lesson || !dirty) return;
+  if (!lesson || !dirty || untouched()) return;
   dirty = false;
   const st = $('#saveState');
   try {
@@ -1611,8 +1612,8 @@ async function openSessions() {
   if (!sessDlg.open) sessDlg.showModal();
 }
 $('#sessionsBtn').onclick = openSessions;
-$('#sessClose').onclick = () => { sessDlg.close(); if (!lesson) openTopic(); };
-$('#sessNew').onclick = () => { sessDlg.close(); openTopic(true); };
+$('#sessClose').onclick = () => { sessDlg.close(); if (!lesson) newSession(); };
+$('#sessNew').onclick = () => { sessDlg.close(); newSession(); };
 
 // ======================================================================
 // chat UI
@@ -1653,7 +1654,7 @@ function renderChips() {
   } else if (ids.length > 1) {
     add('How are these connected?'); add('Compare these'); add('Hinglish mein samjhao ye kaise jude hain');
   } else if (!chat.some(m => m.role === 'user')) {
-    add(`Explain ${lesson.topic}`, `Explain ${lesson.topic}, starting from the big picture, with one concrete example.`, true);
+    if (!lesson.autoName) add(`Explain ${lesson.topic}`, `Explain ${lesson.topic}, starting from the big picture, with one concrete example.`, true);
   } else {
     // follow-ups the teacher suggested for what it just drew; the generic ones otherwise
     const last = [...chat].reverse().find(m => m.role === 'assistant');
@@ -2115,7 +2116,7 @@ async function softStop() {
   steering = false;
 }
 async function send(q, opts = {}) {
-  if (!lesson) { openTopic(true); return; }
+  if (!lesson) newSession();
   if (opts.side) parkLive();
   else if (opts.steer && (streamingLive() || queueRunning) && !scrub) {
     const um = { role: 'user', text: q, steer: true }; // shown right away; the answer follows once the sentence ends
@@ -2142,6 +2143,7 @@ async function send(q, opts = {}) {
   renderChips(); saveSoon();
 
   let model = settings.model || (models[0] && models[0].id);
+  if (lesson.autoName) nameSession(q, model);   // in parallel with the answer, same model
   // a sketch needs a model that can see images
   if (image && !(modelInfo(model) || {}).vision) { const v = models.find(m => m.id === 'deepseek-v4.1-flash' && m.vision) || models.find(m => m.vision); if (v) model = v.id; }
   const eff = model === settings.model ? currentEffort() : defaultEffort(model);
@@ -2445,6 +2447,41 @@ Voice.onStatus(renderVoiceStatus);
 // ======================================================================
 const dlg = $('#topicDlg');
 let topicIsNew = false;
+// New session: starts at once with a default name; the first question names it (see nameSession).
+async function newSession() {
+  if (lesson && !untouched()) { saveNow(); await saveToServer(); }
+  stopAll(); if (scrub) exitScrub(); resetBoard(); chat = []; steps = []; updateTimeline();
+  lesson = { topic: 'New session', autoName: true, plan: null, session: 'wbt-' + uuid() };
+  sessionCreatedAt = new Date().toISOString();
+  camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
+  renderTitle(); renderChat(); input.focus();
+}
+$('#newBtn').onclick = () => newSession();
+// Ask the selected model, in parallel with the answer, for a short title from the first question.
+async function nameSession(q, model) {
+  const L = lesson; if (!L || !L.autoName || L.naming) return;
+  L.naming = true;
+  try {
+    const eff = defaultEffort(model);
+    const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, effort: eff === 'auto' ? null : eff, session: L.session + '-title', messages: [
+      { role: 'system', content: 'You name whiteboard lessons. Reply with only a short title of 2-5 words for a lesson that starts with the learner question below: the subject, in Title Case, in the language of the question, no quotes, no trailing punctuation.' },
+      { role: 'user', content: q.slice(0, 800) }] }) });
+    if (!res.ok || !res.body) throw new Error('http ' + res.status);
+    const reader = res.body.getReader(), dec = new TextDecoder(); let sse = '', out = '';
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      sse += dec.decode(value, { stream: true }); let nl;
+      while ((nl = sse.indexOf('\n')) >= 0) {
+        const ln = sse.slice(0, nl).trim(); sse = sse.slice(nl + 1);
+        if (!ln.startsWith('data:')) continue; const d = ln.slice(5).trim(); if (!d || d === '[DONE]') continue;
+        try { const j = JSON.parse(d), c = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content; if (typeof c === 'string') out += c; } catch {}
+      }
+    }
+    const title = (out.split('\n').map(x => x.trim()).find(Boolean) || '').replace(/^(title|name)\s*:\s*/i, '').replace(/^["'“”*#\s]+|["'“”*.\s]+$/g, '').slice(0, 60);
+    if (title && lesson === L && L.autoName) { L.topic = title; L.autoName = false; renderTitle(); saveSoon(); dlog('session named', JSON.stringify(title)); }
+  } catch (e) { dlog('naming the session failed', String(e)); }
+  L.naming = false;
+}
 function openTopic(forceNew = false) {
   topicIsNew = forceNew === true || !lesson;
   const L = topicIsNew ? null : lesson;
@@ -2469,7 +2506,7 @@ $('#topicForm').addEventListener('submit', async e => {
     lesson = { ...next, plan: null, session: 'wbt-' + uuid() };
     sessionCreatedAt = new Date().toISOString();
     camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
-  } else lesson = { ...lesson, ...next };   // renaming keeps the board and chat
+  } else lesson = { ...lesson, ...next, autoName: false };   // renaming keeps the board and chat; a name you chose is never replaced
   renderTitle(); renderChat(); saveSoon();
 });
 function renderTitle() {
@@ -2490,7 +2527,7 @@ function renderTitle() {
   applyVoice(); updateTimeline();
   renderTitle(); renderChat(); applyCamera();
   await loadModels();
-  if (!had) { const list = await listSessions(); if (list.length) openSessions(); else openTopic(true); }
+  if (!had) newSession();
   // test hook (used by the automated check only)
   window.__wbt = { objs, camera: () => camera, execCommand: (raw, animate = true) => { const c = normalize(raw); return c && execCommand(c, { gen }, animate); }, selection, stopAll, send, lesson: () => lesson, steps: () => steps, scrub: () => scrub, showStep, stepBy, exitScrub };
 })();
