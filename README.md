@@ -1,6 +1,6 @@
 # Whiteboard Teacher (local)
 
-An AI teacher that explains **any topic** on an infinite whiteboard. You ask in the side chat; the teacher answers there and, at the same time, writes, sketches, highlights, moves and erases on the board with an animated pen. It is modelled on Claude's *whiteboard-teacher* artifact and uses **OpenCode Go** as the LLM.
+An AI teacher that explains **any topic** by drawing on an infinite whiteboard. You ask in the side chat; the teacher answers with short caption lines in the chat while a pen draws the explanation on the board: icons, token rows, message diagrams, time charts and labelled arrows rather than paragraphs. It is modelled on Claude's *whiteboard-teacher* artifact and uses **OpenCode Go** as the LLM.
 
 ## Run it
 
@@ -8,52 +8,53 @@ Requires **Node.js 18+**.
 
 ```bash
 cd ~/Projects/whiteboard
-npm install               # once: installs the natural voice (Kokoro) for the server
-cp .env.example .env      # skip if .env already exists; put your key in it
+cp .env.example .env      # skip if .env already exists; put your OpenCode Go key in it
+npm install               # optional: the natural voice for narration (see below)
 npm start                 # → http://127.0.0.1:5173
 ```
 
-Open the URL, name the session, and ask anything.
+Open the URL, give the session a name, and ask anything.
 
-The first time the server starts after `npm install`, it downloads the voice model (~90 MB, once). The app also works without `npm install`, but the voice is then generated inside the browser, which is slow (especially in Safari) and often falls back to the browser's robotic voice.
+To get the latest version: `git pull`, then restart the server.
 
-## How it works
+## What the teacher does
 
-```
-browser (public/)  ──POST /api/chat──▶  server.js  ──stream──▶  OpenCode Go /v1/chat/completions
-     ▲  JSON Lines: {"say":…} → chat         (adds API key,
-     └─ {"cmd":"box"|"arrow"|…} → board        x-opencode-session)
-```
+**Draws first, talks little.** Every idea becomes a picture. Spoken lines are one short sentence each, shown in the chat like captions (at most 6 per answer, about 12 words each). Board text is limited to labels of a few words. The app enforces this: it trims long lines and over-wordy board text, and if an answer comes back with fewer than 4 pictures, it asks the model once to draw it.
 
-* `server.js` is a tiny Node server. It serves the app and proxies to OpenCode Go, so **the API key stays on the server** and never reaches the browser. It sends a stable `x-opencode-session` per lesson, which OpenCode Go requires.
-* The model replies in JSON Lines. `say` lines type into the chat while the board commands that follow are drawn by the pen. The board commands are write, box, circle, vector, matrix, bars, plot, line, arrow, highlight, update, move, erase, clear and wait.
-* Each request gets a fresh prompt containing the lesson, the colour code, a summary of the board (bounds, free space, up to 70 objects), your selection and the last 8 turns.
-* Generated content is never executed: numbers are clamped, text is inserted as text, and lists are capped (60 commands per answer, 400 objects on the board).
+**Drawing tools.** The model describes the structure and the app lays it out neatly:
 
-## What the teacher can do
+| Tool | Used for |
+|---|---|
+| `icon` | about 45 hand-drawn icons: gpu, server, database, person, document, cloud, brain, clock, lock, memory, queue… |
+| `tokens` | a row (or stack) of chips: tokens, words, slots, queues, array cells |
+| `sequence` | who sends what to whom, in order: protocols, API calls, requests |
+| `schedule` | lanes against time steps: batching, CPU scheduling, pipelines |
+| `frame` / `brace` | group related things / measure or name a span |
+| `arrow`, `box`, `circle`, `line`, `highlight` | connections, components, pointing at things |
+| `graph`, `tree`, `network` | flowcharts and state machines, hierarchies, neural-network layers |
+| `bars`, `numberline`, `timeline`, `vector`, `matrix`, `plot`, `table` | amounts, positions, history, numbers, functions |
+| `math`, `code` | typeset LaTeX (KaTeX), syntax-highlighted code |
+| `update`, `move`, `erase`, `clear` | change the board step by step |
 
-**Draws first, talks little.** The teacher explains by drawing: icons, token rows, diagrams and time charts carry the explanation. Spoken lines are one short sentence each, shown in the chat like captions. Board text is limited to labels of a few words; the app trims long sentences and over-wordy board text, and asks the model to draw if an answer comes back as mostly talk.
+Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`) instead of at guessed coordinates, and overlapping objects are pushed apart.
 
-**Drawing tools the model uses** (it describes structure; the app lays it out neatly):
-- `icon`: about 45 hand-drawn icons (gpu, server, database, person, document, cloud, brain, clock, lock, memory, queue…)
-- `tokens`: a row of chips for tokens, words, slots, queues and array cells
-- `sequence`: who sends what to whom, in order (protocols, API calls)
-- `schedule`: lanes against time steps (batching, CPU scheduling, pipelines)
-- `frame` groups things, `brace` measures or names a span, and `arrow` connects
-- `graph`, `tree`, `network`, `bars`, `numberline`, `timeline`, `vector`, `matrix`, `plot`, `table`, `math` (KaTeX) and `code`
-- **Relative placement:** `"near":{"of":"gpu","side":"right"}` puts things next to each other instead of at guessed coordinates; overlaps are pushed apart
-
-**⏯ Steps and timeline.** Every spoken line, plus the drawing that goes with it, is a step. The bar at the bottom of the board lets you:
+**⏯ Steps and timeline.** Every caption line, plus the drawing that goes with it, is a step. The bar under the board lets you:
 - step back and forward with ‹ › or the ← → keys,
 - drag the slider to any step,
-- press ▶ to replay the lesson from there,
+- press ▶ to replay from there,
 - press **Live** to return to the current board.
 
-**✏️ Draw back.** Press **Draw** and sketch (4 colours, undo), then press **Check my drawing**. Your drawing is attached to the next message, with a thumbnail above the input. Type a question about it, or just press Send, and the teacher works out from the picture what you drew. You never have to describe it. It names what it sees, answers or checks it, and draws the corrected version next to your sketch. ✕ removes the attachment.
+**Replay** plays the whole lesson. Your own moves, erases and sketches are recorded too, so replays match the board.
 
-**🔊 Narration (off by default).** Turn it on in ⚙ → Narration. It uses **Kokoro** (default voice Heart, plus Bella, Nicole, Sarah, Michael, Fenrir, Puck, Emma, Isabella, George, Fable) generated by the local server, which needs `npm install` once. Without it, the browser's voice is used, which sounds robotic. **▶ Preview voice** lets you hear a voice before using it.
+**✏️ Draw back.** Press **Draw** and sketch (4 colours, undo), then press **Check my drawing**. The sketch is attached to your next message, with a thumbnail above the input. Type a question about it, or just press Send. The teacher works out from the picture what you drew, so you never have to describe it. It says what it sees, answers or checks it, and draws the corrected version next to your sketch. ✕ removes the attachment. If the selected model can't see images, DeepSeek V4.1 Flash checks the sketch for that question.
 
-**Sessions.** Each session has just a name, which is a label only: you can ask about anything in any session. Sessions are saved automatically to `sessions/`, and 🗂 Sessions lists them so you can resume or delete one.
+**Sessions.** A session has just a name, which is a label only: you can ask about anything in any session. Sessions save automatically to `sessions/` as you go. 🗂 **Sessions** lists them so you can resume or delete one; reopening the page resumes the last one.
+
+**🔊 Narration (off by default).** Turn it on in ⚙ → Narration; 🔊 in the toolbar mutes it.
+- **Voice:** it uses **Kokoro**, generated by the local server, which needs `npm install` once. The voice model (~90 MB) downloads the first time the server starts.
+- **Voices:** Heart (default), Bella, Nicole, Sarah, Michael, Fenrir, Puck, Emma, Isabella, George and Fable. **▶ Preview voice** plays one before you use it.
+- **Pacing:** while narrating, each sentence is spoken as its drawing appears, and the next one waits until both are done.
+- **Fallback:** without `npm install`, or if the voice can't keep up, the browser's built-in voice is used instead, which sounds robotic. The settings panel always says which voice is speaking and why.
 
 ## Using the board
 
@@ -62,18 +63,41 @@ browser (public/)  ──POST /api/chat──▶  server.js  ──stream──�
 | Pan | drag empty space · mouse wheel (Shift = sideways) |
 | Zoom | Ctrl/⌘ + wheel · trackpad / two-finger pinch · double-click (Shift = out) · − / + buttons |
 | Select | tap an object · Shift/Ctrl/⌘-tap to add more · tap empty space to clear |
-| Move | drag a selected object (its arrows and highlights follow) |
+| Move | drag a selected object (its arrows, frames and highlights follow) |
 | Erase | Delete/Backspace, or **Erase** in the "Selected" line |
 | Ask about it | select, then use the chips or type ("What is X?", "Change X to another example", Hinglish…) |
-| Replay / Wipe / Fit / Full screen | toolbar · 🐢 slows the pen |
-| Steps | timeline bar at the bottom · ← → keys · ▶ replays with narration · **Live** returns |
+| Steps | timeline bar under the board · ← → keys · ▶ replays · **Live** returns |
 | Draw yourself | **✏️ Draw** → sketch → **Check my drawing** → ask (optional) → Send |
+| Replay / Wipe / Fit / Full screen | toolbar · 🐢 slows the pen |
+| Rename the session | click its name at the top left |
 
-**Model picker** (⚙ in the chat header): every model on your OpenCode Go plan, grouped as Featured, Free and All others, with the exact name and id from the API. Models whose native format isn't Chat Completions (Muse Spark, GPT, Grok, Claude, Qwen, MiniMax M3, Gemini) work too, because OpenCode translates the request. The **reasoning** buttons show only the levels that model supports (None, Minimal, Low, Medium, High, X-High, **Max**), plus Auto (the model's own default). The choice is remembered per model. Lower levels start drawing sooner. Free models with no adjustable level (LongCat, Iceman, MiMo, Kimi Code) can take 1–2 minutes to think before they draw.
+**Model picker** (⚙ in the chat header):
+- **Models:** every model on your OpenCode Go plan, grouped as Featured, Free and All others. Models whose native format isn't Chat Completions (Muse Spark, GPT, Grok, Claude, Qwen, MiniMax M3, Gemini) work too, because OpenCode translates the request.
+- **Reasoning:** the buttons show only the levels the model supports (None, Minimal, Low, Medium, High, X-High, Max), plus Auto. The choice is remembered per model. Lower levels start drawing sooner.
+- **Slow models:** free models without a reasoning setting (LongCat, Iceman, MiMo, Kimi Code) can think for 1–2 minutes before drawing.
 
-If a model spends its whole token budget thinking and never writes an answer, the chat tells you to pick a lower reasoning level. If an answer comes back empty, it is retried once.
+## How it works
 
-**The teacher always draws.** You never need to ask for the board. If a model answers with talk only, the app automatically asks it once to put that explanation on the board.
+```
+browser (public/)  ──POST /api/chat──▶  server.js  ──stream──▶  OpenCode Go /v1/chat/completions
+     ▲  JSON Lines: {"say":…} → chat caption        (adds the API key and
+     └─ {"cmd":"icon"|"tokens"|…} → board            an x-opencode-session id)
+```
+
+* **The server:** `server.js` serves the app and proxies to OpenCode Go, so **the API key stays on the server** and never reaches the browser.
+  - `/api/sessions` stores lessons on disk.
+  - `/api/tts` generates narration with Kokoro, when installed.
+* **Each request** gets a fresh prompt containing:
+  - the session name,
+  - a summary of the board (bounds, free space, up to 70 objects),
+  - your selection or sketch,
+  - the last 8 turns.
+
+  The model first writes one hidden planning line (which pictures, which tools), then alternates caption lines with drawing commands.
+* **Generated content is never executed:**
+  - numbers are clamped and text is inserted as text,
+  - lists are capped (90 commands and 5 `write`s per answer, 600 objects on the board),
+  - a malformed line or a failing drawing is skipped and logged, never left to stall the answer.
 
 ## Config (.env)
 
@@ -86,20 +110,25 @@ If a model spends its whole token budget thinking and never writes an answer, th
 | `TTS` | set to `off` to disable the server voice |
 | `TTS_DTYPE` | voice model precision: `q8` (default), `fp16`, `fp32` |
 
+`.env` and `sessions/` are git-ignored, so your key and lessons never leave your computer.
+
 ## Files
 
 ```
-server.js          Node server + OpenCode Go proxy (no deps)
-public/index.html  layout
-public/style.css   styles
-public/app.js      board engine, pen, drawing tools, layout, timeline, chat, prompt, sessions
-public/icons.js    hand-drawn icon library
-public/voice.js    narration engine (Kokoro / browser voice), paced with the pen
-public/tts-worker.js  Kokoro TTS in a Web Worker (fallback when the server has no voice)
-sessions/          auto-saved lessons (created on first use, git-ignored)
+server.js             Node server: OpenCode Go proxy, sessions, Kokoro voice (optional kokoro-js dependency)
+public/index.html     layout
+public/style.css      styles
+public/app.js         board engine, pen, drawing tools, layout, timeline, chat, prompt, sessions
+public/icons.js       hand-drawn icon library
+public/voice.js       narration engine (server Kokoro → in-browser Kokoro → browser voice)
+public/tts-worker.js  in-browser Kokoro (fallback when the server has no voice)
+sessions/             auto-saved lessons (created on first use, git-ignored)
 ```
 
 ## Troubleshooting
 
+- **The teacher talks but barely draws:** try another model or a different reasoning level in ⚙. DeepSeek V4.1 Flash at Low is the tested default.
+- **"Used its whole token budget thinking":** pick a lower reasoning level in ⚙, or another model.
 - **Robotic voice:** run `npm install` and restart the server. ⚙ → Narration should then say *"generated on this computer (fast)"*.
 - **An answer seems stuck:** open ⚙, press **Copy debug log** and share it. It records what the app was waiting on.
+- **`git pull` complains about a `.lock` file:** a git command was interrupted. Delete the named `.git/*.lock` file and run `git pull` again.
