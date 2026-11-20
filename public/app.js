@@ -2378,10 +2378,13 @@ async function loadModels() {
     const r = await fetch('/api/models'); const j = await r.json();
     models = j.models || [];
     if (!settings.model || !models.some(m => m.id === settings.model)) { settings.model = j.default || (models[0] && models[0].id); saveSettings(); }
+    // the first time an OpenRouter default is available, switch to it once; later choices are kept
+    if (j.default && j.default.startsWith('or:') && !settings.orDefaultApplied && models.some(m => m.id === j.default)) { settings.model = j.default; settings.orDefaultApplied = true; saveSettings(); }
     if (j.error) bubble({ role: 'error', text: `Could not list models (${j.error.code}): ${j.error.message}` });
   } catch { models = []; bubble({ role: 'error', text: 'Cannot reach the local server. Start it with `npm start`.' }); }
   const sel = $('#modelSelect'); sel.textContent = '';
-  const groups = [['Featured', m => m.featured && !m.free], ['Free', m => m.free], ['All other models', m => !m.featured && !m.free]];
+  const oc = m => m.provider !== 'openrouter';
+  const groups = [['OpenRouter', m => !oc(m)], ['OpenCode Go · Featured', m => oc(m) && m.featured && !m.free], ['OpenCode Go · Free', m => oc(m) && m.free], ['OpenCode Go · All other models', m => oc(m) && !m.featured && !m.free]];
   for (const [label, test] of groups) {
     const list = models.filter(test).sort((a, b) => a.name.localeCompare(b.name)); if (!list.length) continue;
     const og = document.createElement('optgroup'); og.label = label;

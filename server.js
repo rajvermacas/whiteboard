@@ -1,5 +1,6 @@
 // Whiteboard Teacher — local server
-// Serves the app from ./public and proxies LLM calls to OpenCode Go so the API key never reaches the browser.
+// Serves the app from ./public and proxies LLM calls to OpenCode Go and/or OpenRouter, so the API keys never
+// reach the browser.
 // Zero dependencies: needs Node 18+ (uses built-in fetch). Run: node server.js
 'use strict';
 const http = require('http');
@@ -29,7 +30,18 @@ const PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || '127.0.0.1';
 const API_KEY = process.env.OPENCODE_API_KEY || '';
 const API_BASE = (process.env.OPENCODE_GO_API_BASE || 'https://opencode.ai/zen/go/v1').replace(/\/+$/, '');
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'deepseek-v4.1-flash';
+// OpenRouter (optional). Its models appear in the picker as "or:<slug>". OPENROUTER_PROVIDER pins which provider
+// serves OPENROUTER_MODEL (comma list, tried in order); with OPENROUTER_ALLOW_FALLBACKS=false no other is used.
+const OR_KEY = process.env.OPENROUTER_API_KEY || '';
+const OR_BASE = (process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
+const OR_MODEL = process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4.1-flash';
+const OR_PROVIDER = (process.env.OPENROUTER_PROVIDER ?? 'baidu/fp8').split(',').map(x => x.trim()).filter(Boolean);
+const OR_FALLBACKS = /^(1|true|yes)$/i.test(process.env.OPENROUTER_ALLOW_FALLBACKS || 'false');
+const OR_EXTRA = (process.env.OPENROUTER_MODELS || '').split(',').map(x => x.trim()).filter(Boolean);
+const OR_PREFIX = 'or:';
+const isOR = id => typeof id === 'string' && id.startsWith(OR_PREFIX);
+// default: the OpenRouter model when an OpenRouter key is set, else OpenCode Go's DeepSeek V4.1 Flash
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || (OR_KEY ? OR_PREFIX + OR_MODEL : 'deepseek-v4.1-flash');
 const USER_AGENT = 'whiteboard-teacher/1.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
@@ -37,8 +49,8 @@ if (typeof fetch !== 'function') {
   console.error(`\n✖  Node ${process.version} is too old: this app needs Node 18 or newer (built-in fetch).\n`);
   process.exit(1);
 }
-if (!API_KEY) {
-  console.warn('\n⚠  OPENCODE_API_KEY is not set. Copy .env.example to .env and add your key.\n');
+if (!API_KEY && !OR_KEY) {
+  console.warn('\n⚠  No API key: set OPENCODE_API_KEY and/or OPENROUTER_API_KEY in .env (see .env.example).\n');
 }
 
 const MIME = {
@@ -74,6 +86,33 @@ function upstreamHeaders(session) {
 let modelCache = null, modelCacheAt = 0;
 async function getModels() {
   if (modelCache && Date.now() - modelCacheAt < 10 * 60_000) return modelCache;
+  const [oc, or] = await Promise.allSettled([API_KEY ? openCodeModels() : Promise.resolve([]), OR_KEY ? openRouterModels() : Promise.resolve([])]);
+  const list = [...(or.status === 'fulfilled' ? or.value : []), ...(oc.status === 'fulfilled' ? oc.value : [])];
+  if (!list.length) throw new Error([oc, or].filter(x => x.status === 'rejected').map(x => x.reason && x.reason.message).join('; ') || 'no API key configured');
+  modelCache = { models: list, default: list.some(m => m.id === DEFAULT_MODEL) ? DEFAULT_MODEL : list[0].id };
+  modelCacheAt = Date.now();
+  return modelCache;
+}
+// OpenRouter: only the configured models (its catalogue has hundreds). Details come from its public model list.
+async function openRouterModels() {
+  const slugs = [OR_MODEL, ...OR_EXTRA.filter(x => x !== OR_MODEL)];
+  let info = [];
+  try { const r = await fetch(`${OR_BASE}/models`, { headers: { 'User-Agent': USER_AGENT } }); if (r.ok) info = (await r.json()).data || []; } catch {}
+  return slugs.map(slug => {
+    const m = info.find(x => x.id === slug) || {}, params = m.supported_parameters || [];
+    const pinned = slug === OR_MODEL && OR_PROVIDER.length ? ` · ${OR_PROVIDER.join(', ')}` : '';
+    return {
+      id: OR_PREFIX + slug, name: `${m.name || slug}${pinned}`, provider: 'openrouter',
+      efforts: !m.id || params.includes('reasoning') ? ['minimal', 'low', 'medium', 'high'] : [],
+      defaultEffort: null,
+      output: (m.top_provider && m.top_provider.max_completion_tokens) || 32000,
+      api: 'chat', free: /:free$/.test(slug),
+      vision: !!(m.architecture && Array.isArray(m.architecture.input_modalities) && m.architecture.input_modalities.includes('image')),
+      featured: true,
+    };
+  });
+}
+async function openCodeModels() {
   const r = await fetch(`${API_BASE}/models`, { headers: upstreamHeaders('wbt-models') });
   if (!r.ok) throw new Error(`models ${r.status}`);
   const j = await r.json();
@@ -92,11 +131,10 @@ async function getModels() {
         free: /free/i.test(m.id) || /free/i.test(m.name || ''),
         vision: !!(m.modalities && Array.isArray(m.modalities.input) && m.modalities.input.some(x => /image/.test(x))),
         featured: !!(m.go && m.go.featured),
+        provider: 'opencode',
       };
     });
-  modelCache = { models: list, default: list.some(m => m.id === DEFAULT_MODEL) ? DEFAULT_MODEL : (list[0] && list[0].id) };
-  modelCacheAt = Date.now();
-  return modelCache;
+  return list;
 }
 
 // text, or (for a learner sketch) an array of text and image_url parts
@@ -119,27 +157,31 @@ async function maxTokensFor(model) {
 async function handleChat(req, res) {
   let body;
   try { body = JSON.parse(await readBody(req, 12_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
-  if (!API_KEY) return sendJSON(res, 500, { error: { code: 'no_api_key', message: 'OPENCODE_API_KEY is not set on the server (.env).' } });
+  const model = typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL, viaOR = isOR(model);
+  if (viaOR ? !OR_KEY : !API_KEY) return sendJSON(res, 500, { error: { code: 'no_api_key', message: `${viaOR ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY'} is not set on the server (.env).` } });
 
   const messages = Array.isArray(body.messages) ? body.messages.slice(-40) : [];
   if (!messages.length) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'No messages' } });
   const payload = {
-    model: typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL,
+    model: viaOR ? model.slice(OR_PREFIX.length) : model,
     messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : m.role === 'system' ? 'system' : 'user', content: cleanContent(m.content) })),
     stream: true,
     // Reasoning models can spend thousands of tokens thinking before they write; leave room for both.
-    max_tokens: await maxTokensFor(body.model),
+    max_tokens: await maxTokensFor(model),
     temperature: 0.6,
   };
-  if (typeof body.effort === 'string' && body.effort) payload.reasoning_effort = body.effort;
+  if (viaOR) {
+    if (typeof body.effort === 'string' && body.effort) payload.reasoning = { effort: body.effort };
+    if (payload.model === OR_MODEL && OR_PROVIDER.length) payload.provider = { only: OR_PROVIDER, allow_fallbacks: OR_FALLBACKS };
+  } else if (typeof body.effort === 'string' && body.effort) payload.reasoning_effort = body.effort;
 
   const ac = new AbortController();
   res.on('close', () => ac.abort());   // browser pressed Stop / closed tab
 
   let up;
   try {
-    up = await fetch(`${API_BASE}/chat/completions`, {
-      method: 'POST', headers: upstreamHeaders(String(body.session || '').slice(0, 100)),
+    up = await fetch(`${viaOR ? OR_BASE : API_BASE}/chat/completions`, {
+      method: 'POST', headers: viaOR ? { 'Authorization': `Bearer ${OR_KEY}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT, 'X-Title': 'Whiteboard Teacher' } : upstreamHeaders(String(body.session || '').slice(0, 100)),
       body: JSON.stringify(payload), signal: ac.signal,
     });
   } catch (e) {
@@ -155,7 +197,7 @@ async function handleChat(req, res) {
     return sendJSON(res, up.status, { error: { code, message: String(msg).slice(0, 500) } });
   }
 
-  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'Connection': 'keep-alive', 'X-Model': payload.model });
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'Connection': 'keep-alive', 'X-Model': viaOR ? OR_PREFIX + payload.model : payload.model });
   try {
     for await (const chunk of up.body) {
       if (!res.write(chunk)) await new Promise(r => res.once('drain', r));

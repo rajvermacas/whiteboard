@@ -1,6 +1,6 @@
 # Whiteboard Teacher (local)
 
-An AI teacher that explains **any topic** by drawing on an infinite whiteboard. You ask in the side chat; the teacher answers with short caption lines in the chat while a pen draws the explanation on the board: icons, token rows, message diagrams, time charts and labelled arrows rather than paragraphs. It is modelled on Claude's *whiteboard-teacher* artifact and uses **OpenCode Go** as the LLM.
+An AI teacher that explains **any topic** by drawing on an infinite whiteboard. You ask in the side chat; the teacher answers with short caption lines in the chat while a pen draws the explanation on the board: icons, token rows, message diagrams, time charts and labelled arrows rather than paragraphs. It is modelled on Claude's *whiteboard-teacher* artifact and uses **OpenCode Go** and/or **OpenRouter** as the LLM.
 
 ## Run it
 
@@ -8,7 +8,7 @@ Requires **Node.js 18+**.
 
 ```bash
 cd ~/Projects/whiteboard
-cp .env.example .env      # skip if .env already exists; put your OpenCode Go key in it
+cp .env.example .env      # skip if .env already exists; put your OpenCode Go and/or OpenRouter key in it
 npm install               # optional: the natural voice for narration (see below)
 npm start                 # → http://127.0.0.1:5173
 ```
@@ -119,8 +119,13 @@ browser (public/)  ──POST /api/chat──▶  server.js  ──stream──�
 
 | Var | Default |
 |---|---|
-| `OPENCODE_API_KEY` | required |
-| `DEFAULT_MODEL` | `deepseek-v4.1-flash` |
+| `OPENCODE_API_KEY` | OpenCode Go key (this and/or `OPENROUTER_API_KEY`) |
+| `OPENROUTER_API_KEY` | OpenRouter key. When set, the OpenRouter model becomes the default (switched to once in the picker) |
+| `OPENROUTER_MODEL` | `deepseek/deepseek-v4.1-flash` |
+| `OPENROUTER_PROVIDER` | `baidu/fp8`: the provider(s) that serve `OPENROUTER_MODEL`, comma list; empty lets OpenRouter choose |
+| `OPENROUTER_ALLOW_FALLBACKS` | `false`: no other provider is used if the pinned one is down |
+| `OPENROUTER_MODELS` | extra OpenRouter models for the picker, comma list (not provider-pinned) |
+| `DEFAULT_MODEL` | the OpenRouter model if its key is set, else `deepseek-v4.1-flash`; OpenRouter ids are written `or:<slug>` |
 | `PORT` / `HOST` | `5173` / `127.0.0.1` |
 | `OPENCODE_GO_API_BASE` | `https://opencode.ai/zen/go/v1` |
 | `TTS` | set to `off` to disable the server voice |
