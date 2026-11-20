@@ -163,3 +163,6 @@ foreignObject .katex { font-size: 1em; }
 #attach img { width: 64px; height: 44px; object-fit: contain; background: #fff; border: 1px solid #e3e6ea; border-radius: 6px; }
 #attach span { flex: 1; }
 #attach button { border: 0; background: none; font-size: 15px; color: #7d848c; cursor: pointer; }
+
+/* "Checking the drawing…" line under an answer */
+.msg .tidy { margin-top: 6px; font-size: 12px; color: #5b636b; }

@@ -29,10 +29,30 @@ window.Voice = (() => {
       .replace(/²/g, ' squared').replace(/³/g, ' cubed')
       .replace(/\s+/g, ' ').trim();
   }
+  // Safari can hand a page a dead audio context (state 'suspended', or its own 'interrupted'), notably after a
+  // reload. Anything started on it plays silently. So: rebuild it inside a user gesture, and check before playing.
+  function newCtx() {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
+    if (ctx) { log('audio context rebuilt (was ' + ctx.state + ')'); try { ctx.close(); } catch {} }
+    ctx = new AC(); return ctx;
+  }
   function ensureCtx() {
-    if (!ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) ctx = new AC(); }
-    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+    if (!ctx || ctx.state === 'closed') newCtx();
+    if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
     return ctx;
+  }
+  // called from a click / key press: the only moment Safari lets audio start
+  function unlockAudio() {
+    if (ctx && ctx.state !== 'running' && ctx.state !== 'closed' && ctx._gestured) newCtx();   // a resume in an earlier gesture didn't take
+    const c = ensureCtx(); if (!c) return;
+    c._gestured = true;
+    try { const s = c.createBufferSource(); s.buffer = c.createBuffer(1, 1, 22050); s.connect(c.destination); s.start(0); } catch {}
+  }
+  // wait briefly for the context to run; false means sound would be silent
+  async function running(c) {
+    if (c.state === 'running') return true;
+    try { await Promise.race([c.resume(), new Promise(r => setTimeout(r, 700))]); } catch {}
+    return c.state === 'running';
   }
   const INSTALL_HINT = 'The fast voice isn’t installed yet: run npm install in the project folder, then restart the server. Using the slower in-browser voice for now.';
   const useServer = () => cfg.engine === 'server' && serverState !== 'unavailable';
@@ -182,7 +202,7 @@ window.Voice = (() => {
     } else startWorker().catch(() => {});
   }
   const enabled = () => cfg.mode !== 'off';
-  function unlock() { if (cfg.mode === 'kokoro') ensureCtx(); }
+  function unlock() { if (cfg.mode === 'kokoro') unlockAudio(); }
 
   function prepare(text) {
     const clean = speakable(text);
@@ -211,13 +231,18 @@ window.Voice = (() => {
     if (performance.now() - t0 > 8000 && status.state !== 'loading') { slowCount++; if (slowCount >= 2) markTooSlow(useServer() ? 'server' : 'browser'); }
     if (myEpoch !== epoch) return none;
     const c = ensureCtx();
+    if (!(await running(c))) {
+      // never "play" into a muted context: speak with the browser voice and say why in the log
+      log('audio context is ' + c.state + ' (no sound possible until a click or key press): using the browser voice for this line');
+      return myEpoch === epoch ? browserSpeak(h.text, myEpoch) : none;
+    }
+    if (myEpoch !== epoch) return none;
     const src = c.createBufferSource(); src.buffer = buf; src.connect(c.destination);
     let doneResolve; const done = new Promise(r => { doneResolve = r; });
     const finish = () => { if (current && current.src === src) { current = null; speakingNow = false; } doneResolve(); };
     src.onended = finish;
     current = { src, stop: () => { try { src.stop(); } catch {} speakingNow = false; doneResolve(); } };
     speakingNow = true;
-    if (c.state !== 'running') { c.resume().catch(() => {}); log('audio context was', c.state); }
     src.start();
     lastSource = useServer() ? 'kokoro-server' : 'kokoro-browser';
     setTimeout(finish, (buf.duration + 1.5) * 1000);   // never wait forever for onended
@@ -257,6 +282,7 @@ window.Voice = (() => {
     speaking: () => speakingNow,
     status: () => status,
     device: () => (useServer() ? 'server' : workerDevice),
+    audioState: () => (ctx ? ctx.state : 'none'),
     source: () => lastSource,
     onStatus: f => { listeners.add(f); return () => listeners.delete(f); },
     VOICES,

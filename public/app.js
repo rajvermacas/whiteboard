@@ -22,7 +22,7 @@ window.addEventListener('error', e => dlog('page error', e.message, (e.filename 
 window.addEventListener('unhandledrejection', e => dlog('unhandled rejection', String(e.reason && e.reason.stack || e.reason).slice(0, 300)));
 const NS = 'http://www.w3.org/2000/svg';
 const LS_SET = 'wbt.settings.v2';
-const MAX_OBJECTS = 600, MAX_CMDS_PER_ANSWER = 90, MAX_WRITES_PER_ANSWER = 5, MAX_SAY_WORDS = 26;
+const FIX_MAX = 12, MAX_OBJECTS = 600, MAX_CMDS_PER_ANSWER = 90, MAX_WRITES_PER_ANSWER = 5, MAX_SAY_WORDS = 26;
 const PALETTE = { blue: '#1d6fb8', amber: '#c48a00', yellow: '#c48a00', green: '#2a8a3e', red: '#d1382c', purple: '#7a48c2', orange: '#e07800', black: '#1f2328', grey: '#7d848c', gray: '#7d848c' };
 const BOXLIKE = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table', 'icon', 'tokens', 'schedule', 'sequence']);
 // what counts as drawing (vs. writing) when judging an answer
@@ -38,7 +38,7 @@ const objs = new Map();        // id -> {cmd, g, bb, off:[dx,dy]}
 let camera = { x: -60, y: -60, scale: 1 };
 let chat = [];                 // [{role:'user'|'assistant'|'error'|'system', text, about?, drew?, meta?}]
 const selection = new Set();
-let settings = { model: null, efforts: {}, slow: false, voice: { mode: 'off', voice: 'af_heart', speed: 1, engine: 'server' } };
+let settings = { model: null, efforts: {}, voice: { mode: 'off', voice: 'af_heart', speed: 1, engine: 'server' } };
 let models = [];
 let gen = 0;                   // animation generation: bump to finish every running tween at once
 let streaming = false, queueRunning = false, replaying = false;
@@ -77,7 +77,7 @@ function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) h =
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 function el(tag, attrs, parent) { const e = document.createElementNS(NS, tag); if (attrs) for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
 function uuid() { return (crypto.randomUUID && crypto.randomUUID()) || 'x' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
-function speed() { return settings.slow ? 0.6 : 1; }
+function speed() { return 0.6; }        // the pen draws at a calm, hand-drawn pace
 function instantMode() { return reduceMotion; }
 
 // ======================================================================
@@ -178,6 +178,11 @@ function rrPath(x, y, w, h, rad) {
   const q = Math.max(0, Math.min(rad, w / 2, h / 2));
   return `M${f1(x + q)} ${f1(y)} H${f1(x + w - q)} Q${f1(x + w)} ${f1(y)} ${f1(x + w)} ${f1(y + q)} V${f1(y + h - q)} Q${f1(x + w)} ${f1(y + h)} ${f1(x + w - q)} ${f1(y + h)} H${f1(x + q)} Q${f1(x)} ${f1(y + h)} ${f1(x)} ${f1(y + h - q)} V${f1(y + q)} Q${f1(x)} ${f1(y)} ${f1(x + q)} ${f1(y)} Z`;
 }
+// Safari/WebKit paints positioned HTML inside an SVG <foreignObject> in page coordinates, ignoring the board's
+// pan and zoom (KaTeX's HTML is full of position:relative), so formulas stayed pinned to the screen. There,
+// formulas are rendered as native MathML, which has no positioned boxes. Chrome/Firefox keep KaTeX's HTML.
+const IS_WEBKIT = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|CriOS|Edg|OPR|Android/.test(navigator.userAgent);
+const MATH_OUTPUT = IS_WEBKIT ? 'mathml' : 'html';
 function unionBox(ids) {
   let b = null;
   for (const id of ids) { const o = objs.get(id); if (!o) continue; const q = bbOf(o); b = b ? { x: Math.min(b.x, q.x), y: Math.min(b.y, q.y), width: Math.max(b.x + b.width, q.x + q.width) - Math.min(b.x, q.x), height: Math.max(b.y + b.height, q.y + q.height) - Math.min(b.y, q.y) } : q; }
@@ -288,17 +293,17 @@ const builders = {
   },
   // ---- feature 4: real maths (KaTeX) and code blocks ----
   math(c, g, parts) {
-    const size = c.size;
+    const size = c.size, output = MATH_OUTPUT;
     let w, h, node;
     if (window.katex) {
       const holder = document.createElement('div');
       holder.style.cssText = `position:absolute;left:-9999px;top:0;font-size:${size}px;color:${c.color};white-space:nowrap;`;
-      try { window.katex.render(c.tex, holder, { throwOnError: false, displayMode: false, output: 'html' }); } catch { holder.textContent = c.tex; }
+      try { window.katex.render(c.tex, holder, { throwOnError: false, displayMode: false, output }); } catch { holder.textContent = c.tex; }
       document.body.appendChild(holder); const r = holder.getBoundingClientRect(); w = Math.ceil(r.width) + 8; h = Math.ceil(r.height) + 8; holder.remove();
       const fo = el('foreignObject', { x: c.x, y: c.y - h * 0.72, width: w, height: h }, g);
       node = document.createElement('div'); node.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
       node.style.cssText = `font-size:${size}px;color:${c.color};white-space:nowrap;padding:4px;line-height:1.2;`;
-      try { window.katex.render(c.tex, node, { throwOnError: false, displayMode: false, output: 'html' }); } catch { node.textContent = c.tex; }
+      try { window.katex.render(c.tex, node, { throwOnError: false, displayMode: false, output }); } catch { node.textContent = c.tex; }
       fo.appendChild(node);
       parts.push({ el: fo, kind: 'text', chars: Math.min(50, c.tex.length), color: c.color });
     } else addText(g, parts, c.x, c.y, c.tex.replace(/\\[a-zA-Z]+/g, m => ({ '\\alpha': 'α', '\\beta': 'β', '\\sigma': 'σ', '\\theta': 'θ', '\\eta': 'η', '\\lambda': 'λ', '\\sum': 'Σ', '\\cdot': '·', '\\times': '×', '\\nabla': '∇', '\\partial': '∂', '\\sqrt': '√', '\\pi': 'π' })[m] || '').replace(/[{}]/g, ''), { size, color: c.color, font: 'math' });
@@ -757,6 +762,7 @@ const selLayer = el('g', { 'pointer-events': 'none' }, layerOv);
 function placeIcon(icon, x, y) { icon.setAttribute('transform', `translate(${f1(x)} ${f1(y)}) scale(${(1 / camera.scale).toFixed(4)})`); icon.setAttribute('visibility', 'visible'); }
 function hideIcon(icon) { icon.setAttribute('visibility', 'hidden'); }
 
+
 function hideParts(parts) {
   for (const p of parts) {
     if (p.kind === 'stroke') { const L = p.el.getTotalLength(); p.len = L; p.el.style.strokeDasharray = `${L} ${L}`; p.el.style.strokeDashoffset = L; }
@@ -765,27 +771,46 @@ function hideParts(parts) {
       const cid = 'clip' + Math.random().toString(36).slice(2, 9);
       const cp = el('clipPath', { id: cid }, defs); p.clipRect = el('rect', { x: b.x - 6, y: b.y - 8, width: 0, height: b.height + 16 }, cp); p.clipPath = cp;
       p.el.setAttribute('clip-path', `url(#${cid})`);
+      // WebKit ignores a zero-width clip and shows the whole text early: keep it hidden until the pen reaches it
+      p.el.style.visibility = 'hidden';
     } else p.el.style.opacity = 0;
   }
 }
 function showPart(p) {
   if (p.kind === 'stroke') { p.el.style.strokeDasharray = p.dashed ? '' : ''; p.el.style.strokeDashoffset = ''; }
-  else if (p.kind === 'text') { p.el.removeAttribute('clip-path'); if (p.clipPath) p.clipPath.remove(); }
+  else if (p.kind === 'text') { p.el.removeAttribute('clip-path'); if (p.clipPath) p.clipPath.remove(); p.el.style.visibility = ''; }
   else p.el.style.opacity = '';
 }
+// Pacing: the drawing for a sentence takes as long as the sentence takes to say, so the pen moves while the
+// teacher talks about it. beginPace(seconds) starts a sentence's time window; each command gets an equal share
+// of what is left, and its strokes are slowed down or sped up (within limits) to fill that share.
+let pace = null, paceShare = null;
+const SPEAK_CPS = 14;                     // speaking pace used when narration is off (characters per second)
+function beginPace(seconds) { pace = seconds > 0.3 ? { until: performance.now() + seconds * 1000 } : null; }
+function setPaceShare(remainingCmds) {
+  const left = pace ? pace.until - performance.now() : 0;
+  paceShare = left > 200 ? left / Math.max(1, remainingCmds) : null;
+}
+const naturalMs = p => p.kind === 'stroke' ? Math.min(1400, Math.max(200, p.len * 1.3)) : p.kind === 'text' ? Math.min(2200, Math.max(220, p.chars * 55)) : 200;
 async function animateParts(parts, run) {
   hideParts(parts);
+  // scale this drawing to its share of the sentence (0.5× = up to twice as fast, 3× = up to three times slower)
+  const natural = parts.reduce((t, p) => t + naturalMs(p), 0);
+  // a paced drawing keeps the sentence's timing; otherwise the calm default pen speed applies
+  const scale = paceShare && natural ? clamp(paceShare / natural, 0.5, 3) : 1, sp = paceShare ? 1 : speed();
+  paceShare = null;
   for (const p of parts) {
     if (run.gen !== gen || instantMode()) { showPart(p); continue; }
     if (p.kind === 'stroke') {
       penBody.setAttribute('stroke', p.color || '#1f2328');
-      const L = p.len, ms = Math.min(1100, Math.max(140, L)) / speed();
+      const L = p.len, ms = naturalMs(p) * scale / sp;
       await tween(ms, t => { p.el.style.strokeDashoffset = L * (1 - t); const pt = p.el.getPointAtLength(L * t); placeIcon(pen, pt.x, pt.y); }, run);
     } else if (p.kind === 'text') {
       penBody.setAttribute('stroke', p.color || '#1f2328');
-      const b = p.bb, ms = Math.min(2000, Math.max(160, p.chars * 40)) / speed();
+      const b = p.bb, ms = naturalMs(p) * scale / sp;
+      p.clipRect.setAttribute('width', 0.01); p.el.style.visibility = '';
       await tween(ms, t => { const w = (b.width + 12) * t; p.clipRect.setAttribute('width', w); placeIcon(pen, b.x - 6 + w, b.y + b.height * (0.55 + 0.25 * Math.sin(t * 40))); }, run);
-    } else await tween(180 / speed(), t => { p.el.style.opacity = t; }, run);
+    } else await tween(naturalMs(p) * scale / sp, t => { p.el.style.opacity = t; }, run);
     showPart(p);
   }
   hideIcon(pen);
@@ -1196,7 +1221,6 @@ $('#zoomPct').onclick = () => {
 $('#fitBtn').onclick = () => fit(true);
 $('#wipeBtn').onclick = () => { if (!objs.size || scrub) return; if (confirm('Wipe the whole board? (The chat and the step history stay.)')) { stopAll(); recordEdit({ cmd: 'clear' }); clearBoard({ gen }, true); } };
 $('#replayBtn').onclick = replay;
-$('#slowBtn').onclick = () => { settings.slow = !settings.slow; saveSettings(); $('#slowBtn').setAttribute('aria-pressed', settings.slow); };
 $('#fsBtn').onclick = () => { $('#app').classList.contains('fs') ? exitFullscreen() : enterFullscreen(); };
 function enterFullscreen() {
   $('#app').classList.add('fs');
@@ -1332,7 +1356,9 @@ async function showStep(i, animate) {
   let narration = null;
   if (steps[i].say && Voice.enabled()) narration = Voice.play(Voice.prepare(steps[i].say));
   const started = narration ? await narration : null;
-  for (const c of steps[i].cmds) { if (run.gen !== gen) break; await execCommand(cloneCmd(c), run, true); }
+  beginPace(started && started.duration ? started.duration : steps[i].say.length / SPEAK_CPS);
+  const cmds = steps[i].cmds;
+  for (let j = 0; j < cmds.length; j++) { if (run.gen !== gen) break; setPaceShare(cmds.length - j); await execCommand(cloneCmd(cmds[j]), run, true); paceShare = null; }
   if (!scrub || scrub.token !== token) { replaying = false; updateSendBtn(); return; } // a newer jump took over
   if (run.gen === gen) { if (started) await started.done; scrub.applied = i; }
   else { // stopped mid-step: finish the step instantly so the board is consistent
@@ -1584,7 +1610,10 @@ function renderChips() {
   } else if (!chat.some(m => m.role === 'user')) {
     add(`Explain ${lesson.topic}`, `Explain ${lesson.topic}, starting from the big picture, with one concrete example.`, true);
   } else {
-    add('Go one level deeper'); add('Show a worked example with numbers'); add('What is a common mistake?'); add('Summarise the board'); add('Quiz me on this'); add('Hinglish mein samjhao');
+    // follow-ups the teacher suggested for what it just drew; the generic ones otherwise
+    const last = [...chat].reverse().find(m => m.role === 'assistant');
+    if (last && last.next && last.next.length) { last.next.forEach((q, i) => add(q, null, i === 0)); add('Quiz me on this'); add('Hinglish mein samjhao'); }
+    else { add('Go one level deeper'); add('Show a worked example with numbers'); add('What is a common mistake?'); add('Summarise the board'); add('Quiz me on this'); add('Hinglish mein samjhao'); }
   }
 }
 function updateSendBtn() {
@@ -1647,6 +1676,7 @@ function stopAll() {
 // ======================================================================
 // queue: say lines type while the commands after them draw
 // ======================================================================
+let queueBusy = false;       // a board command is being drawn right now
 function enqueue(item) { queue.push(item); if (!queueRunning) runQueue(); }
 async function runQueue() {
   queueRunning = true; updateSendBtn();
@@ -1665,23 +1695,28 @@ async function runQueue() {
         const r = await Promise.race([Voice.play(it.voice), sleep(100000).then(() => { dlog('voice.play timed out'); return { duration: 0, done: Promise.resolve() }; })]);
         if (it.run && it.run.gen !== gen) continue;
         dlog('say', r.duration ? r.duration.toFixed(1) + 's' : 'no audio', JSON.stringify(it.say.slice(0, 50)));
+        beginPace(r.duration || it.say.length / SPEAK_CPS);
         typeInto(it.turn, it.say, r.duration ? it.say.length / r.duration : null);
         narrationDone = r.done.then(() => sleep(250)); r.done.then(updateSendBtn);
         updateSendBtn();
-      } else typeInto(it.turn, it.say);
+      } else { beginPace(it.say.length / SPEAK_CPS); typeInto(it.turn, it.say, SPEAK_CPS); }
       continue;
     }
     const run = it.run;
     dlog('draw', it.cmd.cmd, it.cmd.id || '', run.gen === gen ? '' : '(stale run)');
     if (it.turn.thinking) { const bd = it.turn.el.querySelector('.body'); bd.classList.remove('thinking'); bd.textContent = ''; it.turn.thinking = false; }
     const before = it.cmd.id;
+    queueBusy = true;
+    const nextSay = queue.findIndex(x => x.say != null);
+    setPaceShare(1 + (nextSay < 0 ? queue.length : nextSay));
     await execCommand(it.cmd, run, true);
+    paceShare = null; queueBusy = false;
     if (run.gen === gen) recordCmd(it.turn, it.cmd);
     if (before) it.turn.drew.add(before);
     if (it.cmd.cmd === 'erase') it.cmd.ids.forEach(i => it.turn.drew.add('erased ' + i));
     } catch (err) {
       dlog('skipped a queue item after an error:', String(err && err.stack || err).slice(0, 300), JSON.stringify(it.cmd || { say: it.say }).slice(0, 200));
-      hideIcon(pen); hideIcon(eraser);
+      hideIcon(pen); hideIcon(eraser); queueBusy = false;
     }
   }
   // let the last sentence finish; more lines may stream in meanwhile, so check again before going idle
@@ -1738,7 +1773,7 @@ BOARD (infinite; units are board units; x grows right, y grows down)
 ${boardSummary()}
 ${selIds.length ? `\nTHE LEARNER SELECTED: ${selIds.map(id => `${id} (${nameOf(id)})`).join(', ')}. Work on these directly: update them, build next to them, point at them.\n` : ''}
 OUTPUT: JSON Lines only, one object per line, nothing else (no markdown, no code fences, no prose outside JSON).
-Spoken line: {"say":"one short sentence"}
+Spoken line: {"say":"one short sentence"}   It is spoken while the drawing commands right after it are drawn, so it must explain exactly those.
 Board commands (each line has "cmd"). Place things with "near" instead of guessing coordinates: "near":{"of":"<id>","side":"right|left|below|above","gap":70}. Give x,y only for the very first object of a new area (use the free space listed above).
 
 Pictures, best first:
@@ -1773,12 +1808,13 @@ HOW TO TEACH HERE: DRAW MORE, TALK LESS
 1. Every idea becomes a picture. Ask "what does this look like?" and draw that: things → icons or boxes; sequences, tokens, slots, queues → tokens; what happens over time → schedule (or several snapshots side by side); cause and movement → arrows; parts of a whole → frame; sizes and counts → brace, bars; structure → graph, tree, network.
 2. Draw the concrete example itself (the actual tokens, requests, numbers, names), never a description of it.
 3. Board text is labels only: 1-4 words or a number. At most 3 write commands per answer (a heading and short captions). No sentences, definitions, legends or bullet lists on the board.
-4. Spoken lines: one sentence of at most 12 words each, about the drawing that follows it; at most 6 per answer. Never repeat in words what the drawing already shows.
+4. Spoken lines: one sentence of at most 12 words each, about the drawing that follows it; at most 6 per answer. Never repeat in words what the drawing already shows. Narrate what the pen is drawing right now: each sentence explains the commands that follow it, up to the next sentence. Never talk ahead about something drawn later, or back about something drawn earlier without updating or highlighting it.
 5. Rhythm: say → 2-5 drawing commands → say → 2-5 drawing commands …  Aim for 15-35 board commands per answer, at least 85% of them pictures.
 6. Layout: one clear diagram per idea, flowing left→right or top→bottom, laid out with near; keep 40+ units between things; put before/after or wrong/right side by side; frame what belongs together. Arrows join things that are next to each other; never draw an arrow across another drawing.
 7. Build on the board: keep earlier drawings, extend and update them (update is how a picture changes over time). Erase only a wrong or outdated picture, and say why. A new subject starts with a heading in free space.
 8. Objects of type ink are the learner's own pen sketches. When a picture of their sketch is attached, work out from the picture yourself what it shows (never ask them to describe it). Name what you see in one short spoken line, then answer their question about it; if they asked nothing specific, check it: highlight what is right and draw the corrected version next to their sketch. Never erase or move their ink.
-9. Language: reply in the language of the learner's latest message; that is English unless that message is in Hinglish or asks for Hinglish (then Hinglish in Latin script). Board labels follow the same language. Say when numbers are only illustrative.
+9. End every answer with one line of 3 follow-up questions the learner would naturally ask next about what you just drew: {"next":["Why is the disk 10,000× slower?","What if two requests need one slot?","Show LRU vs FIFO eviction"]}. Each at most 8 words, specific to this board (name its actual things), not generic ("tell me more"). Mix: one deeper "why", one "what if", one new example or comparison.
+10. Language: reply in the language of the learner's latest message; that is English unless that message is in Hinglish or asks for Hinglish (then Hinglish in Latin script). Board labels and the "next" questions follow the same language. Say when numbers are only illustrative.
 
 EXAMPLE of the balance wanted (a different topic):
 {"plan":"icons CPU, cache, disk with hit/miss arrows; cache slots as tokens; update them to show eviction"}
@@ -1794,7 +1830,8 @@ EXAMPLE of the balance wanted (a different topic):
 {"cmd":"brace","id":"cap","around":["slots"],"side":"below","label":"3 slots"}
 {"say":"When it's full, the oldest entry is evicted."}
 {"cmd":"update","id":"slots","items":["post:3","feed:1","user:9"],"highlight":[2]}
-{"cmd":"highlight","id":"hl","target":"slots","style":"box","color":"#e07800"}`;
+{"cmd":"highlight","id":"hl","target":"slots","style":"box","color":"#e07800"}
+{"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}`;
 }
 function buildMessages(question, selIds, inkIds = [], image = null) {
   const msgs = [{ role: 'system', content: systemPrompt(selIds) }];
@@ -1811,6 +1848,95 @@ function buildMessages(question, selIds, inkIds = [], image = null) {
 // ======================================================================
 // sending a question: one streamed call that talks and draws
 // ======================================================================
+// ======================================================================
+// look & tidy: after an answer is drawn, the teacher looks at a picture of it and fixes what is unclear
+// ======================================================================
+function regionAround(ids, grow) {
+  const r = unionBox(ids); if (!r) return null;
+  const area = { x: r.x - grow, y: r.y - grow, width: r.width + 2 * grow, height: r.height + 2 * grow };
+  const near = [...objs.keys()].filter(k => overlaps(area, bbOf(objs.get(k)), 0));
+  return unionBox(ids.concat(near));
+}
+// Cheap geometric checks the picture review is told about: overlaps, arrows through drawings, cut labels.
+function layoutIssues(ids) {
+  const out = [], mine = new Set(ids), solid = [...objs.values()].filter(o => BOXLIKE.has(o.cmd.cmd));
+  const shrink = (b, m) => ({ x: b.x + m, y: b.y + m, width: Math.max(0, b.width - 2 * m), height: Math.max(0, b.height - 2 * m) });
+  const inside = (p, b) => p[0] > b.x && p[0] < b.x + b.width && p[1] > b.y && p[1] < b.y + b.height;
+  for (let i = 0; i < solid.length; i++) for (let j = i + 1; j < solid.length; j++) {
+    const a = solid[i], b = solid[j];
+    if (!mine.has(a.cmd.id) && !mine.has(b.cmd.id)) continue;
+    if (overlaps(shrink(bbOf(a), 2), shrink(bbOf(b), 2), 0)) out.push(`${a.cmd.id} (${nameOf(a.cmd.id)}) overlaps ${b.cmd.id} (${nameOf(b.cmd.id)})`);
+  }
+  for (const id of ids) {
+    const o = objs.get(id); if (!o || o.cmd.cmd !== 'arrow') continue;
+    const geo = arrowGeometry(o.cmd); if (!geo) continue;
+    const [p1, q, p2] = geo, hit = new Set();
+    for (let k = 2; k <= 18; k++) {
+      const t = k / 20, u = 1 - t, p = [u * u * p1[0] + 2 * u * t * q[0] + t * t * p2[0], u * u * p1[1] + 2 * u * t * q[1] + t * t * p2[1]];
+      for (const s of solid) if (s.cmd.id !== o.cmd.from && s.cmd.id !== o.cmd.to && inside(p, shrink(bbOf(s), 6))) hit.add(s.cmd.id);
+    }
+    if (hit.size) out.push(`arrow ${id} passes through ${[...hit].map(h => `${h} (${nameOf(h)})`).join(', ')}`);
+  }
+  for (const id of ids) {
+    const c = objs.get(id) && objs.get(id).cmd; if (!c) continue;
+    const texts = [c.label, c.sub, c.text, ...(c.items || []).map(x => x.text)].filter(Boolean);
+    if (texts.some(t => /…$/.test(t))) out.push(`${id} has a label that was cut off (ends in …): give it a shorter label`);
+  }
+  return out.slice(0, 14);
+}
+async function waitForBoard(run, signal) {
+  const t0 = Date.now();
+  while ((queue.length || queueBusy) && run.gen === gen && !signal.aborted && Date.now() - t0 < 300000) await sleep(150);
+}
+async function tidyPass({ question, answer, model, run, turn, signal }) {
+  await waitForBoard(run, signal);
+  if (run.gen !== gen || signal.aborted) return;
+  const ids = [...turn.drew].filter(id => objs.has(id) && objs.get(id).cmd.cmd !== 'ink');
+  if (!ids.length) return;
+  const issues = layoutIssues(ids);
+  if (ids.length < 3 && !issues.length) return;           // a tiny edit: nothing worth reviewing
+  const vm = (modelInfo(model) || {}).vision ? model : ((models.find(m => m.id === 'deepseek-v4.1-flash' && m.vision) || models.find(m => m.vision) || {}).id);
+  if (!vm && !issues.length) return;
+  const status = document.createElement('div'); status.className = 'tidy'; status.textContent = '👀 Checking the drawing…';
+  turn.el.appendChild(status); scrollChat();
+  const region = regionAround(ids, 120);
+  let image = null;
+  if (vm && region) { try { image = await boardImage(region); } catch (e) { dlog('tidy: picture failed', String(e)); } }
+  const r = n => Math.round(n);
+  const text = `REVIEW YOUR BOARD. ${image ? `The attached picture shows what you just drew (board area x ${r(region.x)}..${r(region.x + region.width)}, y ${r(region.y)}..${r(region.y + region.height)}). Look at it the way the learner sees it.` : 'You cannot see a picture this time: use the checks below and the object list.'}
+Objects you drew in this answer: ${ids.join(', ')}.
+Automatic checks found:
+${issues.length ? issues.map(s => '- ' + s).join('\n') : '- nothing obvious'}
+
+Fix only real problems: drawings that overlap or touch, arrows that cross other drawings or point at the wrong thing, labels that are cut off or unreadable, a cramped or messy layout, something in the picture that is wrong or confusing, or a missing arrow or label the explanation needs.
+Reply with JSON Lines of fix commands only:
+- move: {"cmd":"move","id":"x","dx":0,"dy":120}  (arrows, frames, braces and highlights follow automatically)
+- update: change fields of one object, e.g. a shorter "label", or "curve":0.4 to bend an arrow around something
+- erase: a duplicate or wrong drawing
+- at most 3 new small drawings (arrow, highlight, brace) if the explanation needs them
+At most ${FIX_MAX} lines. No say lines, no plan, no write, no clear. Never touch ink objects (the learner's sketches). Leave what is fine alone.
+If the board already looks clear, reply with exactly {"ok":true}`;
+  const msgs = [
+    { role: 'system', content: systemPrompt([]) },
+    { role: 'user', content: question },
+    { role: 'assistant', content: answer.slice(0, 6000) || '(drew only)' },
+    { role: 'user', content: image ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }] : text },
+  ];
+  const useModel = vm || model;
+  const before = turn.fixes || 0;
+  try {
+    await streamAnswer(msgs, { model: useModel, effort: useModel === settings.model ? (currentEffort() === 'auto' ? null : currentEffort()) : (defaultEffort(useModel) === 'auto' ? null : defaultEffort(useModel)), run, turn, signal, fix: true });
+    await waitForBoard(run, signal);
+  } catch (e) {
+    if (e.name !== 'AbortError' && !signal.aborted) dlog('tidy: review failed', e.code || '', e.message);
+    status.remove(); return;
+  }
+  const n = (turn.fixes || 0) - before;
+  dlog('tidy:', issues.length, 'issues found,', n, 'fixes applied');
+  status.textContent = n ? `✨ Tidied ${n} thing${n === 1 ? '' : 's'} on the board` : '✓ Drawing checked';
+  setTimeout(() => status.remove(), 4000);
+}
+
 async function send(q) {
   if (!lesson) { openTopic(true); return; }
   if (streaming || queueRunning || replaying || scrub) stopAll();
@@ -1855,6 +1981,7 @@ async function send(q) {
     try { r1 = await streamAnswer(messages, opts); }
     catch (e) { if (e.code === 'empty' && !myAbort.signal.aborted && !turn.cmds) r1 = await streamAnswer(messages, opts); else throw e; }
     modelApplied = r1.model;
+    let answer = r1.content;
     // The teacher must teach by drawing. If the answer was mostly talk, ask once for the picture.
     if ((turn.pics || 0) < 4 && !myAbort.signal.aborted && run.gen === gen) {
       dlog('answer had only', turn.pics || 0, 'pictures: asking for a drawing');
@@ -1864,7 +1991,11 @@ async function send(q) {
         { role: 'user', content: 'That was too wordy for a whiteboard. Now SHOW it: add 10-25 drawing commands (icons, tokens, boxes, arrows, frames, braces, schedule, graph…) laid out with "near" next to what is already on the board. Labels of 1-4 words, no write sentences, at most one short say line. Do not repeat what you already said.' });
       const r2 = await streamAnswer(follow, opts);
       modelApplied = r2.model || modelApplied;
+      answer += '\n' + r2.content;
     }
+    // look at what was drawn and fix what is unclear (best effort; never fails the answer)
+    if (settings.tidy !== false && !myAbort.signal.aborted && run.gen === gen)
+      await tidyPass({ question: q, answer, model, run, turn, signal: myAbort.signal });
   } catch (err) {
     failed = true;
     if (err.name === 'AbortError' || myAbort.signal.aborted) { if (turn.thinking) { body.classList.remove('thinking'); body.textContent = '(stopped)'; turn.thinking = false; } }
@@ -1888,7 +2019,8 @@ async function send(q) {
     updateSendBtn();
     const finalize = (final) => {
       am.text = turn.text.trim(); am.drew = [...turn.drew].slice(0, 80);
-      am.meta = `${modelApplied || model || 'model'}${effort ? ' · ' + effort : ''} · ${Math.round((Date.now() - t0) / 1000)}s`;
+      if (turn.next) am.next = turn.next;
+      am.meta = `${modelApplied || model || 'model'}${effort ? ' · ' + effort : ''} · ${Math.round((Date.now() - t0) / 1000)}s${turn.fixes ? ` · tidied ${turn.fixes}` : ''}`;
       const meta = turn.el.querySelector('.meta'); if (meta) meta.textContent = am.meta;
       if (final && turn.thinking && !failed) { body.classList.remove('thinking'); body.textContent = am.drew.length ? '(drew on the board)' : '(no answer)'; turn.thinking = false; }
       renderChips(); saveSoon();
@@ -1900,7 +2032,9 @@ async function send(q) {
 }
 
 // One streamed Chat Completions call. Say lines and board commands are queued as each line completes.
-async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning }) {
+// fix = true: a tidy-up pass. Only board edits are taken (no talking, no clear, never the learner's ink), at most FIX_MAX.
+async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, fix = false }) {
+  let fixes = 0;
   let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, reasoned = 0;
   // brace depth outside strings: >0 means the JSON object continues on the next line
   const depthOf = t => { let d = 0, q = false, esc = false; for (const ch of t) { if (esc) { esc = false; continue; } if (ch === '\\') { esc = true; continue; } if (ch === '"') q = !q; else if (!q) { if (ch === '{' || ch === '[') d++; else if (ch === '}' || ch === ']') d--; } } return d; };
@@ -1932,12 +2066,21 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
         if (typeof it.plan === 'string') dlog('plan:', it.plan.slice(0, 200));
+        if (!fix && Array.isArray(it.next)) { const nx = it.next.map(x => clip(x, 70)).filter(Boolean).slice(0, 4); if (nx.length) turn.next = nx; }
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
         if (it.say != null) {
           const t = trimSay(str(it.say, 1200)); if (t.length < String(it.say).trim().length) dlog('shortened a long spoken line');
-          enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
+          if (!fix) enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
         }
         if (it.cmd || it.type || it.op) {
+          if (fix) {
+            const c = normalize(it);
+            if (!c || c.cmd === 'clear' || c.cmd === 'wait' || c.cmd === 'write' || fixes >= FIX_MAX) { dlog('tidy: skipped', JSON.stringify(it).slice(0, 120)); continue; }
+            const touches = c.cmd === 'erase' ? c.ids : ['move', 'update'].includes(c.cmd) ? [c.id] : [];
+            if (touches.some(id => objs.get(id) && objs.get(id).cmd.cmd === 'ink')) { dlog('tidy: left the learner\'s ink alone', c.id); continue; }
+            if (c.cmd === 'erase') c.ids = c.ids.filter(id => !objs.get(id) || objs.get(id).cmd.cmd !== 'ink');
+            fixes++; turn.fixes = (turn.fixes || 0) + 1; enqueue({ cmd: c, run, turn }); continue;
+          }
           if (turn.cmds >= MAX_CMDS_PER_ANSWER) { dlog('over the per-answer command limit, skipped', it.cmd); continue; }
           const c = normalize(it); if (!c) { dlog('unknown or invalid command skipped', JSON.stringify(it).slice(0, 160)); continue; }
           if (c.cmd === 'write' && (turn.writes = (turn.writes || 0) + 1) > MAX_WRITES_PER_ANSWER) { dlog('too much writing: skipped', c.text); continue; }
@@ -1947,6 +2090,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       }
     } else {
       jsonBuf = null;
+      if (fix) return;
       const t = trimSay(line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200));
       enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
     }
@@ -2057,10 +2201,11 @@ async function loadModels() {
   sel.value = settings.model || '';
   renderEffort(); renderModelLabel();
 }
+$('#tidyChk').onchange = e => { settings.tidy = e.target.checked; saveSettings(); };
 $('#copyLogBtn').onclick = async () => {
   const info = [`Whiteboard Teacher debug log`, `browser: ${navigator.userAgent}`, `isolated: ${self.crossOriginIsolated}, cores: ${navigator.hardwareConcurrency}, webgpu: ${!!navigator.gpu}`,
     `model: ${settings.model} · ${currentEffort()} · voice: ${JSON.stringify(voiceCfg())} · voice status: ${JSON.stringify(Voice.status())} (${Voice.device() || '-'})`,
-    `queue: ${queue.length} waiting, running=${queueRunning}, streaming=${streaming}, speaking=${Voice.speaking()}`, '', ...debugLog].join('\n');
+    `queue: ${queue.length} waiting, running=${queueRunning}, streaming=${streaming}, speaking=${Voice.speaking()}, audio: ${Voice.audioState()}, last voice used: ${Voice.source() || '-'}`, '', ...debugLog].join('\n');
   try { await navigator.clipboard.writeText(info); $('#copyLogBtn').textContent = 'Copied ✓'; }
   catch { const w = window.open('', '_blank'); if (w) { w.document.body.innerText = info; } }
   setTimeout(() => { $('#copyLogBtn').textContent = 'Copy debug log'; }, 2000);
@@ -2153,7 +2298,7 @@ function renderTitle() {
   applyCamera();
   const had = await loadAll();
   updateEmpty();
-  $('#slowBtn').setAttribute('aria-pressed', !!settings.slow);
+  $('#tidyChk').checked = settings.tidy !== false;
   applyVoice(); updateTimeline();
   renderTitle(); renderChat(); applyCamera();
   await loadModels();
