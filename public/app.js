@@ -1633,7 +1633,7 @@ function bubble(m) {
 function renderChat() {
   msgBox.textContent = '';
   if (!chat.length) {
-    bubble({ role: 'system', text: lesson ? `Ask about anything; the teacher answers by drawing on the board.\nAnswers are generated live and can be wrong.` : 'Start a session to begin.' });
+    bubble({ role: 'system', text: MCP_MODE ? 'Connected to opencode. Ask your question there: its answer is drawn on this board, and the captions appear here.\nSelect things or sketch with ✏️ Draw; opencode can see both.' : lesson ? `Ask about anything; the teacher answers by drawing on the board.\nAnswers are generated live and can be wrong.` : 'Start a session to begin.' });
   }
   chat.forEach(bubble);
   renderChips();
@@ -2518,6 +2518,131 @@ function renderTitle() {
 }
 
 // ======================================================================
+// opencode mode (/?mode=mcp): opencode's model drives this board through mcp.js and the server's board bridge
+// (/api/board/*). Questions are asked in opencode; the chat here shows the teacher's captions.
+// ======================================================================
+const MCP_MODE = new URLSearchParams(location.search).get('mode') === 'mcp';
+let mcpTurn = null;
+// Draw calls that come in close together belong to one answer (one chat bubble, one answer on the timeline).
+function mcpTurnNow() {
+  if (mcpTurn && chat.includes(mcpTurn.msg) && Date.now() - mcpTurn.last < 60000) { mcpTurn.last = Date.now(); return mcpTurn; }
+  const am = { role: 'assistant', text: '', drew: [], meta: 'opencode' };
+  chat.push(am);
+  mcpTurn = { msg: am, text: '', drew: new Set(), el: bubble(am), thinking: false, cmds: 0, key: 't' + Date.now().toString(36), last: Date.now() };
+  return mcpTurn;
+}
+const rnd = n => Math.round(n);
+const boxText = id => { const o = objs.get(id), b = bbOf(o); return `${id} ${o.cmd.cmd} · box x${rnd(b.x)} y${rnd(b.y)} w${rnd(b.width)} h${rnd(b.height)}`; };
+function freeSpace() {
+  const b = allBounds();
+  return b ? `Free space: to the right from x=${rnd(b.x + b.width + 80)} (y from ${rnd(b.y)}), below from y=${rnd(b.y + b.height + 80)} (x from ${rnd(b.x)}).` : 'The board is empty: start near (0, 0).';
+}
+const runBusy = run => queue.some(it => it.run === run) || (queueBusy && currentItem && currentItem.run === run);
+async function boardIdle(ms) { const t0 = Date.now(); while ((queue.length || queueBusy) && Date.now() - t0 < ms) await sleep(120); }
+
+const MCP_METHODS = {
+  async draw(p) {
+    if (scrub) exitScrub();
+    if (!lesson) await newSession();
+    const parts = Array.isArray(p.steps) ? p.steps : [{ say: p.say, commands: p.commands }];
+    const run = { gen }, turn = mcpTurnNow(), errors = [], touched = [];
+    let n = 0;
+    for (const st of parts.slice(0, 40)) {
+      if (!st || typeof st !== 'object') continue;
+      if (st.say) { const t = trimSay(str(st.say, 1200)); enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null }); }
+      for (const raw of Array.isArray(st.commands) ? st.commands : []) {
+        if (++n > 300) { errors.push('more than 300 commands in one call: the rest were skipped'); break; }
+        const c = normalize(raw);
+        if (!c) { errors.push(`unknown or invalid command skipped: ${JSON.stringify(raw).slice(0, 140)}`); continue; }
+        // a session the model never named takes its first heading as its name
+        if (c.cmd === 'write' && lesson.autoName && c.text) { lesson.topic = clip(c.text, 60); lesson.autoName = false; renderTitle(); }
+        touched.push(c);
+        enqueue({ cmd: c, run, turn });
+      }
+    }
+    const t0 = Date.now(), maxWait = num(p.wait_seconds, 20, 0, 110) * 1000;
+    while (runBusy(run) && run.gen === gen && Date.now() - t0 < maxWait) await sleep(120);
+    const done = !runBusy(run);
+    const drawn = [];
+    for (const c of touched) {
+      if (c.cmd === 'erase' || c.cmd === 'clear' || c.cmd === 'wait') continue;
+      if (objs.has(c.id)) { if (!drawn.includes(c.id)) drawn.push(c.id); }
+      else if (done) errors.push(c.cmd === 'update' || c.cmd === 'move' ? `${c.cmd}: there is no object "${c.id}" on the board` : `${c.id} (${c.cmd}) could not be drawn: check its fields`);
+    }
+    turn.msg.text = turn.text.trim(); turn.msg.drew = [...turn.drew].slice(0, 80); saveSoon();
+    return {
+      done, drawn: drawn.map(boxText), errors,
+      issues: done ? layoutIssues(drawn.filter(id => objs.get(id).cmd.cmd !== 'ink')) : [],
+      free: freeSpace(),
+      note: done ? undefined : 'Still drawing (the board paces the pen to the captions). Later calls queue up after it.',
+    };
+  },
+  async get_board() {
+    const ink = [...objs.values()].filter(o => o.cmd.cmd === 'ink').map(o => o.cmd.id);
+    return {
+      topic: lesson ? lesson.topic : '', summary: boardSummary(),
+      selected: [...selection].filter(id => objs.has(id)).map(id => `${id} (${nameOf(id)})`),
+      sketches: ink, newSketches: [...inkSinceAsk].filter(id => objs.has(id)),
+      lessonSteps: navSteps().length, drawing: !!(queue.length || queueBusy),
+    };
+  },
+  async look(p) {
+    await boardIdle(20000);
+    const ids = (Array.isArray(p.ids) ? p.ids : []).map(x => str(x, 40)).filter(id => objs.has(id));
+    let region = null;
+    if (ids.length) region = regionAround(ids, 60);
+    else if (p.area === 'view') region = viewRect();
+    else if (p.area === 'sketch') {
+      let ink = [...inkSinceAsk].filter(id => objs.has(id));
+      if (!ink.length) ink = [...objs.values()].filter(o => o.cmd.cmd === 'ink').map(o => o.cmd.id);
+      if (!ink.length) return { empty: true, note: 'The learner has not sketched anything. They can press ✏️ Draw on the board.' };
+      region = inkRegion(ink);
+      inkSinceAsk.clear(); showAttach(false);
+    } else region = allBounds();
+    if (!region) return { empty: true, note: 'The board is empty.' };
+    const image = await boardImage(region);
+    return { image, region: `x ${rnd(region.x)}..${rnd(region.x + region.width)}, y ${rnd(region.y)}..${rnd(region.y + region.height)}` };
+  },
+  async new_board(p) {
+    await newSession();
+    mcpTurn = null;
+    if (p.title) { lesson.topic = clip(p.title, 120); lesson.autoName = false; }
+    renderTitle(); renderChat(); saveSoon();
+    return { topic: lesson.topic };
+  },
+};
+
+function mcpConnect() {
+  const status = $('#saveState');
+  const es = new EventSource('/api/board/events');
+  es.addEventListener('hello', () => { $('#modelLabel').textContent = '● opencode'; dlog('mcp: connected'); });
+  es.onerror = () => { $('#modelLabel').textContent = '○ reconnecting…'; };
+  es.addEventListener('call', async e => {
+    let msg; try { msg = JSON.parse(e.data); } catch { return; }
+    let out;
+    try {
+      const fn = MCP_METHODS[msg.method];
+      if (!fn) throw new Error('unknown method ' + msg.method);
+      dlog('mcp:', msg.method);
+      out = { id: msg.id, ok: true, result: await fn(msg.params || {}) };
+    } catch (err) { dlog('mcp: call failed', msg.method, String(err && err.stack || err).slice(0, 300)); out = { id: msg.id, ok: false, error: String(err && err.message || err) }; }
+    try { await fetch('/api/board/result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out) }); }
+    catch { status.textContent = 'cannot reach the server'; }
+  });
+}
+function mcpSetup() {
+  document.body.classList.add('mcpMode');
+  $('#modelSelect').closest('label').hidden = true;
+  $('#tidyChk').closest('label').hidden = true;
+  $('#emptyHint').textContent = 'Ask in opencode → its answer is drawn here';
+  $('#attach span').textContent = 'Your drawing is ready. In opencode, ask "check my drawing".';
+  $('#penCheck').textContent = 'Done: check it in opencode';
+  // browsers only play sound after the page has been clicked once
+  document.addEventListener('pointerdown', () => Voice.unlock(), { once: true });
+  mcpConnect();
+}
+
+// ======================================================================
 // boot
 // ======================================================================
 (async function boot() {
@@ -2529,7 +2654,7 @@ function renderTitle() {
   $('#tidyChk').checked = settings.tidy !== false;
   applyVoice(); updateTimeline();
   renderTitle(); renderChat(); applyCamera();
-  await loadModels();
+  if (MCP_MODE) mcpSetup(); else await loadModels();
   if (!had) newSession();
   // test hook (used by the automated check only)
   window.__wbt = { objs, camera: () => camera, execCommand: (raw, animate = true) => { const c = normalize(raw); return c && execCommand(c, { gen }, animate); }, selection, stopAll, send, lesson: () => lesson, steps: () => steps, scrub: () => scrub, showStep, stepBy, exitScrub };

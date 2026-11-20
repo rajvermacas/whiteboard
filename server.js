@@ -332,6 +332,41 @@ async function handleTTS(req, res) {
   } catch (e) { if (!res.headersSent) sendJSON(res, 500, { error: { code: 'tts_failed', message: String(e.message || e) } }); }
 }
 
+// ---------- board bridge: lets another program (mcp.js, used by opencode) drive an open board page ----------
+// The board page (/?mode=mcp) subscribes to /api/board/events. A caller POSTs {method, params} to /api/board/call;
+// the call goes to the most recently connected board, which runs it and POSTs the answer to /api/board/result.
+const boards = [];                 // [{id, res}] open board pages, newest last
+const pendingCalls = new Map();    // call id -> {resolve, timer}
+function handleBoardEvents(req, res) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'Connection': 'keep-alive' });
+  const b = { id: crypto.randomUUID(), res };
+  boards.push(b);
+  res.write(`event: hello\ndata: ${JSON.stringify({ id: b.id })}\n\n`);
+  const ping = setInterval(() => res.write(': ping\n\n'), 15000);
+  req.on('close', () => { clearInterval(ping); const i = boards.indexOf(b); if (i >= 0) boards.splice(i, 1); });
+}
+async function handleBoardCall(req, res) {
+  // JSON only: a web page cannot send this content type cross-origin without a CORS preflight, which is never granted
+  if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return sendJSON(res, 415, { error: { code: 'json_only' } });
+  let body; try { body = JSON.parse(await readBody(req, 4_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
+  const method = String(body.method || ''), timeout = Math.max(1000, Math.min(Number(body.timeout) || 60000, 300000));
+  const b = boards[boards.length - 1];
+  if (!b) return sendJSON(res, 503, { error: { code: 'no_board', message: 'No board page is open.' } });
+  const id = crypto.randomUUID();
+  const result = await new Promise(resolve => {
+    const timer = setTimeout(() => { pendingCalls.delete(id); resolve({ ok: false, error: `The board did not answer within ${Math.round(timeout / 1000)} s.` }); }, timeout);
+    pendingCalls.set(id, { resolve, timer });
+    b.res.write(`event: call\ndata: ${JSON.stringify({ id, method, params: body.params || {} })}\n\n`);
+  });
+  sendJSON(res, result.ok ? 200 : 500, result);
+}
+async function handleBoardResult(req, res) {
+  let body; try { body = JSON.parse(await readBody(req, 16_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request' } }); }
+  const p = pendingCalls.get(body.id);
+  if (p) { clearTimeout(p.timer); pendingCalls.delete(body.id); p.resolve({ ok: !!body.ok, result: body.result, error: body.error }); }
+  sendJSON(res, 200, { ok: true });
+}
+
 // ---------- static files ----------
 function serveStatic(req, res) {
   let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
@@ -360,6 +395,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/tts' && req.method === 'POST') return handleTTS(req, res);
     if (url.pathname === '/api/tts/status' && req.method === 'GET') { loadTTS(); return sendJSON(res, 200, ttsStatus()); }
     if (url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) return handleSessions(req, res, url);
+    if (url.pathname === '/api/board/events' && req.method === 'GET') return handleBoardEvents(req, res);
+    if (url.pathname === '/api/board/status' && req.method === 'GET') return sendJSON(res, 200, { app: 'whiteboard-teacher', boards: boards.length });
+    if (url.pathname === '/api/board/call' && req.method === 'POST') return handleBoardCall(req, res);
+    if (url.pathname === '/api/board/result' && req.method === 'POST') return handleBoardResult(req, res);
     if (req.method === 'GET') return serveStatic(req, res);
     res.writeHead(405); res.end();
   } catch (e) {

@@ -115,6 +115,54 @@ browser (public/)  ──POST /api/chat──▶  server.js  ──stream──�
   - lists are capped (90 commands and 5 `write`s per answer, 600 objects on the board),
   - a malformed line or a failing drawing is skipped and logged, never left to stall the answer.
 
+## Use it from opencode (MCP)
+
+opencode can teach on this board: you ask in opencode (desktop or terminal), its model draws here, and the captions, voice, timeline, replay and sessions all work as usual. `mcp.js` is a small MCP server (no dependencies) that gives opencode's model four tools:
+
+| Tool | What it does |
+|---|---|
+| `whiteboard_draw` | steps of `{say, commands}`: one spoken sentence plus the drawing commands it explains. Returns the ids and boxes drawn, layout problems to fix, errors and free space |
+| `whiteboard_get_board` | everything on the board, what you selected and your sketches |
+| `whiteboard_look` | a picture of the board (`all`, `view`, `sketch`, or given ids), so the model can check its layout or read your sketch |
+| `whiteboard_new_board` | a fresh board for a new subject |
+
+The teaching rules and the drawing language are in the tool descriptions, so any model opencode uses gets them. There is also a `teach` MCP prompt.
+
+**Set up** by adding this to `~/.config/opencode/opencode.json` (use the full path to `node` from `which node`, because the desktop app does not see your shell's PATH):
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "whiteboard": {
+        "type": "local",
+        "command": ["/full/path/to/node", "/full/path/to/whiteboard/mcp.js"],
+        "timeout": { "execution": 150000 }
+      }
+    }
+  }
+}
+```
+
+`opencode mcp list` should then show `whiteboard  connected`.
+
+**Use:**
+1. Ask opencode something like *"explain on the whiteboard how a TCP handshake works"*.
+2. On the first tool call, `mcp.js` starts `server.js` if it is not running (it keeps running afterwards) and opens the board at `http://127.0.0.1:5173/?mode=mcp`. You can also open that page yourself.
+3. In this mode the board's own chat box is hidden: you ask in opencode, and the chat panel shows the teacher's captions.
+4. Select things, or sketch with ✏️ **Draw**, then ask opencode about them (*"check my drawing"*). It reads your selection and looks at your sketch.
+5. For narration, turn it on in ⚙ and click the board once (browsers only play sound after a click).
+
+How it fits together:
+
+```
+opencode ─stdio─▶ mcp.js ─POST /api/board/call─▶ server.js ─SSE─▶ board page (/?mode=mcp)
+                    ▲                                                   │ runs it, then
+                    └──────────── result (ids, issues, PNG) ◀── POST /api/board/result
+```
+
+Options (set in the server entry's `"environment"`): `WHITEBOARD_URL` (default `http://127.0.0.1:5173`), `WHITEBOARD_OPEN=0` to never open a browser.
+
 ## Config (.env)
 
 | Var | Default |
@@ -136,7 +184,8 @@ browser (public/)  ──POST /api/chat──▶  server.js  ──stream──�
 ## Files
 
 ```
-server.js             Node server: OpenCode Go proxy, sessions, Kokoro voice (optional kokoro-js dependency)
+server.js             Node server: OpenCode Go proxy, sessions, Kokoro voice (optional kokoro-js dependency), board bridge for mcp.js
+mcp.js                MCP server (stdio) that lets opencode or another MCP client teach on the board
 public/index.html     layout
 public/style.css      styles
 public/app.js         board engine, pen, drawing tools, layout, timeline, chat, prompt, sessions
@@ -152,4 +201,6 @@ sessions/             auto-saved lessons (created on first use, git-ignored)
 - **"Used its whole token budget thinking":** pick a lower reasoning level in ⚙, or another model.
 - **Robotic voice:** run `npm install` and restart the server. ⚙ → Narration should then say *"generated on this computer (fast)"*.
 - **An answer seems stuck:** open ⚙, press **Copy debug log** and share it. It records what the app was waiting on.
+- **opencode says the board server "has no board bridge":** an older `npm start` is still running. Stop it (Ctrl+C) and run `npm start` again.
+- **opencode's whiteboard tools time out:** make sure the board page (`/?mode=mcp`) is open in a browser; only one such tab is needed (the newest one gets the drawings).
 - **`git pull` complains about a `.lock` file:** a git command was interrupted. Delete the named `.git/*.lock` file and run `git pull` again.
