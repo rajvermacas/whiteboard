@@ -22,7 +22,7 @@ window.addEventListener('error', e => dlog('page error', e.message, (e.filename 
 window.addEventListener('unhandledrejection', e => dlog('unhandled rejection', String(e.reason && e.reason.stack || e.reason).slice(0, 300)));
 const NS = 'http://www.w3.org/2000/svg';
 const LS_SET = 'wbt.settings.v2';
-const FIX_MAX = 12, MAX_OBJECTS = 600, MAX_CMDS_PER_ANSWER = 90, MAX_WRITES_PER_ANSWER = 5, MAX_SAY_WORDS = 26;
+const FIX_MAX = 12, MAX_OBJECTS = 600, MAX_SAY_WORDS = 26;
 const PALETTE = { blue: '#1d6fb8', amber: '#c48a00', yellow: '#c48a00', green: '#2a8a3e', red: '#d1382c', purple: '#7a48c2', orange: '#e07800', black: '#1f2328', grey: '#7d848c', gray: '#7d848c' };
 const BOXLIKE = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table', 'icon', 'tokens', 'schedule', 'sequence']);
 // what counts as drawing (vs. writing) when judging an answer
@@ -1612,7 +1612,9 @@ function renderChips() {
   } else {
     // follow-ups the teacher suggested for what it just drew; the generic ones otherwise
     const last = [...chat].reverse().find(m => m.role === 'assistant');
-    if (last && last.next && last.next.length) { last.next.forEach((q, i) => add(q, null, i === 0)); add('Quiz me on this'); add('Hinglish mein samjhao'); }
+    const o = lesson.outline, more = o && o.done < o.parts.length;
+    if (more) add(`Continue: ${o.done + 1}. ${o.parts[o.done]}`, `Continue the lesson with part ${o.done + 1}: ${o.parts[o.done]}.`, true);
+    if (last && last.next && last.next.length) { last.next.forEach((q, i) => add(q, null, i === 0 && !more)); add('Quiz me on this'); add('Hinglish mein samjhao'); }
     else { add('Go one level deeper'); add('Show a worked example with numbers'); add('What is a common mistake?'); add('Summarise the board'); add('Quiz me on this'); add('Hinglish mein samjhao'); }
   }
 }
@@ -1771,7 +1773,7 @@ Session name: "${lesson.topic}" (just a label for this whiteboard; teach whateve
 
 BOARD (infinite; units are board units; x grows right, y grows down)
 ${boardSummary()}
-${selIds.length ? `\nTHE LEARNER SELECTED: ${selIds.map(id => `${id} (${nameOf(id)})`).join(', ')}. Work on these directly: update them, build next to them, point at them.\n` : ''}
+${outlinePrompt()}${selIds.length ? `\nTHE LEARNER SELECTED: ${selIds.map(id => `${id} (${nameOf(id)})`).join(', ')}. Work on these directly: update them, build next to them, point at them.\n` : ''}
 OUTPUT: JSON Lines only, one object per line, nothing else (no markdown, no code fences, no prose outside JSON).
 Spoken line: {"say":"one short sentence"}   It is spoken while the drawing commands right after it are drawn, so it must explain exactly those.
 Board commands (each line has "cmd"). Place things with "near" instead of guessing coordinates: "near":{"of":"<id>","side":"right|left|below|above","gap":70}. Give x,y only for the very first object of a new area (use the free space listed above).
@@ -1804,12 +1806,18 @@ Words on the board, sparingly:
 Colours (dark markers on white): blue #1d6fb8, amber #c48a00, green #2a8a3e, red #d1382c, purple #7a48c2, orange #e07800, black #1f2328, grey #7d848c. Give each kind of thing one colour and keep it.
 
 HOW TO TEACH HERE: DRAW MORE, TALK LESS
-0. Start every answer with one hidden planning line: {"plan":"<the 1-3 pictures you will draw, and the tool for each>"} (max 40 words, never shown). Pick the tool that makes the idea obvious at a glance, e.g. protocol or request/response → sequence; anything over time → schedule; a system → icons + arrows inside frames.
+0. DECIDE THE DEPTH FIRST. Before anything else, work out what this learner actually needs from their question: its intent and meaning, what is already on the board, and what came before in the conversation. Never decide from the wording alone. Then start the answer with one hidden planning line (never shown):
+   {"plan":{"depth":"quick|explain|deep","why":"<what the learner needs, max 15 words>","pictures":"<the pictures and the tool for each>","parts":["<deep only: 3-6 short part names>"],"now":[1]}}
+   - quick: they need one fact, a clarification, a small correction, or a check of something already on the board. Answer crisply in 1-2 sentences and the smallest drawing that makes it clear (often just a highlight, an update or one small picture next to what exists). Padding a quick answer is a mistake.
+   - explain: they want to understand one idea. One clear worked picture, built up step by step.
+   - deep: understanding it needs several connected ideas (a mechanism with stages, a trade-off, a derivation, a system with moving parts). Split it into 3-6 parts in "parts", teach the first one or two now ("now" = their numbers, starting at 1), each part under its own short heading in fresh space, and stop at a natural checkpoint. The rest is taught when the learner continues.
+   When a lesson is in progress (see LESSON IN PROGRESS above) and the learner wants to go on, plan depth "deep" with the same "parts" and "now" = the next part numbers. A question about something else is answered on its own at its own depth; the lesson waits.
+   Pick the tool that makes each idea obvious at a glance, e.g. protocol or request/response → sequence; anything over time → schedule; a system → icons + arrows inside frames.
 1. Every idea becomes a picture. Ask "what does this look like?" and draw that: things → icons or boxes; sequences, tokens, slots, queues → tokens; what happens over time → schedule (or several snapshots side by side); cause and movement → arrows; parts of a whole → frame; sizes and counts → brace, bars; structure → graph, tree, network.
 2. Draw the concrete example itself (the actual tokens, requests, numbers, names), never a description of it.
-3. Board text is labels only: 1-4 words or a number. At most 3 write commands per answer (a heading and short captions). No sentences, definitions, legends or bullet lists on the board.
-4. Spoken lines: one sentence of at most 12 words each, about the drawing that follows it; at most 6 per answer. Never repeat in words what the drawing already shows. Narrate what the pen is drawing right now: each sentence explains the commands that follow it, up to the next sentence. Never talk ahead about something drawn later, or back about something drawn earlier without updating or highlighting it.
-5. Rhythm: say → 2-5 drawing commands → say → 2-5 drawing commands …  Aim for 15-35 board commands per answer, at least 85% of them pictures.
+3. Board text is labels only: 1-4 words or a number. At most 3 write commands per answer (a heading and short captions); in deep, one heading per part plus 2 captions. No sentences, definitions, legends or bullet lists on the board.
+4. Spoken lines: one sentence of at most 12 words each, about the drawing that follows it. As many as the depth needs: 1-2 for quick, about 3-6 for explain, about 4-6 per part for deep. Never repeat in words what the drawing already shows. Narrate what the pen is drawing right now: each sentence explains the commands that follow it, up to the next sentence. Never talk ahead about something drawn later, or back about something drawn earlier without updating or highlighting it.
+5. Rhythm: say → 2-5 drawing commands → say → 2-5 drawing commands … The amount follows the depth: a few commands for quick, about 15-35 for explain, about 15-30 per part for deep. At least 85% of them pictures.
 6. Layout: one clear diagram per idea, flowing left→right or top→bottom, laid out with near; keep 40+ units between things; put before/after or wrong/right side by side; frame what belongs together. Arrows join things that are next to each other; never draw an arrow across another drawing.
 7. Build on the board: keep earlier drawings, extend and update them (update is how a picture changes over time). Erase only a wrong or outdated picture, and say why. A new subject starts with a heading in free space.
 8. Objects of type ink are the learner's own pen sketches. When a picture of their sketch is attached, work out from the picture yourself what it shows (never ask them to describe it). Name what you see in one short spoken line, then answer their question about it; if they asked nothing specific, check it: highlight what is right and draw the corrected version next to their sketch. Never erase or move their ink.
@@ -1817,7 +1825,7 @@ HOW TO TEACH HERE: DRAW MORE, TALK LESS
 10. Language: reply in the language of the learner's latest message; that is English unless that message is in Hinglish or asks for Hinglish (then Hinglish in Latin script). Board labels and the "next" questions follow the same language. Say when numbers are only illustrative.
 
 EXAMPLE of the balance wanted (a different topic):
-{"plan":"icons CPU, cache, disk with hit/miss arrows; cache slots as tokens; update them to show eviction"}
+{"plan":{"depth":"explain","why":"wants to see why a cache speeds things up","pictures":"icons CPU, cache, disk with hit/miss arrows; cache slots as tokens; update them to show eviction"}}
 {"say":"A cache keeps hot data right next to the CPU."}
 {"cmd":"write","id":"hc","x":0,"y":0,"text":"Caching","size":34}
 {"cmd":"icon","id":"cpu","name":"cpu","label":"CPU","near":{"of":"hc","side":"below","gap":50}}
@@ -1937,6 +1945,34 @@ If the board already looks clear, reply with exactly {"ok":true}`;
   setTimeout(() => status.remove(), 4000);
 }
 
+// ======================================================================
+// depth: the model decides from the meaning of the question how much to teach ({"plan":{"depth":…}}).
+// The app never inspects the question's words; it only sizes its limits to the model's own decision.
+// ======================================================================
+const DEPTH_LIMITS = {
+  quick:   { cmds: 30,  writes: 2, minPics: 0 },   // a crisp answer is never forced into a big drawing
+  explain: { cmds: 90,  writes: 5, minPics: 4 },
+  deep:    { cmds: 170, writes: 9, minPics: 6 },
+};
+const limitsOf = turn => DEPTH_LIMITS[turn.depth] || DEPTH_LIMITS.explain;
+function applyPlan(turn, plan) {
+  const depth = ['quick', 'explain', 'deep'].includes(plan.depth) ? plan.depth : 'explain';
+  turn.depth = depth;
+  dlog('plan:', depth, '·', str(plan.why, 120), '·', str(plan.pictures, 160));
+  if (depth !== 'deep') return;
+  const parts = (Array.isArray(plan.parts) ? plan.parts : []).map(x => clip(x, 48)).filter(Boolean).slice(0, 8);
+  if (parts.length < 2) return;
+  const now = (Array.isArray(plan.now) ? plan.now : [plan.now]).map(n => Math.round(num(n, 0, 0, 8))).filter(n => n >= 1 && n <= parts.length);
+  const prev = lesson.outline, same = prev && prev.parts.length === parts.length && prev.parts.every((x, i) => x.toLowerCase() === parts[i].toLowerCase());
+  lesson.outline = { parts, done: Math.max(same ? prev.done : 0, now.length ? Math.max(...now) : 1) };
+  saveSoon();
+}
+function outlinePrompt() {
+  const o = lesson && lesson.outline;
+  if (!o || o.done >= o.parts.length) return '';
+  return `\nLESSON IN PROGRESS (taught: ${o.done} of ${o.parts.length} parts):\n${o.parts.map((x, i) => `${i < o.done ? '✓' : '·'} ${i + 1}. ${x}`).join('\n')}\n`;
+}
+
 async function send(q) {
   if (!lesson) { openTopic(true); return; }
   if (streaming || queueRunning || replaying || scrub) stopAll();
@@ -1983,8 +2019,8 @@ async function send(q) {
     modelApplied = r1.model;
     let answer = r1.content;
     // The teacher must teach by drawing. If the answer was mostly talk, ask once for the picture.
-    if ((turn.pics || 0) < 4 && !myAbort.signal.aborted && run.gen === gen) {
-      dlog('answer had only', turn.pics || 0, 'pictures: asking for a drawing');
+    if ((turn.pics || 0) < limitsOf(turn).minPics && !myAbort.signal.aborted && run.gen === gen) {
+      dlog(`a ${turn.depth || 'explain'} answer had only`, turn.pics || 0, 'pictures: asking for a drawing');
       if (turn.thinking) { body.textContent = '✎ Drawing…'; }
       const follow = messages.concat(
         { role: 'assistant', content: r1.content.slice(0, 6000) || '(no answer)' },
@@ -2020,6 +2056,7 @@ async function send(q) {
     const finalize = (final) => {
       am.text = turn.text.trim(); am.drew = [...turn.drew].slice(0, 80);
       if (turn.next) am.next = turn.next;
+      if (turn.depth) am.depth = turn.depth;
       am.meta = `${modelApplied || model || 'model'}${effort ? ' · ' + effort : ''} · ${Math.round((Date.now() - t0) / 1000)}s${turn.fixes ? ` · tidied ${turn.fixes}` : ''}`;
       const meta = turn.el.querySelector('.meta'); if (meta) meta.textContent = am.meta;
       if (final && turn.thinking && !failed) { body.classList.remove('thinking'); body.textContent = am.drew.length ? '(drew on the board)' : '(no answer)'; turn.thinking = false; }
@@ -2066,6 +2103,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
         if (typeof it.plan === 'string') dlog('plan:', it.plan.slice(0, 200));
+        if (!fix && it.plan && typeof it.plan === 'object' && typeof it.plan.depth === 'string') applyPlan(turn, it.plan);
         if (!fix && Array.isArray(it.next)) { const nx = it.next.map(x => clip(x, 70)).filter(Boolean).slice(0, 4); if (nx.length) turn.next = nx; }
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
         if (it.say != null) {
@@ -2081,9 +2119,9 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
             if (c.cmd === 'erase') c.ids = c.ids.filter(id => !objs.get(id) || objs.get(id).cmd.cmd !== 'ink');
             fixes++; turn.fixes = (turn.fixes || 0) + 1; enqueue({ cmd: c, run, turn }); continue;
           }
-          if (turn.cmds >= MAX_CMDS_PER_ANSWER) { dlog('over the per-answer command limit, skipped', it.cmd); continue; }
+          if (turn.cmds >= limitsOf(turn).cmds) { dlog('over the per-answer command limit, skipped', it.cmd); continue; }
           const c = normalize(it); if (!c) { dlog('unknown or invalid command skipped', JSON.stringify(it).slice(0, 160)); continue; }
-          if (c.cmd === 'write' && (turn.writes = (turn.writes || 0) + 1) > MAX_WRITES_PER_ANSWER) { dlog('too much writing: skipped', c.text); continue; }
+          if (c.cmd === 'write' && (turn.writes = (turn.writes || 0) + 1) > limitsOf(turn).writes) { dlog('too much writing: skipped', c.text); continue; }
           if (PICTURE.has(c.cmd)) turn.pics = (turn.pics || 0) + 1;
           turn.cmds++; enqueue({ cmd: c, run, turn });
         }

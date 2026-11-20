@@ -19,6 +19,13 @@ To get the latest version: `git pull`, then restart the server.
 
 ## What the teacher does
 
+**Decides how deep to go.** Before answering, the teacher works out what you need from the meaning of your question, the board and the conversation, not from keywords. It picks one of three depths:
+- **quick:** a crisp sentence or two and the smallest drawing that makes it clear.
+- **explain:** one idea, built up as a worked picture.
+- **deep:** a lesson in 3–6 parts. It teaches the first part or two, then stops at a checkpoint, and a **Continue: next part** chip carries on. The outline is saved with the session, so the teacher always knows where the lesson is. Off-topic questions are answered on their own, and the lesson waits.
+
+The app sizes its limits to the depth the teacher chose (how much it may draw, and whether a short answer is sent back for more drawing). It never inspects your words itself.
+
 **Draws first, talks little.** Every idea becomes a picture. Spoken lines are one short sentence each, shown in the chat like captions (at most 6 per answer, about 12 words each). Board text is limited to labels of a few words. The app enforces this: it trims long lines and over-wordy board text, and if an answer comes back with fewer than 4 pictures, it asks the model once to draw it.
 
 **Drawing tools.** The model describes the structure and the app lays it out neatly:
