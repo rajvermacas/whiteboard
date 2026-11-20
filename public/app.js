@@ -2624,7 +2624,7 @@ const MCP_METHODS = {
 
 function mcpConnect() {
   const status = $('#saveState');
-  const es = new EventSource('/api/board/events');
+  const es = new EventSource('/api/board/events' + (EMBED ? '?embed=1' : ''));
   es.addEventListener('hello', () => { $('#modelLabel').textContent = '● opencode'; dlog('mcp: connected'); });
   es.onerror = () => { $('#modelLabel').textContent = '○ reconnecting…'; };
   es.addEventListener('call', async e => {

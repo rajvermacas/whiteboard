@@ -334,12 +334,13 @@ async function handleTTS(req, res) {
 
 // ---------- board bridge: lets another program (mcp.js, used by opencode) drive an open board page ----------
 // The board page (/?mode=mcp) subscribes to /api/board/events. A caller POSTs {method, params} to /api/board/call;
-// the call goes to the most recently connected board, which runs it and POSTs the answer to /api/board/result.
-const boards = [];                 // [{id, res}] open board pages, newest last
+// the call goes to the most recently connected board, preferring one embedded in opencode Desktop's Whiteboard tab
+// (?embed=1) over a browser tab; that board runs it and POSTs the answer to /api/board/result.
+const boards = [];                 // [{id, res, embed}] open board pages, newest last
 const pendingCalls = new Map();    // call id -> {resolve, timer}
-function handleBoardEvents(req, res) {
+function handleBoardEvents(req, res, url) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'Connection': 'keep-alive' });
-  const b = { id: crypto.randomUUID(), res };
+  const b = { id: crypto.randomUUID(), res, embed: url.searchParams.get('embed') === '1' };
   boards.push(b);
   res.write(`event: hello\ndata: ${JSON.stringify({ id: b.id })}\n\n`);
   const ping = setInterval(() => res.write(': ping\n\n'), 15000);
@@ -350,7 +351,7 @@ async function handleBoardCall(req, res) {
   if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return sendJSON(res, 415, { error: { code: 'json_only' } });
   let body; try { body = JSON.parse(await readBody(req, 4_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
   const method = String(body.method || ''), timeout = Math.max(1000, Math.min(Number(body.timeout) || 60000, 300000));
-  const b = boards[boards.length - 1];
+  const b = boards.findLast(x => x.embed) || boards[boards.length - 1];
   if (!b) return sendJSON(res, 503, { error: { code: 'no_board', message: 'No board page is open.' } });
   const id = crypto.randomUUID();
   const result = await new Promise(resolve => {
@@ -395,8 +396,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/tts' && req.method === 'POST') return handleTTS(req, res);
     if (url.pathname === '/api/tts/status' && req.method === 'GET') { loadTTS(); return sendJSON(res, 200, ttsStatus()); }
     if (url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) return handleSessions(req, res, url);
-    if (url.pathname === '/api/board/events' && req.method === 'GET') return handleBoardEvents(req, res);
-    if (url.pathname === '/api/board/status' && req.method === 'GET') return sendJSON(res, 200, { app: 'whiteboard-teacher', boards: boards.length });
+    if (url.pathname === '/api/board/events' && req.method === 'GET') return handleBoardEvents(req, res, url);
+    if (url.pathname === '/api/board/status' && req.method === 'GET') return sendJSON(res, 200, { app: 'whiteboard-teacher', boards: boards.length, embedded: boards.filter(b => b.embed).length });
     if (url.pathname === '/api/board/call' && req.method === 'POST') return handleBoardCall(req, res);
     if (url.pathname === '/api/board/result' && req.method === 'POST') return handleBoardResult(req, res);
     if (req.method === 'GET') return serveStatic(req, res);

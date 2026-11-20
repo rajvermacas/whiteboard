@@ -182,7 +182,7 @@ Options (set in the server entry's `"environment"`): `WHITEBOARD_URL` (default `
 
 Then quit and reopen opencode Desktop. *Settings → Extensions → Plugins* should list `whiteboard` as active, and **+** in the side panel offers *Whiteboard*.
 
-When the tab is open, the MCP server draws there and doesn't open a browser tab. It waits `WHITEBOARD_OPEN_DELAY_MS` (default 5000) for the tab to connect before falling back to the browser.
+When the tab is open, the MCP server draws there and doesn't open a browser tab. Drawings always go to the Desktop tab, even if a browser board was opened after it; a browser board only gets them when no Desktop tab is open. It waits `WHITEBOARD_OPEN_DELAY_MS` (default 5000) for the tab to connect before falling back to the browser.
 
 ## Config (.env)
 
@@ -225,5 +225,5 @@ sessions/             auto-saved lessons (created on first use, git-ignored)
 - **Robotic voice:** run `npm install` and restart the server. ⚙ → Narration should then say *"generated on this computer (fast)"*.
 - **An answer seems stuck:** open ⚙, press **Copy debug log** and share it. It records what the app was waiting on.
 - **opencode says the board server "has no board bridge":** an older `npm start` is still running. Stop it (Ctrl+C) and run `npm start` again.
-- **opencode's whiteboard tools time out:** make sure the board page (`/?mode=mcp`) is open in a browser; only one such tab is needed (the newest one gets the drawings).
+- **opencode's whiteboard tools time out:** make sure a board is open: the Whiteboard tab in opencode Desktop, or `/?mode=mcp` in a browser. With several open, the Desktop tab gets the drawings, otherwise the newest browser tab.
 - **`git pull` complains about a `.lock` file:** a git command was interrupted. Delete the named `.git/*.lock` file and run `git pull` again.
