@@ -2191,8 +2191,8 @@ async function send(q, opts = {}) {
       if (turn.thinking && !turn.cmds) { turn.el.remove(); chat.splice(chat.indexOf(am), 1); }
       const text = code === 'rate_limited' ? 'Rate limited by OpenCode Go. Wait a moment and ask again.'
         : code === 'thinking_budget' ? `${modelName(model)} used its whole token budget thinking and never wrote an answer. Pick a lower reasoning level (⚙ in the chat header) or another model, then ask again.`
-        : code === 'not_granted' ? `The API key was rejected (${err.message}). Check OPENCODE_API_KEY in .env and restart the server.`
-        : code === 'no_api_key' ? 'No API key on the server. Put OPENCODE_API_KEY in .env and restart.'
+        : code === 'not_granted' ? `The API key was rejected (${err.message}). Check ${String(model).startsWith('or:') ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY'} in .env (just the key, nothing before it) and restart the server.`
+        : code === 'no_api_key' ? `No API key on the server. Put ${String(model).startsWith('or:') ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY'} in .env and restart.`
         : code === 'empty' ? `${modelName(model)} returned an empty answer. Try again, or pick another model.`
         : code === 'stalled' ? `${modelName(model)} stopped responding mid-answer. What arrived is shown; ask again or pick another model.`
         : code === 'network' || err instanceof TypeError ? 'Cannot reach the local server. Is `npm start` still running?'
