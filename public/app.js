@@ -2122,6 +2122,7 @@ function openTopic(forceNew = false) {
   dlg.showModal(); setTimeout(() => $('#tTopic').focus(), 30);
 }
 $('#topicBtn').onclick = () => openTopic(false);
+$('#tCancel').onclick = () => dlg.close('cancel');
 $('#topicBtn').title = 'Rename this session';
 dlg.addEventListener('close', () => { if (!lesson && dlg.returnValue !== 'ok') setTimeout(openSessions, 0); });
 $('#topicForm').addEventListener('submit', async e => {
