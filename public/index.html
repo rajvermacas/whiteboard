@@ -115,6 +115,11 @@
         <button id="selAsk">Ask</button><button id="selErase">Erase</button><button id="selClear" title="Clear selection">✕</button>
       </div>
       <div id="chips"></div>
+      <div id="attach" hidden>
+        <img id="attachImg" alt="your drawing">
+        <span>Your drawing is attached. Ask about it, or just press Send.</span>
+        <button id="attachX" type="button" title="Don't send the drawing">✕</button>
+      </div>
       <form id="composer">
         <textarea id="input" rows="1" placeholder="Ask the teacher…"></textarea>
         <button id="sendBtn" type="submit">Send</button>
@@ -125,13 +130,9 @@
 
 <dialog id="topicDlg">
   <form method="dialog" id="topicForm">
-    <h2>What should the teacher teach?</h2>
-    <label>Topic <input id="tTopic" required placeholder="e.g. How attention works in transformers"></label>
-    <label>Audience <input id="tAudience" placeholder="Technical reader new to the topic"></label>
-    <label>Worked example (optional) <input id="tExample" placeholder="Teacher picks one if empty"></label>
-    <label>Reference notes (optional) <textarea id="tNotes" rows="4" placeholder="Paste key points, numbers or a summary of a paper / video. Credited on the page."></textarea></label>
-    <label>Source name (optional) <input id="tSource" placeholder="e.g. Vaswani et al. 2017"></label>
-    <p class="note" id="tWarn" hidden>A new topic starts a new lesson. The current one stays saved under 🗂 Sessions.</p>
+    <h2>New session</h2>
+    <label>Session name <input id="tTopic" required placeholder="e.g. LLM serving" autocomplete="off"></label>
+    <p class="note">Just a name for this board. You can ask the teacher about anything.</p>
     <menu>
       <button value="cancel" id="tCancel" formnovalidate>Cancel</button>
       <button value="ok" id="tOk" class="primary">Start teaching</button>
@@ -151,6 +152,7 @@
   </div>
 </dialog>
 
+<script src="icons.js"></script>
 <script src="voice.js"></script>
 <script src="app.js"></script>
 </body>

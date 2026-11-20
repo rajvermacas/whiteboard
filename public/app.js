@@ -22,11 +22,13 @@ window.addEventListener('error', e => dlog('page error', e.message, (e.filename 
 window.addEventListener('unhandledrejection', e => dlog('unhandled rejection', String(e.reason && e.reason.stack || e.reason).slice(0, 300)));
 const NS = 'http://www.w3.org/2000/svg';
 const LS_SET = 'wbt.settings.v2';
-const MAX_OBJECTS = 400, MAX_CMDS_PER_ANSWER = 60;
+const MAX_OBJECTS = 600, MAX_CMDS_PER_ANSWER = 90, MAX_WRITES_PER_ANSWER = 5, MAX_SAY_WORDS = 26;
 const PALETTE = { blue: '#1d6fb8', amber: '#c48a00', yellow: '#c48a00', green: '#2a8a3e', red: '#d1382c', purple: '#7a48c2', orange: '#e07800', black: '#1f2328', grey: '#7d848c', gray: '#7d848c' };
-const BOXLIKE = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table']);
-const TYPES = new Set(['math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table', 'ink', 'write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'line', 'arrow', 'highlight', 'flow', 'update', 'animate', 'pulse', 'move', 'erase', 'clear', 'wait']);
-const ALIASES = { latex: 'math', equation: 'math', formula: 'math', nn: 'network', neuralnet: 'network', flowchart: 'graph', diagram: 'graph', 'number_line': 'numberline', numline: 'numberline', grid: 'table', text: 'write', label: 'write', rect: 'box', rectangle: 'box', ellipse: 'circle', path: 'line', chart: 'bars', circle_highlight: 'highlight', delete: 'erase', remove: 'erase', wipe: 'clear' };
+const BOXLIKE = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table', 'icon', 'tokens', 'schedule', 'sequence']);
+// what counts as drawing (vs. writing) when judging an answer
+const PICTURE = new Set(['sequence', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table', 'icon', 'tokens', 'schedule', 'frame', 'brace', 'arrow', 'line', 'highlight', 'math']);
+const TYPES = new Set(['sequence', 'icon', 'tokens', 'frame', 'brace', 'schedule', 'math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table', 'ink', 'write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'line', 'arrow', 'highlight', 'update', 'move', 'erase', 'clear', 'wait']);
+const ALIASES = { animate: 'update', sequencediagram: 'sequence', messages: 'sequence', protocol: 'sequence', symbol: 'icon', pictogram: 'icon', row: 'tokens', chips: 'tokens', group: 'frame', container: 'frame', bracket: 'brace', gantt: 'schedule', latex: 'math', equation: 'math', formula: 'math', nn: 'network', neuralnet: 'network', flowchart: 'graph', diagram: 'graph', 'number_line': 'numberline', numline: 'numberline', grid: 'table', text: 'write', label: 'write', rect: 'box', rectangle: 'box', ellipse: 'circle', path: 'line', chart: 'bars', circle_highlight: 'highlight', delete: 'erase', remove: 'erase', wipe: 'clear' };
 
 const svg = $('#board'), layerObj = $('#layerObjects'), layerOv = $('#layerOverlay'), defs = svg.querySelector('defs'), grid = $('#grid');
 const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -36,7 +38,7 @@ const objs = new Map();        // id -> {cmd, g, bb, off:[dx,dy]}
 let camera = { x: -60, y: -60, scale: 1 };
 let chat = [];                 // [{role:'user'|'assistant'|'error'|'system', text, about?, drew?, meta?}]
 const selection = new Set();
-let settings = { model: null, efforts: {}, slow: false, voice: { mode: 'kokoro', voice: 'af_bella', speed: 1, gpu: false } };
+let settings = { model: null, efforts: {}, slow: false, voice: { mode: 'off', voice: 'af_heart', speed: 1, engine: 'server' } };
 let models = [];
 let gen = 0;                   // animation generation: bump to finish every running tween at once
 let streaming = false, queueRunning = false, replaying = false;
@@ -55,6 +57,16 @@ const f1 = n => Math.round(n * 10) / 10;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function num(v, d, lo = -1e5, hi = 1e5) { const n = Number(v); return Number.isFinite(n) ? clamp(n, lo, hi) : d; }
 function str(v, max = 300) { return v == null ? '' : String(v).slice(0, max); }
+// short labels only: cut at a word boundary and mark the cut
+function clip(v, n) { const t = v == null ? '' : String(v).replace(/\s+/g, ' ').trim(); if (t.length <= n) return t; const k = t.lastIndexOf(' ', n - 1); return (k > n * 0.5 ? t.slice(0, k) : t.slice(0, n - 1)) + '…'; }
+function clipLines(v, lines, n) { return String(v ?? '').split('\n').slice(0, lines).map(l => clip(l, n)).join('\n'); }
+// spoken / chat lines: keep whole sentences up to a word budget
+function trimSay(t) {
+  const words = String(t).trim().split(/\s+/); if (words.length <= MAX_SAY_WORDS) return String(t).trim();
+  const sentences = String(t).match(/[^.!?]+[.!?]+(\s|$)/g) || [];
+  let out = ''; for (const sn of sentences) { if ((out + sn).trim().split(/\s+/).length > MAX_SAY_WORDS) break; out += sn; }
+  return out.trim() || words.slice(0, MAX_SAY_WORDS).join(' ') + '…';
+}
 function col(v, d = '#1f2328') {
   if (typeof v !== 'string') return d;
   const s = v.trim().toLowerCase();
@@ -160,6 +172,16 @@ function highlightCode(line, lang) {
     if (m[0] === '') re.lastIndex++;
   }
   return out.length ? out : [[' ', '#1f2328']];
+}
+
+function rrPath(x, y, w, h, rad) {
+  const q = Math.max(0, Math.min(rad, w / 2, h / 2));
+  return `M${f1(x + q)} ${f1(y)} H${f1(x + w - q)} Q${f1(x + w)} ${f1(y)} ${f1(x + w)} ${f1(y + q)} V${f1(y + h - q)} Q${f1(x + w)} ${f1(y + h)} ${f1(x + w - q)} ${f1(y + h)} H${f1(x + q)} Q${f1(x)} ${f1(y + h)} ${f1(x)} ${f1(y + h - q)} V${f1(y + q)} Q${f1(x)} ${f1(y)} ${f1(x + q)} ${f1(y)} Z`;
+}
+function unionBox(ids) {
+  let b = null;
+  for (const id of ids) { const o = objs.get(id); if (!o) continue; const q = bbOf(o); b = b ? { x: Math.min(b.x, q.x), y: Math.min(b.y, q.y), width: Math.max(b.x + b.width, q.x + q.width) - Math.min(b.x, q.x), height: Math.max(b.y + b.height, q.y + q.height) - Math.min(b.y, q.y) } : q; }
+  return b;
 }
 
 const builders = {
@@ -435,28 +457,141 @@ const builders = {
     addStroke(g, parts, d, c.color, { width: 2 });
     rows.forEach((rw, i) => { let x = x0; for (let j = 0; j < nc; j++) { const v = str(rw[j] ?? '', 30); if (v) addText(g, parts, x + cw[j] / 2, y0 + i * rh + rh / 2 + 7, v, { size, anchor: 'middle', weight: i === 0 && c.header ? 700 : null, color: i === 0 && c.header ? c.color : '#1f2328' }); x += cw[j]; } });
   },
+  // ---- pictures that carry the explanation ----
+  icon(c, g, parts, r) {
+    const key = window.WB_ICONS && WB_ICONS.resolve(c.name), S = c.size, k = S / 100, X = v => c.x + v * k, Y = v => c.y + v * k;
+    if (!key) { // unknown icon: a labelled rounded tile with the initials, never a blank
+      addFill(g, parts, rrPath(c.x, c.y, S, S, S * 0.18), c.color, 0.1);
+      addStroke(g, parts, roughRect(c.x, c.y, S, S, r), c.color, { width: 2.6 });
+      addText(g, parts, c.x + S / 2, c.y + S / 2 + S * 0.12, (c.name || '?').slice(0, 3).toUpperCase(), { size: S * 0.32, color: c.color, anchor: 'middle', weight: 700 });
+    } else {
+      let d = '', fills = '';
+      for (const sh of WB_ICONS.shapes[key]) {
+        const fill = sh[sh.length - 1] === 'fill'; let part = '';
+        if (sh[0] === 'r') part = rrPath(X(sh[1]), Y(sh[2]), sh[3] * k, sh[4] * k, (sh[5] || 0) * k);
+        else if (sh[0] === 'c') part = roughEllipse(X(sh[1]), Y(sh[2]), sh[3] * k, sh[3] * k, r, 1.02);
+        else if (sh[0] === 'e') part = roughEllipse(X(sh[1]), Y(sh[2]), sh[3] * k, sh[4] * k, r, 1.02);
+        else if (sh[0] === 'l') part = `M${f1(X(sh[1]))} ${f1(Y(sh[2]))} L${f1(X(sh[3]))} ${f1(Y(sh[4]))}`;
+        else if (sh[0] === 'p') { const pts = sh[1]; part = 'M' + pts.map((v, i) => f1(i % 2 ? Y(v) : X(v))).join(' ').replace(/^(\S+ \S+)/, '$1 L') + (sh[2] === true ? ' Z' : ''); }
+        else if (sh[0] === 'q') { let n = 0; part = sh[1].replace(/-?\d*\.?\d+/g, m => f1((n++ % 2 ? Y : X)(Number(m)))); }
+        d += part + ' '; if (fill) fills += part + ' ';
+      }
+      if (fills) addFill(g, parts, fills, c.color, 0.18);
+      addStroke(g, parts, d, c.color, { width: clamp(S / 24, 2, 5) });
+    }
+    if (c.label) addText(g, parts, c.x + S / 2, c.y + S + 24, c.label, { size: 20, color: '#1f2328', anchor: 'middle', weight: 700 });
+    if (c.sub) addText(g, parts, c.x + S / 2, c.y + S + (c.label ? 46 : 24), c.sub, { size: 16, color: '#7d848c', anchor: 'middle' });
+  },
+  tokens(c, g, parts, r) {
+    const size = c.size, h = Math.round(size * 1.7), top = c.label ? size * 1.5 : 0;
+    if (c.label) addText(g, parts, c.x, c.y + size, c.label, { size: size, color: '#5b636b', weight: 700 });
+    let x = c.x, y = c.y + top;
+    c.items.forEach((it, i) => {
+      const t = it.text, w = c.vertical ? Math.max(h * 1.6, ...c.items.map(z => measureW(g, z.text || ' ', size) + 20)) : Math.max(h, measureW(g, t || ' ', size) + 20);
+      const color = it.color || (c.colors && c.colors[i]) || c.color, hl = c.highlight.includes(i);
+      if (!t) addStroke(g, parts, roughRect(x, y, w, h, r), '#9aa1a9', { width: 1.6, dash: true });  // an empty slot
+      else {
+        addFill(g, parts, rrPath(x, y, w, h, 6), color, hl ? 0.38 : 0.14);
+        addStroke(g, parts, roughRect(x, y, w, h, r), color, { width: hl ? 3.2 : 2 });
+        addText(g, parts, x + w / 2, y + h / 2 + size * 0.34, t, { size, color: '#1f2328', anchor: 'middle' });
+      }
+      if (c.index) addText(g, parts, x + w / 2, y + h + 16, String(i), { size: 13, color: '#9aa1a9', anchor: 'middle' });
+      if (c.vertical) y += h + c.gap; else x += w + c.gap;
+    });
+  },
+  frame(c, g, parts, r) {
+    let b = null;
+    if (c.around.length) {
+      const things = c.around.filter(id => objs.has(id) && !['arrow', 'line', 'highlight', 'brace', 'frame'].includes(objs.get(id).cmd.cmd));
+      b = unionBox(things.length ? things : c.around); if (!b) return false;
+    } else b = { x: c.x, y: c.y, width: c.w, height: c.h };
+    const p = c.pad, x = b.x - p, w = b.width + 2 * p;
+    // the label goes just above the frame unless something is already there; then inside
+    const lw = c.label ? measureW(g, c.label, 21) + 8 : 0, above = { x: x + 10, y: b.y - p - 30, width: lw, height: 26 };
+    const inside = c.label && [...objs.entries()].some(([k, o]) => k !== c.id && !c.around.includes(k) && overlaps(above, bbOf(o), 4));
+    const top = inside ? 30 : 0, y = b.y - p - top, h = b.height + 2 * p + top;
+    addStroke(g, parts, roughRect(x, y, w, h, r), c.color, { width: 2, dash: c.dash });
+    if (c.label) addText(g, parts, x + 14, inside ? y + 26 : y - 9, c.label, { size: 21, color: c.color, weight: 700 });
+    layerObj.insertBefore(g, layerObj.firstChild);   // frames sit behind what they group
+  },
+  brace(c, g, parts, r) {
+    const b = unionBox(c.around); if (!b) return false;
+    const d = 14, horiz = c.side === 'below' || c.side === 'above', sign = c.side === 'below' || c.side === 'right' ? 1 : -1;
+    const a0 = horiz ? b.x : b.y, a1 = horiz ? b.x + b.width : b.y + b.height, mid = (a0 + a1) / 2;
+    const base = c.side === 'below' ? b.y + b.height + 10 : c.side === 'above' ? b.y - 10 : c.side === 'right' ? b.x + b.width + 10 : b.x - 10;
+    const P = (along, off) => horiz ? `${f1(along)} ${f1(base + sign * off)}` : `${f1(base + sign * off)} ${f1(along)}`;
+    const path = `M${P(a0, 0)} Q${P(a0, d)} ${P(a0 + d, d)} L${P(mid - d, d)} Q${P(mid, d)} ${P(mid, 2 * d)} Q${P(mid, d)} ${P(mid + d, d)} L${P(a1 - d, d)} Q${P(a1, d)} ${P(a1, 0)}`;
+    addStroke(g, parts, path, c.color, { width: 2.4 });
+    if (c.label) {
+      if (horiz) addText(g, parts, mid, c.side === 'below' ? base + 2 * d + 24 : base - 2 * d - 10, c.label, { size: 21, color: c.color, anchor: 'middle', weight: 700 });
+      else addText(g, parts, c.side === 'right' ? base + 2 * d + 10 : base - 2 * d - 10, mid + 7, c.label, { size: 21, color: c.color, anchor: c.side === 'right' ? 'start' : 'end', weight: 700 });
+    }
+  },
+  sequence(c, g, parts, r) {
+    const A = c.actors, gap = c.gap, top = c.y + (c.label ? 40 : 0), boxH = 50, step = 64;
+    if (c.label) addText(g, parts, c.x, c.y + 24, c.label, { size: 24, color: c.color, weight: 700 });
+    const xs = A.map((a, i) => c.x + i * gap), bottom = top + boxH + 30 + c.messages.length * step;
+    A.forEach((a, i) => {
+      const w = Math.max(110, measureW(g, a.name, 22) + 30), x = xs[i] - w / 2 + 55;
+      a.cx = xs[i] + 55;
+      addFill(g, parts, rrPath(x, top, w, boxH, 8), c.color, 0.12);
+      addStroke(g, parts, roughRect(x, top, w, boxH, r), c.color, { width: 2.4 });
+      addText(g, parts, a.cx, top + boxH / 2 + 8, a.name, { size: 22, color: c.color, anchor: 'middle', weight: 700 });
+    });
+    addStroke(g, parts, A.map(a => `M${f1(a.cx)} ${top + boxH} L${f1(a.cx)} ${f1(bottom)}`).join(' '), '#9aa1a9', { width: 1.6, dash: true });
+    c.messages.forEach((m, i) => {
+      const fa = A.find(a => a.name === m.from), ta = A.find(a => a.name === m.to); if (!fa || !ta) return;
+      const y = top + boxH + 40 + i * step, color = m.dash ? '#7d848c' : '#1f2328';
+      if (fa === ta) { // a message to itself: a small loop
+        addStroke(g, parts, `M${f1(fa.cx)} ${y} h40 v22 h-36 M${f1(fa.cx + 10)} ${y + 15} L${f1(fa.cx + 2)} ${y + 22} L${f1(fa.cx + 10)} ${y + 29}`, color, { width: 2.4, dash: m.dash });
+        if (m.label) addText(g, parts, fa.cx + 48, y + 16, m.label, { size: 19, color });
+        return;
+      }
+      const dir = ta.cx > fa.cx ? 1 : -1, x1 = fa.cx + dir * 4, x2 = ta.cx - dir * 4;
+      addStroke(g, parts, `M${f1(x1)} ${y} L${f1(x2)} ${y} M${f1(x2 - dir * 13)} ${y - 7} L${f1(x2)} ${y} L${f1(x2 - dir * 13)} ${y + 7}`, color, { width: 2.4, dash: m.dash });
+      if (m.label) addText(g, parts, (x1 + x2) / 2, y - 9, m.label, { size: 19, color: '#1d6fb8', anchor: 'middle' });
+    });
+  },
+  schedule(c, g, parts, r) {
+    const cw = c.cell, rh = 42, size = 18;
+    const lw = Math.max(40, ...c.rows.map(rw => measureW(g, rw.label || ' ', size) + 18));
+    const x0 = c.x + lw, y0 = c.y + (c.label ? 36 : 0) + 30, W = c.steps * cw, H = c.rows.length * rh;
+    if (c.label) addText(g, parts, c.x, c.y + 22, c.label, { size: 24, color: c.color, weight: 700 });
+    addText(g, parts, x0 - 8, y0 - 10, c.stepLabel, { size: 14, color: '#9aa1a9', anchor: 'end' });
+    for (let t = 0; t < c.steps; t++) addText(g, parts, x0 + t * cw + cw / 2, y0 - 10, String(t + 1), { size: 15, color: '#7d848c', anchor: 'middle' });
+    let gd = `M${x0} ${y0} H${x0 + W} V${y0 + H} H${x0} Z`;
+    for (let i = 1; i < c.rows.length; i++) gd += ` M${x0} ${y0 + i * rh} H${x0 + W}`;
+    for (let t = 1; t < c.steps; t++) gd += ` M${x0 + t * cw} ${y0} V${y0 + H}`;
+    const grid = el('path', { d: gd, fill: 'none', stroke: '#d5d9de', 'stroke-width': 1.2 }, g); parts.push({ el: grid, kind: 'fade' });
+    c.rows.forEach((rw, i) => {
+      addText(g, parts, x0 - 10, y0 + i * rh + rh / 2 + 6, rw.label, { size, anchor: 'end', weight: 700 });
+      for (const sp of rw.spans) {
+        const bx = x0 + Math.min(sp.from, c.steps) * cw + 3, bw = (Math.min(sp.to, c.steps) - Math.min(sp.from, c.steps)) * cw - 6, by = y0 + i * rh + 6, bh = rh - 12;
+        if (bw <= 0) continue;
+        const color = sp.color || c.color;
+        addFill(g, parts, rrPath(bx, by, bw, bh, 6), color, 0.3);
+        addStroke(g, parts, roughRect(bx, by, bw, bh, r), color, { width: 2 });
+        if (sp.label) { // fit the label inside its bar: shrink, then shorten
+          let fs = 16, t = sp.label;
+          while (fs > 11 && measureW(g, t, fs) > bw - 6) fs--;
+          while (t.length > 1 && measureW(g, t, fs) > bw - 6) t = t.slice(0, -2) + '…';
+          if (measureW(g, t, fs) <= bw - 2) addText(g, parts, bx + bw / 2, by + bh / 2 + fs * 0.35, t, { size: fs, color: '#1f2328', anchor: 'middle' });
+        }
+      }
+    });
+    for (const m of c.markers) {
+      const mx = x0 + Math.min(m.at, c.steps) * cw;
+      addStroke(g, parts, `M${f1(mx)} ${y0 - 4} L${f1(mx)} ${y0 + H + 10}`, '#d1382c', { width: 2, dash: true });
+      if (m.label) addText(g, parts, mx, y0 + H + 30, m.label, { size: 16, color: '#d1382c', anchor: 'middle' });
+    }
+  },
+
   // ---- feature 6: the learner's own pen strokes ----
   ink(c, g, parts) {
     const p = el('path', { d: smoothPath(c.points), fill: 'none', stroke: c.color, 'stroke-width': c.width, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);
     parts.push({ el: p, kind: 'stroke', color: c.color });
   },
 
-  // dots that keep travelling along an arrow or line (data / energy / gradient flowing)
-  flow(c, g, parts) {
-    const t = objs.get(c.on); if (!t) return false;
-    const src = t.g.querySelector('path'); if (!src) return false;
-    const d = src.getAttribute('d');
-    if (t.off[0] || t.off[1]) g.setAttribute('transform', `translate(${f1(t.off[0])} ${f1(t.off[1])})`);
-    const guide = el('path', { d, fill: 'none', stroke: 'none' }, g);
-    const L = guide.getTotalLength();
-    const dots = el('g', null, g);
-    for (let i = 0; i < c.dots; i++) {
-      const dot = el('circle', { r: c.size, fill: c.color, 'fill-opacity': 0.9, stroke: '#fff', 'stroke-width': 1.5 }, dots);
-      if (reduceMotion) { const p = guide.getPointAtLength(L * (i + 0.5) / c.dots); dot.setAttribute('cx', f1(p.x)); dot.setAttribute('cy', f1(p.y)); }
-      else el('animateMotion', { dur: c.speed + 's', repeatCount: 'indefinite', begin: `-${f1(c.speed * i / c.dots)}s`, path: d, calcMode: 'linear' }, dot);
-    }
-    parts.push({ el: dots, kind: 'fade' });
-  },
   highlight(c, g, parts, r) {
     const t = objs.get(c.target); if (!t) return false;
     const b = bbOf(t), p = 10;
@@ -518,8 +653,6 @@ function normalize(raw) {
       if (Array.isArray(raw.area)) c.area = raw.area.slice(0, 4).map(v => num(v, 0));
       return c;
     case 'update': { const rest = { ...raw }; delete rest.cmd; delete rest.type; return { cmd: 'update', id: c.id, fields: rest }; }
-    case 'animate': { const rest = { ...raw }; delete rest.cmd; delete rest.type; delete rest.ms; return { cmd: 'animate', id: c.id, ms: num(raw.ms, 1200, 250, 5000), fields: rest }; }
-    case 'pulse': c.times = num(raw.times, 2, 1, 3); return c;
     case 'move':
       c.x = raw.x != null ? num(raw.x, 0) : null; c.y = raw.y != null ? num(raw.y, 0) : null;
       c.dx = num(raw.dx, 0); c.dy = num(raw.dy, 0); return c;
@@ -530,11 +663,18 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
   c.color = col(raw.color, t === 'highlight' ? '#e07800' : t === 'arrow' ? '#1f2328' : '#1d6fb8');
   if (raw._placed) c._placed = true;
   if (raw._seed) c._seed = str(raw._seed, 12);
-  if (BOXLIKE.has(t)) { c.x = raw.x != null ? num(raw.x, 0) : null; c.y = raw.y != null ? num(raw.y, 0) : null; }
-  const label = str(raw.label, 80) || null;
+  if (BOXLIKE.has(t)) {
+    c.x = raw.x != null ? num(raw.x, 0) : null; c.y = raw.y != null ? num(raw.y, 0) : null;
+    // relative placement: {"near":{"of":"b1","side":"right"}} or the shorthand {"rightOf":"b1"} / {"below":"b1"} ...
+    let n = raw.near; const sh = raw.rightOf ? ['right', raw.rightOf] : raw.leftOf ? ['left', raw.leftOf] : raw.below ? ['below', raw.below] : raw.above ? ['above', raw.above] : null;
+    if (typeof n === 'string') n = { of: n };
+    if (!n && sh) n = { of: sh[1], side: sh[0], gap: raw.gap };
+    if (n && typeof n === 'object' && n.of && !raw._placed) c.near = { of: str(n.of, 40), side: ['right', 'left', 'below', 'above'].includes(n.side) ? n.side : 'right', gap: num(n.gap, 70, 0, 800), align: ['start', 'center', 'end'].includes(n.align) ? n.align : null };
+  }
+  const label = clip(raw.label, t === 'arrow' ? 22 : 30) || null;
   switch (t) {
-    case 'write': c.text = str(raw.text ?? raw.label, 400) || '…'; c.size = num(raw.size, 28, 12, 90); c.align = raw.align === 'center' || raw.align === 'middle' ? 'center' : 'start'; c.font = raw.font === 'math' ? 'math' : 'hand'; c.color = col(raw.color, '#1f2328'); break;
-    case 'box': c.w = raw.w != null ? num(raw.w, 0, 20, 3000) : null; c.h = raw.h != null ? num(raw.h, 0, 20, 3000) : null; c.label = label; c.sub = str(raw.sub, 80) || null; c.fill = raw.fill ?? null; c.size = raw.size != null ? num(raw.size, 26, 14, 60) : null; break;
+    case 'write': c.text = clipLines(raw.text ?? raw.label, 2, 42) || '…'; c.size = num(raw.size, 28, 12, 90); c.align = raw.align === 'center' || raw.align === 'middle' ? 'center' : 'start'; c.font = raw.font === 'math' ? 'math' : 'hand'; c.color = col(raw.color, '#1f2328'); break;
+    case 'box': c.w = raw.w != null ? num(raw.w, 0, 20, 3000) : null; c.h = raw.h != null ? num(raw.h, 0, 20, 3000) : null; c.label = label; c.sub = clip(raw.sub, 34) || null; c.fill = raw.fill ?? null; c.size = raw.size != null ? num(raw.size, 26, 14, 60) : null; break;
     case 'circle': c.r = raw.r != null ? num(raw.r, 50, 6, 1500) : null; c.rx = raw.rx != null ? num(raw.rx, 50, 6, 1500) : null; c.ry = raw.ry != null ? num(raw.ry, 50, 6, 1500) : null; c.label = label; c.fill = raw.fill ?? null; c.size = raw.size != null ? num(raw.size, 26, 14, 60) : null; break;
     case 'vector': c.values = (Array.isArray(raw.values) ? raw.values : [raw.values ?? '']).slice(0, 16); c.label = label; c.highlight = (Array.isArray(raw.highlight) ? raw.highlight : raw.highlight != null ? [raw.highlight] : []).slice(0, 16).map(v => num(v, -1)); break;
     case 'matrix': c.values = (Array.isArray(raw.values) ? raw.values : [[raw.values ?? '']]).slice(0, 10); c.rowLabels = Array.isArray(raw.rowLabels) ? raw.rowLabels.slice(0, 10) : null; c.colLabels = Array.isArray(raw.colLabels) ? raw.colLabels.slice(0, 10) : null; c.label = label; break;
@@ -542,6 +682,33 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
     case 'plot': c.w = raw.w != null ? num(raw.w, 280, 60, 2000) : null; c.h = raw.h != null ? num(raw.h, 170, 40, 1200) : null; c.fn = str(raw.fn, 20) || null; c.points = Array.isArray(raw.points) ? raw.points.slice(0, 200).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]) : null; c.marks = Array.isArray(raw.marks) ? raw.marks.slice(0, 10) : null; c.domain = Array.isArray(raw.domain) ? raw.domain.slice(0, 2) : null; c.label = label; break;
     case 'line': c.points = (Array.isArray(raw.points) ? raw.points : []).slice(0, 120).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]); if (c.points.length < 2) return null; c.smooth = !!raw.smooth; c.width = num(raw.width, 3, 1, 14); c.dash = !!raw.dash; c.color = col(raw.color, '#1f2328'); break;
     case 'arrow': c.from = Array.isArray(raw.from) ? [num(raw.from[0], 0), num(raw.from[1], 0)] : str(raw.from, 40); c.to = Array.isArray(raw.to) ? [num(raw.to[0], 0), num(raw.to[1], 0)] : str(raw.to, 40); c.label = label; c.curve = num(raw.curve, 0, -1, 1); c.dash = !!raw.dash; c.width = raw.width != null ? num(raw.width, 2.8, 1, 10) : null; break;
+    case 'sequence': {
+      c.actors = (Array.isArray(raw.actors) ? raw.actors : []).slice(0, 6).map(a => a && typeof a === 'object' ? { name: clip(a.name ?? a.label, 18), icon: a.icon ? str(a.icon, 20) : null } : { name: clip(a, 18), icon: null });
+      c.messages = (Array.isArray(raw.messages) ? raw.messages : []).slice(0, 20).map(m => Array.isArray(m) ? { from: clip(m[0], 18), to: clip(m[1], 18), label: clip(m[2], 26) || null, dash: !!m[3] } : m && typeof m === 'object' ? { from: clip(m.from, 18), to: clip(m.to, 18), label: clip(m.label, 26) || null, dash: !!m.dash } : null).filter(Boolean);
+      for (const m of c.messages) for (const n of [m.from, m.to]) if (n && !c.actors.some(a => a.name === n) && c.actors.length < 6) c.actors.push({ name: n, icon: null });
+      c.gap = num(raw.gap, 230, 120, 600); c.label = label; break;
+    }
+    case 'icon': c.name = str(raw.name ?? raw.icon ?? raw.kind, 30).toLowerCase() || 'box'; c.size = num(raw.size, 76, 32, 240); c.label = label; c.sub = clip(raw.sub, 26) || null; c.color = col(raw.color, '#1f2328'); break;
+    case 'tokens': {
+      const items = (Array.isArray(raw.items) ? raw.items : Array.isArray(raw.values) ? raw.values : String(raw.items ?? raw.text ?? '').split(/\s+/)).slice(0, 24);
+      c.items = items.map(it => it && typeof it === 'object' ? { text: clip(it.text ?? it.label ?? '', 14), color: it.color ? col(it.color) : null } : { text: clip(it, 14), color: null });
+      c.colors = Array.isArray(raw.colors) ? raw.colors.slice(0, 24).map(v => v ? col(v) : null) : null;
+      c.highlight = (Array.isArray(raw.highlight) ? raw.highlight : raw.highlight != null ? [raw.highlight] : []).slice(0, 24).map(v => num(v, -1));
+      c.size = num(raw.size, 20, 12, 40); c.gap = num(raw.gap, 6, 0, 60); c.index = !!raw.index; c.label = label; c.vertical = !!raw.vertical; break;
+    }
+    case 'frame': c.around = (Array.isArray(raw.around) ? raw.around : raw.around ? [raw.around] : []).slice(0, 40).map(v => str(v, 40)); c.label = label; c.pad = num(raw.pad, 26, 6, 120);
+      if (!c.around.length) { c.x = num(raw.x, 0); c.y = num(raw.y, 0); c.w = num(raw.w, 300, 20, 5000); c.h = num(raw.h, 200, 20, 5000); }
+      c.dash = raw.dash !== false; c.color = col(raw.color, '#7d848c'); break;
+    case 'brace': c.around = (Array.isArray(raw.around) ? raw.around : raw.around ? [raw.around] : []).slice(0, 40).map(v => str(v, 40)); c.side = ['below', 'above', 'left', 'right'].includes(raw.side) ? raw.side : 'below'; c.label = label; c.color = col(raw.color, '#1f2328'); break;
+    case 'schedule': {
+      c.rows = (Array.isArray(raw.rows) ? raw.rows : []).slice(0, 12).map(rw => ({
+        label: clip(rw && (rw.label ?? rw.name), 16),
+        spans: (rw && Array.isArray(rw.spans) ? rw.spans : []).slice(0, 30).map(sp => Array.isArray(sp) ? { from: num(sp[0], 0, 0, 200), to: num(sp[1], 1, 0, 200), label: clip(sp[2], 10) || null, color: sp[3] ? col(sp[3]) : null } : sp && typeof sp === 'object' ? { from: num(sp.from, 0, 0, 200), to: num(sp.to, 1, 0, 200), label: clip(sp.label, 10) || null, color: sp.color ? col(sp.color) : null } : null).filter(sp => sp && sp.to > sp.from),
+      }));
+      const maxTo = Math.max(1, ...c.rows.flatMap(rw => rw.spans.map(sp => sp.to)));
+      c.steps = Math.round(num(raw.steps, maxTo, 1, 60)); c.cell = num(raw.cell, 46, 24, 120); c.stepLabel = clip(raw.stepLabel ?? 'step', 10); c.label = label;
+      c.markers = (Array.isArray(raw.markers) ? raw.markers : []).slice(0, 8).map(m => ({ at: num(m && m.at, 0, 0, 200), label: clip(m && m.label, 16) || null })); break;
+    }
     case 'math': c.tex = str(raw.tex ?? raw.latex ?? raw.text, 400) || 'x'; c.size = num(raw.size, 30, 14, 80); c.color = col(raw.color, '#1f2328'); c.label = label; break;
     case 'code': c.code = str(raw.code ?? raw.text, 4000).split('\n').slice(0, 40).map(l => l.slice(0, 100).replace(/\t/g, '  ')).join('\n'); c.lang = str(raw.lang, 20) || null; c.title = str(raw.title ?? raw.label, 60) || null; c.size = num(raw.size, 17, 11, 30); break;
     case 'network': c.layers = (Array.isArray(raw.layers) ? raw.layers : [3, 4, 2]).slice(0, 8).map(n => Math.round(num(n, 1, 1, 512))); c.labels = Array.isArray(raw.labels) ? raw.labels.slice(0, 8) : null; c.nodeLabels = Array.isArray(raw.nodeLabels) ? raw.nodeLabels.slice(0, 8).map(l => Array.isArray(l) ? l.slice(0, 8) : []) : null; c.active = raw.active != null ? num(raw.active, -1, -1, 8) : null; c.gap = raw.gap != null ? num(raw.gap, 150, 70, 400) : null; break;
@@ -556,7 +723,6 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
     case 'timeline': c.events = (Array.isArray(raw.events) ? raw.events : []).slice(0, 12).map(e => typeof e === 'object' && e ? { label: str(e.label ?? e.text, 28), at: str(e.at ?? e.date ?? e.time, 16) || null } : { label: str(e, 28), at: null }); c.w = raw.w != null ? num(raw.w, 600, 150, 3000) : null; c.label = label; break;
     case 'table': c.header = Array.isArray(raw.header) ? raw.header.slice(0, 8) : null; c.rows = (Array.isArray(raw.rows) ? raw.rows : []).slice(0, 14).map(rw => (Array.isArray(rw) ? rw : [rw]).slice(0, 8)); c.label = label; if (!c.header && !c.rows.length) c.rows = [['']]; break;
     case 'ink': c.points = (Array.isArray(raw.points) ? raw.points : []).slice(0, 2000).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]); if (c.points.length < 2) return null; c.width = num(raw.width, 3.5, 1, 20); c.color = col(raw.color, '#1f2328'); c.by = 'you'; break;
-    case 'flow': c.on = str(raw.on ?? raw.target ?? raw.along, 40); c.dots = Math.round(num(raw.dots, 3, 1, 8)); c.speed = num(raw.speed, 2.2, 0.5, 10); c.size = num(raw.size, 5.5, 3, 12); break;
     case 'highlight': c.target = str(raw.target ?? raw.on, 40); c.style = ['circle', 'underline', 'box'].includes(raw.style) ? raw.style : 'circle'; break;
   }
   return c;
@@ -685,7 +851,7 @@ function allBounds() {
 }
 function fit(animate = true) {
   const b = allBounds();
-  const target = b ? cameraFor(b, 50, 12) : { scale: defaultScale(), x: -60, y: -60 };
+  const target = b ? cameraFor({ ...b, height: b.height + (navSteps().length ? 70 / Math.max(0.2, camera.scale) : 0) }, 50, 12) : { scale: defaultScale(), x: -60, y: -60 };
   lastUserCamera = 0;
   if (animate) animateCamera(target, 450); else { Object.assign(camera, target); applyCamera(); }
 }
@@ -694,7 +860,10 @@ function fit(animate = true) {
 // board operations
 // ======================================================================
 function overlaps(a, b, m = 30) { return a.x < b.x + b.width + m && a.x + a.width + m > b.x && a.y < b.y + b.height + m && a.y + a.height + m > b.y; }
-function dependentsOf(id) { const out = []; for (const [k, o] of objs) if (o.cmd.from === id || o.cmd.to === id || o.cmd.target === id || o.cmd.on === id) out.push(k); return out; }
+const wraps = (o, id) => Array.isArray(o.cmd.around) && o.cmd.around.includes(id);
+function dependentsOf(id) { const out = []; for (const [k, o] of objs) if (o.cmd.from === id || o.cmd.to === id || o.cmd.target === id || o.cmd.on === id || wraps(o, id)) out.push(k); return out; }
+// arrows and highlights go away with their object; frames and braces just re-fit around what is left
+function hardDependentsOf(id) { return dependentsOf(id).filter(k => !['frame', 'brace'].includes(objs.get(k).cmd.cmd)); }
 function rebuildDependents(id, seen = new Set()) {
   for (const k of dependentsOf(id)) { if (seen.has(k)) continue; seen.add(k); rebuild(k); rebuildDependents(k, seen); }
 }
@@ -710,6 +879,26 @@ async function drawObject(c, run, animate) {
   if (!builders[c.cmd]) return;
   if (objs.has(c.id)) removeNow(c.id, false);
   else if (objs.size >= MAX_OBJECTS) return;
+  if (BOXLIKE.has(c.cmd) && c.near) {
+    const tgt = objs.get(c.near.of), n = c.near; delete c.near;
+    if (tgt) {
+      c.x = 0; c.y = 0;
+      const probe = buildGroup(c);
+      if (probe) {
+        const b0 = measure(probe.g); probe.g.remove();
+        const tb = bbOf(tgt), al = n.align || (n.side === 'right' || n.side === 'left' ? 'center' : 'start');
+        let X, Y;
+        if (n.side === 'right' || n.side === 'left') {
+          X = n.side === 'right' ? tb.x + tb.width + n.gap : tb.x - n.gap - b0.width;
+          Y = al === 'start' ? tb.y : al === 'end' ? tb.y + tb.height - b0.height : tb.y + (tb.height - b0.height) / 2;
+        } else {
+          Y = n.side === 'below' ? tb.y + tb.height + n.gap : tb.y - n.gap - b0.height;
+          X = al === 'center' ? tb.x + (tb.width - b0.width) / 2 : al === 'end' ? tb.x + tb.width - b0.width : tb.x;
+        }
+        c.x = X - b0.x; c.y = Y - b0.y;
+      } else { c.x = null; c.y = null; }
+    } else { c.x = null; c.y = null; }
+  }
   if (BOXLIKE.has(c.cmd) && (c.x == null || c.y == null)) {
     const b = allBounds(); c.x = c.x ?? (b ? b.x : 0); c.y = c.y ?? (b ? b.y + b.height + 70 : 0); c._placed = false;
   }
@@ -718,7 +907,7 @@ async function drawObject(c, run, animate) {
     // shift right or down (whichever is shorter) until it no longer overlaps anything
     for (let i = 0; i < 25; i++) {
       const bb = measure(built.g); let hit = null;
-      for (const o of objs.values()) if (BOXLIKE.has(o.cmd.cmd) && overlaps(bb, bbOf(o))) { hit = bbOf(o); break; }
+      for (const o of objs.values()) if ((BOXLIKE.has(o.cmd.cmd) || o.cmd.cmd === 'brace') && overlaps(bb, bbOf(o))) { hit = bbOf(o); break; }
       if (!hit) break;
       const dx = hit.x + hit.width + 34 - bb.x, dy = hit.y + hit.height + 34 - bb.y;
       if (dx <= dy) c.x += dx; else c.y += dy;
@@ -735,11 +924,11 @@ async function drawObject(c, run, animate) {
 function removeNow(id, withDeps = true) {
   const o = objs.get(id); if (!o) return;
   o.g.remove(); objs.delete(id); selection.delete(id);
-  if (withDeps) for (const k of dependentsOf(id)) removeNow(k, true);
+  if (withDeps) for (const k of hardDependentsOf(id)) removeNow(k, true);
 }
 async function eraseIds(ids, run, animate) {
   const all = new Set();
-  const add = id => { if (!objs.has(id) || all.has(id)) return; all.add(id); dependentsOf(id).forEach(add); };
+  const add = id => { if (!objs.has(id) || all.has(id)) return; all.add(id); hardDependentsOf(id).forEach(add); };
   ids.forEach(add);
   if (!all.size) return;
   if (animate && !instantMode() && run.gen === gen) {
@@ -754,7 +943,9 @@ async function eraseIds(ids, run, animate) {
     }, run);
     hideIcon(eraser);
   }
+  const refit = new Set(); for (const id of all) for (const k of dependentsOf(id)) if (!all.has(k)) refit.add(k);
   for (const id of all) removeNow(id, false);
+  for (const k of refit) if (objs.has(k)) rebuild(k);
   updateEmpty(); drawSelection(); updateSelectionUI(); saveSoon();
 }
 async function clearBoard(run, animate) {
@@ -816,59 +1007,6 @@ async function updateCmd(c, run, animate) {
   drawSelection(); saveSoon();
 }
 
-// ---- motion: tween numbers, positions, sizes, colours and plot curves in place ----
-function decs(v) { const m = String(v).match(/\.(\d+)/); return m ? m[1].length : 0; }
-function isNumLike(v) { return typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && isFinite(Number(v))); }
-function lerpColor(a, b, t) {
-  const hx = h => { h = h.replace('#', ''); if (h.length === 3) h = h.split('').map(x => x + x).join(''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
-  try { const A = hx(a), B = hx(b); return '#' + A.map((x, i) => Math.round(x + (B[i] - x) * t).toString(16).padStart(2, '0')).join(''); } catch { return t < 1 ? a : b; }
-}
-function lerpVal(a, b, t) {
-  if (a === b) return a;
-  if (typeof a === 'number' && typeof b === 'number') return a + (b - a) * t;
-  if (isNumLike(a) && isNumLike(b)) { const v = Number(a) + (Number(b) - Number(a)) * t; return typeof b === 'number' ? v : v.toFixed(Math.max(decs(a), decs(b))); }
-  if (typeof a === 'string' && typeof b === 'string' && /^#[0-9a-f]{3,6}$/i.test(a) && /^#[0-9a-f]{3,6}$/i.test(b)) return lerpColor(a, b, t);
-  if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) return a.map((x, i) => lerpVal(x, b[i], t));
-  return t < 1 ? a : b;
-}
-function swapGroup(o, cmd) {
-  const built = buildGroup(cmd); if (!built) return;
-  layerObj.insertBefore(built.g, o.g); o.g.remove();
-  o.g = built.g; o.off = [0, 0]; o.bb = measure(built.g);
-}
-async function animateCmd(c, run, animate) {
-  const o = objs.get(c.id); if (!o) return;
-  const from = o.cmd, type = from.cmd;
-  const fields = { ...c.fields }; delete fields.id;
-  const to = normalizeShape(type, { ...from, ...fields, cmd: type, id: c.id, _placed: true, _seed: from._seed });
-  if (!to) return; to.id = c.id;
-  let A = from, B = to;
-  if (type === 'plot' && (from.fn !== to.fn || JSON.stringify(from.points) !== JSON.stringify(to.points) || JSON.stringify(from.domain) !== JSON.stringify(to.domain))) {
-    A = { ...from, points: samplePlot(from).pts, fn: null }; B = { ...to, points: samplePlot(to).pts, fn: null };
-    if (A.points.length !== B.points.length) { A = from; B = to; }
-  }
-  if (animate && !instantMode() && run.gen === gen) {
-    await ensureVisible(bbOf(o), run);
-    const keys = new Set([...Object.keys(A), ...Object.keys(B)]);
-    await tween(c.ms / speed(), t => {
-      const frame = {};
-      for (const k of keys) frame[k] = k === 'id' || k === 'cmd' || k === '_seed' ? B[k] : lerpVal(A[k], B[k], t);
-      swapGroup(o, frame); rebuildDependents(c.id); drawSelection();
-    }, run, easeInOut);
-  }
-  o.cmd = to; swapGroup(o, to); rebuildDependents(c.id); drawSelection(); saveSoon();
-}
-async function pulseCmd(c, run, animate) {
-  const o = objs.get(c.id); if (!o || !animate || instantMode() || run.gen !== gen) return;
-  await ensureVisible(bbOf(o), run);
-  const b = o.bb, cx = b.x + b.width / 2, cy = b.y + b.height / 2, [ox, oy] = o.off;
-  await tween(650 * c.times / speed(), t => {
-    const s = 1 + 0.11 * Math.abs(Math.sin(Math.PI * t * c.times));
-    o.g.setAttribute('transform', `translate(${f1(ox)} ${f1(oy)}) translate(${f1(cx)} ${f1(cy)}) scale(${s.toFixed(3)}) translate(${f1(-cx)} ${f1(-cy)})`);
-  }, run);
-  if (ox || oy) o.g.setAttribute('transform', `translate(${f1(ox)} ${f1(oy)})`); else o.g.removeAttribute('transform');
-}
-
 async function execCommand(c, run, animate) {
   switch (c.cmd) {
     case 'clear': return clearBoard(run, animate);
@@ -880,8 +1018,8 @@ async function execCommand(c, run, animate) {
     }
     case 'update': return updateCmd(c, run, animate);
     case 'move': return moveCmd(c, run, animate);
-    case 'animate': return animateCmd(c, run, animate);
-    case 'pulse': return pulseCmd(c, run, animate);
+    case 'animate': return updateCmd({ cmd: 'update', id: c.id, fields: c.fields || {} }, run, animate); // older lessons
+    case 'pulse': return;                                                                                  // older lessons
     default: return drawObject(c, run, animate);
   }
 }
@@ -899,7 +1037,7 @@ function drawSelection() {
 }
 function nameOf(id) {
   const o = objs.get(id); if (!o) return id;
-  const c = o.cmd, t = c.label || c.text || (c.cmd === 'highlight' ? `highlight on ${c.target}` : c.cmd === 'flow' ? `flow on ${c.on}` : c.cmd === 'arrow' ? `arrow ${typeof c.from === 'string' ? c.from : '·'}→${typeof c.to === 'string' ? c.to : '·'}` : c.id);
+  const c = o.cmd, t = c.label || c.text || (c.cmd === 'icon' ? c.name : c.cmd === 'tokens' ? c.items.map(i => i.text).join(' ') : c.cmd === 'highlight' ? `highlight on ${c.target}` : c.cmd === 'arrow' ? `arrow ${typeof c.from === 'string' ? c.from : '·'}→${typeof c.to === 'string' ? c.to : '·'}` : c.id);
   return String(t).replace(/\n/g, ' ').slice(0, 28);
 }
 function updateSelectionUI() {
@@ -1080,14 +1218,24 @@ async function replay() {
   await showStep(nav[0], true);
   playFrom(nav[0], true);
 }
+// The drawing goes with the next question; the learner can type one, or send nothing and get it checked.
+async function showAttach(focus) {
+  const ids = [...inkSinceAsk].filter(id => objs.has(id));
+  const box = $('#attach');
+  if (!ids.length || penMode) { box.hidden = true; input.placeholder = 'Ask the teacher…'; return; }
+  box.hidden = false; input.placeholder = 'Ask about your drawing (optional)…';
+  try { const reg = inkRegion(ids); if (reg) $('#attachImg').src = await boardImage(reg); } catch (e) { dlog('thumbnail failed', String(e)); }
+  if (focus) input.focus();
+}
+$('#attachX').onclick = () => { inkSinceAsk.clear(); showAttach(false); renderChips(); };
 function setPen(on) {
-  penMode = on; svg.classList.toggle('penMode', on);
+  penMode = on; svg.classList.toggle('penMode', on); if (!on) showAttach(false); else $('#attach').hidden = true;
   $('#penBtn').setAttribute('aria-pressed', on); $('#penBar').hidden = !on;
   if (on) setSelection([]);
 }
 $('#penBtn').onclick = () => { if (!scrub) setPen(!penMode); };
 $('#penDone').onclick = () => setPen(false);
-$('#penCheck').onclick = () => { setPen(false); send('Check my drawing: is it right? Tell me what is correct and what is off, and draw the correction next to it.'); };
+$('#penCheck').onclick = () => { setPen(false); showAttach(true); };
 $('#penUndo').onclick = () => {
   const last = [...inkSinceAsk].pop() || [...objs.keys()].reverse().find(k => objs.get(k).cmd.cmd === 'ink');
   if (!last) return; inkSinceAsk.delete(last); recordEdit({ cmd: 'erase', ids: [last] }); eraseIds([last], { gen }, false); renderChips();
@@ -1233,7 +1381,7 @@ function updateTimeline() {
   range.max = String(nav.length - 1);
   const k = scrub ? Math.max(0, nav.indexOf(scrub.i)) : nav.length - 1;
   if (document.activeElement !== range) range.value = String(k);
-  $('#tlLabel').textContent = scrub ? `Step ${k + 1} / ${nav.length} · answer ${answerNo(scrub.i)}` : `${nav.length} steps · live`;
+  $('#tlLabel').textContent = scrub ? `Step ${k + 1} / ${nav.length} · answer ${answerNo(scrub.i)}` : `${nav.length} step${nav.length === 1 ? '' : 's'} · live`;
   $('#tlLive').hidden = !scrub;
   $('#tlPlay').textContent = scrub && scrub.playing ? '⏸' : '▶';
   $('#tlPlay').title = scrub && scrub.playing ? 'Pause' : 'Play the lesson from this step, with narration';
@@ -1341,7 +1489,9 @@ async function resumeSession(id) {
 }
 async function loadAll() {
   try { Object.assign(settings, JSON.parse(localStorage.getItem(LS_SET) || '{}')); } catch {}
-  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'kokoro', voice: 'af_bella', speed: 1, gpu: false };
+  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'off', voice: 'af_heart', speed: 1, engine: 'server' };
+  // narration became opt-in (v3): switch it off once for everyone; the learner can turn it back on in ⚙
+  if (!settings.voiceV3) { settings.voice = { ...settings.voice, mode: 'off', lastMode: 'kokoro' }; settings.voiceV3 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
   if (!settings.efforts || typeof settings.efforts !== 'object') settings.efforts = {};
   // migrate the single-board save from the first version
   try {
@@ -1411,7 +1561,7 @@ function bubble(m) {
 function renderChat() {
   msgBox.textContent = '';
   if (!chat.length) {
-    bubble({ role: 'system', text: lesson ? `Lesson: ${lesson.topic}\nAsk anything, or tap “Start the lesson”. Answers are generated live and can be wrong.` : 'Pick a topic to start.' });
+    bubble({ role: 'system', text: lesson ? `Ask about anything; the teacher answers by drawing on the board.\nAnswers are generated live and can be wrong.` : 'Start a session to begin.' });
   }
   chat.forEach(bubble);
   renderChips();
@@ -1422,8 +1572,8 @@ function renderChips() {
   if (!lesson) { add('Choose a topic', null, true); box.lastChild.onclick = openTopic; return; }
   const ids = [...selection].filter(id => objs.has(id));
   if ([...inkSinceAsk].some(id => objs.has(id))) {
-    add('Check my drawing', 'Check my drawing: is it right? Tell me what is correct and what is off, and draw the correction next to it.', true);
-    add('What did I get wrong?'); add('Turn my sketch into a clean diagram'); add('Mera drawing check karo (Hinglish)');
+    add('Check my drawing', 'Check my drawing.', true);
+    add('Turn my sketch into a clean diagram'); add('What is missing in my drawing?'); add('Mera drawing check karo (Hinglish)');
     return;
   }
   if (ids.length === 1) {
@@ -1432,8 +1582,7 @@ function renderChips() {
   } else if (ids.length > 1) {
     add('How are these connected?'); add('Compare these'); add('Hinglish mein samjhao ye kaise jude hain');
   } else if (!chat.some(m => m.role === 'user')) {
-    add('Start the lesson', `Give me an overview of ${lesson.topic}. Start from the big picture and use the worked example.`, true);
-    add('Explain it with an analogy'); add('What problem does it solve?'); add('Hinglish mein samjhao');
+    add(`Explain ${lesson.topic}`, `Explain ${lesson.topic}, starting from the big picture, with one concrete example.`, true);
   } else {
     add('Go one level deeper'); add('Show a worked example with numbers'); add('What is a common mistake?'); add('Summarise the board'); add('Quiz me on this'); add('Hinglish mein samjhao');
   }
@@ -1448,7 +1597,9 @@ input.addEventListener('input', () => { input.style.height = 'auto'; input.style
 $('#composer').addEventListener('submit', e => {
   e.preventDefault();
   if (sendBtn.classList.contains('stop')) { stopAll(); return; }
-  const q = input.value.trim(); if (!q) return;
+  let q = input.value.trim();
+  if (!q && [...inkSinceAsk].some(id => objs.has(id))) q = 'Check my drawing.';
+  if (!q) return;
   input.value = ''; input.style.height = 'auto'; send(q);
 });
 $('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(); chat = []; renderChat(); saveSoon(); };
@@ -1459,7 +1610,7 @@ $('#selClear').onclick = () => setSelection([]);
 
 // typewriter (~60 chars/s) — never blocks the pen
 function typeInto(turn, text, cps) {
-  const add = (turn.text ? ' ' : '') + text;
+  const add = (turn.text ? '\n' : '') + text;
   turn.text += add;
   turn.pendingType = (turn.pendingType || '') + add;
   turn.cps = cps ? clamp(cps, 8, 120) : 60;   // with narration, type at the speaking rate
@@ -1565,6 +1716,10 @@ function boardSummary() {
       if (c.cmd === 'highlight') bits.push(`on ${c.target}`);
       if (c.cmd === 'flow') bits.push(`dots moving along ${c.on}`);
       if (c.cmd === 'ink') bits.push("the learner's own pen sketch");
+      if (c.cmd === 'icon') bits.push('icon ' + c.name);
+      if (c.cmd === 'tokens') bits.push('items ' + JSON.stringify(c.items.map(i => i.text)).slice(0, 90));
+      if (c.cmd === 'frame' || c.cmd === 'brace') bits.push('around ' + c.around.join(','));
+      if (c.cmd === 'schedule') bits.push('rows ' + c.rows.map(rw => rw.label).join(',') + ` · ${c.steps} steps`);
       if (c.cmd === 'math') bits.push('tex ' + JSON.stringify(c.tex.slice(0, 60)));
       if (c.cmd === 'graph') bits.push(`nodes ${c.nodes.map(n => n.id).join(',').slice(0, 80)}`);
       if (c.cmd === 'network') bits.push(`layers ${c.layers.join('-')}`);
@@ -1575,65 +1730,71 @@ function boardSummary() {
   return lines.join('\n');
 }
 function systemPrompt(selIds) {
-  const L = lesson;
-  const plan = L.plan ? `Lesson plan you chose earlier (keep it): worked example: ${L.plan.example || '—'}; colour code: ${JSON.stringify(L.plan.colors || {})}.` :
-    `This is the first answer of the lesson: begin with ONE line {"plan":{"example":"<the small concrete worked example you will keep returning to>","colors":{"<kind of object>":"#hex", ...}}} choosing 3-5 marker colours from the palette for the main kinds of objects. Then teach.`;
-  return `You are a warm, clear teacher standing at a whiteboard. You talk to the learner in a side chat and draw on the board at the same time, like a teacher with a marker.
+  return `You are a teacher at a whiteboard. You explain by DRAWING. The board carries the explanation; your spoken lines only point at what you are drawing.
 
-LESSON
-- Concept: ${L.topic}
-- Audience: ${L.audience || 'a technical reader who is new to the topic'}
-- Worked example: ${L.example || 'choose one small, concrete example and keep returning to it'}
-${L.notes ? `- Reference brief${L.source ? ` (from ${L.source})` : ''}: ${L.notes.slice(0, 4000)}\n` : ''}- ${plan}
-- Marker palette (dark shades on a white board): blue #1d6fb8, amber #c48a00, green #2a8a3e, red #d1382c, purple #7a48c2, orange #e07800, black #1f2328, grey #7d848c.
+Session name: "${lesson.topic}" (just a label for this whiteboard; teach whatever the learner asks, on any subject).
 
-BOARD (infinite; units are board units; x grows right, y grows down; no limits in any direction)
+BOARD (infinite; units are board units; x grows right, y grows down)
 ${boardSummary()}
-${selIds.length ? `\nTHE LEARNER SELECTED: ${selIds.map(id => `${id} (${nameOf(id)})`).join(', ')}. Work on these directly (update, move, highlight, build next to them).\n` : ''}
-OUTPUT FORMAT — JSON Lines only. One JSON object per line, nothing else (no markdown, no code fences, no prose outside JSON).
-Chat line: {"say":"1-2 plain sentences"}
-Board commands (every line has "cmd"):
-{"cmd":"write","id":"t1","x":0,"y":0,"text":"Heading\\nsecond line","size":32,"color":"#1f2328","align":"start|center","font":"hand|math"}   (x,y = left end of the first baseline)
-{"cmd":"box","id":"b1","x":0,"y":0,"w":160,"h":70,"label":"Encoder","sub":"6 layers","color":"#1d6fb8","fill":true}   (x,y = top-left; w,h optional)
-{"cmd":"circle","id":"c1","x":0,"y":0,"r":50,"label":"x","color":"#2a8a3e","fill":true}   (x,y = centre; or rx/ry)
-{"cmd":"vector","id":"v1","x":0,"y":0,"values":[0.2,0.7,0.1],"label":"q","color":"#7a48c2","highlight":[1]}   (x,y = top-left; cells are ~60x40)
-{"cmd":"matrix","id":"m1","x":0,"y":0,"values":[[1,0],[0,1]],"rowLabels":["a","b"],"colLabels":["x","y"],"label":"W","color":"#1d6fb8"}
-{"cmd":"bars","id":"p1","x":0,"y":0,"w":240,"h":150,"values":[0.1,0.6,0.3],"labels":["cat","sat","mat"],"label":"softmax","color":"#c48a00"}   (values 0-1 shown as %)
-{"cmd":"plot","id":"f1","x":0,"y":0,"w":280,"h":170,"fn":"sigmoid|exp|tanh|ReLU|GELU|sin|log","points":[[0,0],[1,2]],"marks":[{"x":0,"label":"0.5"}],"label":"σ(x)","color":"#d1382c"}
-{"cmd":"line","id":"l1","points":[[0,0],[100,40],[200,0]],"smooth":true,"color":"#7d848c","width":3,"dash":false}
-{"cmd":"arrow","id":"a1","from":"b1","to":"c1","label":"feeds","curve":0.2,"color":"#1f2328","dash":false}   (from/to = an object id or a point [x,y]; curve -1..1)
-{"cmd":"highlight","id":"h1","target":"v1","style":"circle|underline|box","color":"#e07800"}
-{"cmd":"update","id":"b1","label":"Decoder","color":"#d1382c"}   (redraw that object in place with merged fields)
-{"cmd":"move","id":"b1","x":400,"y":0}  or  {"cmd":"move","id":"b1","dx":50,"dy":0}   (slides it; attached arrows follow)
-{"cmd":"erase","ids":["a1","h1"]}  or  {"cmd":"erase","area":[x,y,w,h]}
-{"cmd":"math","id":"e1","x":0,"y":0,"tex":"w \\leftarrow w - \\eta \\nabla L(w)","size":32,"color":"#1f2328"}   (real typeset maths in LaTeX; x,y = left of the baseline. Use this for every formula)
-{"cmd":"code","id":"k1","x":0,"y":0,"code":"for x in data:\n    loss += (w*x - y)**2","lang":"python","title":"train.py"}   (a highlighted code block, max 40 lines)
-Components: you give the structure, the app lays it out neatly (x,y = top-left):
-{"cmd":"network","id":"nn1","x":0,"y":0,"layers":[3,4,2],"labels":["input","hidden","output"],"active":1}   (neural-network layers, nodes fully connected; active highlights a layer)
-{"cmd":"tree","id":"tr1","x":0,"y":0,"root":{"label":"root","children":[{"label":"left","children":[]},{"label":"right"}]}}
-{"cmd":"graph","id":"g1","x":0,"y":0,"nodes":["Client","API","DB"],"edges":[["Client","API","request"],["API","DB"]],"layout":"layered|circle|grid","directed":true}   (flowcharts, pipelines, state machines, graphs)
-{"cmd":"numberline","id":"nl1","x":0,"y":0,"from":0,"to":10,"w":420,"marks":[{"at":3,"label":"w*"}],"label":"w"}
-{"cmd":"timeline","id":"tl1","x":0,"y":0,"events":[{"label":"Perceptron","at":"1958"},{"label":"Backprop","at":"1986"}],"label":"History"}
-{"cmd":"table","id":"tb1","x":0,"y":0,"header":["Model","Params"],"rows":[["GPT-2","1.5B"],["BERT","340M"]],"label":"Sizes"}
-Prefer these components over hand-placing many boxes and arrows: they never overlap.
-{"cmd":"flow","id":"fl1","on":"a1","color":"#1d6fb8","dots":3,"speed":2}   (dots that keep travelling along an arrow or line: data, signal, gradient or energy flowing)
-{"cmd":"animate","id":"v1","values":[0.1,0.9,0.0],"ms":1500}   (smoothly change an object's numbers, position, size, colour or a plot's fn/points in place: show a value changing over time)
-{"cmd":"pulse","id":"b1"}   (a brief bounce to point at an object while you talk about it)
-{"cmd":"clear"}   {"cmd":"wait","ms":600}
-A new object with an existing id replaces the old one. Use short unique ids.
+${selIds.length ? `\nTHE LEARNER SELECTED: ${selIds.map(id => `${id} (${nameOf(id)})`).join(', ')}. Work on these directly: update them, build next to them, point at them.\n` : ''}
+OUTPUT: JSON Lines only, one object per line, nothing else (no markdown, no code fences, no prose outside JSON).
+Spoken line: {"say":"one short sentence"}
+Board commands (each line has "cmd"). Place things with "near" instead of guessing coordinates: "near":{"of":"<id>","side":"right|left|below|above","gap":70}. Give x,y only for the very first object of a new area (use the free space listed above).
 
-TEACHING RULES
-- ALWAYS teach on the board. Every answer, even to a short, casual or follow-up question, a definition or a yes/no, must draw or change something on the board (at least 4 board commands). The learner never has to ask you to draw. Never reply with say lines only.
-- Say lines are spoken aloud by a narrator while the pen draws, one say line at a time. Write them as natural speech, one or two short sentences each, with the words you would say ("w minus three, squared", not "(w−3)²"). Put the board commands that illustrate a sentence right after it, so each narrated idea has its own drawing.
-- Objects of type ink are the learner's own pen sketches. When they ask about their drawing, look at the attached picture if there is one: say plainly what is right and what is off, then draw the correction NEXT to their sketch. Never erase or move their ink unless they ask.
-- Use motion only where it explains something: flow for things moving through a system, animate for a value or curve changing, pulse to point. At most 1-3 motion commands per answer; never decorative.
-- Start with a short say line and draw at once. Alternate: a say line, then the 1-4 commands it describes, then the next say line, and so on.
-- Keep earlier work and build on it: put new material in free space next to what it relates to, so the board grows. Start a new topic with a heading in fresh space.
-- Do not wipe by default. Erase or clear only when it helps (replace a wrong or outdated picture, show before/after, redo a crowded area) and say why.
-- Prefer update and move over erase-and-redraw.
-- Few words, big labelled pictures, arrows for flow, highlight what you are talking about. Text size 20-36. Leave at least 30 units between objects; estimate widths (~0.5 x size per character for text).
-- Use real numbers from the reference when there is one; say when numbers are only illustrative.
-- 6-25 board commands per answer. Say lines under about 150 words in total, plain text, in the learner's language and script (use Hinglish in Latin script if they write it or ask for it).`;
+Pictures, best first:
+{"cmd":"icon","id":"gpu","name":"gpu","label":"GPU","near":{"of":"q","side":"right"}}   icons: ${window.WB_ICONS ? WB_ICONS.names.join(', ') : 'gpu, server, database, person, document'} (plus common synonyms). Use them for every real-world thing.
+{"cmd":"tokens","id":"r1","items":["The","cat","sat",""],"color":"#1d6fb8","highlight":[2],"label":"request A","near":{"of":"gpu","side":"below"}}   a row of chips: tokens, words, slots, packets, queue items, array cells ("" = empty slot); "vertical":true for a stack
+{"cmd":"box","id":"b1","x":0,"y":0,"label":"Scheduler","sub":"every step","color":"#1d6fb8","fill":true}   a component
+{"cmd":"circle","id":"c1","label":"x","color":"#2a8a3e","fill":true,"near":{"of":"b1","side":"right"}}
+{"cmd":"arrow","id":"a1","from":"b1","to":"c1","label":"sends","curve":0.2,"dash":false,"color":"#1f2328"}   from/to = ids (or [x,y]); this is how anything moves or causes anything
+{"cmd":"frame","id":"f1","around":["gpu","r1"],"label":"one batch"}   groups related things (icons, boxes, tokens) in a dashed box; not around arrows
+{"cmd":"brace","id":"br1","around":["r1"],"side":"below","label":"4 tokens"}   measures or names a span
+{"cmd":"schedule","id":"s1","x":0,"y":0,"label":"GPU slots over time","rows":[{"label":"slot 1","spans":[[0,4,"A","#1d6fb8"],[4,6,"D","#2a8a3e"]]},{"label":"slot 2","spans":[[0,2,"B","#c48a00"]]}],"steps":6,"markers":[{"at":2,"label":"B done"}]}   what happens when: time steps across, lanes down (from inclusive, to exclusive)
+{"cmd":"sequence","id":"sq","actors":["Client","Server"],"messages":[["Client","Server","SYN seq=100"],["Server","Client","SYN-ACK"],["Client","Server","ACK",true]],"label":"handshake"}   who sends what to whom, in order (protocols, API calls, requests); true = dashed reply
+{"cmd":"graph","id":"g1","nodes":["Client","API","DB"],"edges":[["Client","API","request"],["API","DB"]],"layout":"layered|circle|grid","near":{"of":"b1","side":"below"}}   flows, pipelines, state machines
+{"cmd":"tree","id":"t1","root":{"label":"root","children":[{"label":"left"},{"label":"right"}]}}
+{"cmd":"network","id":"nn","layers":[3,4,2],"labels":["in","hidden","out"]}
+{"cmd":"bars","id":"p1","values":[0.1,0.6,0.3],"labels":["cat","sat","mat"],"label":"probability"}   compare amounts
+{"cmd":"numberline","id":"n1","from":0,"to":10,"marks":[{"at":3,"label":"w"}]}   {"cmd":"timeline","id":"tl","events":[{"label":"v1","at":"2019"}]}
+{"cmd":"vector","id":"v1","values":[0.2,0.7],"label":"q"}   {"cmd":"matrix","id":"m1","values":[[1,0],[0,1]],"label":"W"}   {"cmd":"plot","id":"f","fn":"sigmoid|exp|tanh|relu|gelu|sin|log","label":"σ"}
+{"cmd":"table","id":"tb","header":["Model","Params"],"rows":[["A","1B"]]}   only for real reference numbers, never for explaining
+{"cmd":"math","id":"e1","x":0,"y":0,"tex":"E = mc^2"}   {"cmd":"code","id":"k1","code":"x = 1","lang":"python"}   {"cmd":"line","id":"l1","points":[[0,0],[100,40]]}
+Changing the board:
+{"cmd":"highlight","id":"h1","target":"r1","style":"circle|underline|box","color":"#e07800"}   point at what you are talking about
+{"cmd":"update","id":"r1","items":["The","cat","sat","on"],"highlight":[3]}   redraw an object with new values: show change step by step
+{"cmd":"move","id":"r1","dx":0,"dy":120}   {"cmd":"erase","ids":["a1"]}   {"cmd":"clear"}
+Words on the board, sparingly:
+{"cmd":"write","id":"h","x":0,"y":0,"text":"Continuous batching","size":34}   a heading, or a 1-4 word caption. Never a sentence.
+
+Colours (dark markers on white): blue #1d6fb8, amber #c48a00, green #2a8a3e, red #d1382c, purple #7a48c2, orange #e07800, black #1f2328, grey #7d848c. Give each kind of thing one colour and keep it.
+
+HOW TO TEACH HERE: DRAW MORE, TALK LESS
+0. Start every answer with one hidden planning line: {"plan":"<the 1-3 pictures you will draw, and the tool for each>"} (max 40 words, never shown). Pick the tool that makes the idea obvious at a glance, e.g. protocol or request/response → sequence; anything over time → schedule; a system → icons + arrows inside frames.
+1. Every idea becomes a picture. Ask "what does this look like?" and draw that: things → icons or boxes; sequences, tokens, slots, queues → tokens; what happens over time → schedule (or several snapshots side by side); cause and movement → arrows; parts of a whole → frame; sizes and counts → brace, bars; structure → graph, tree, network.
+2. Draw the concrete example itself (the actual tokens, requests, numbers, names), never a description of it.
+3. Board text is labels only: 1-4 words or a number. At most 3 write commands per answer (a heading and short captions). No sentences, definitions, legends or bullet lists on the board.
+4. Spoken lines: one sentence of at most 12 words each, about the drawing that follows it; at most 6 per answer. Never repeat in words what the drawing already shows.
+5. Rhythm: say → 2-5 drawing commands → say → 2-5 drawing commands …  Aim for 15-35 board commands per answer, at least 85% of them pictures.
+6. Layout: one clear diagram per idea, flowing left→right or top→bottom, laid out with near; keep 40+ units between things; put before/after or wrong/right side by side; frame what belongs together. Arrows join things that are next to each other; never draw an arrow across another drawing.
+7. Build on the board: keep earlier drawings, extend and update them (update is how a picture changes over time). Erase only a wrong or outdated picture, and say why. A new subject starts with a heading in free space.
+8. Objects of type ink are the learner's own pen sketches. When a picture of their sketch is attached, work out from the picture yourself what it shows (never ask them to describe it). Name what you see in one short spoken line, then answer their question about it; if they asked nothing specific, check it: highlight what is right and draw the corrected version next to their sketch. Never erase or move their ink.
+9. Language: reply in the language of the learner's latest message; that is English unless that message is in Hinglish or asks for Hinglish (then Hinglish in Latin script). Board labels follow the same language. Say when numbers are only illustrative.
+
+EXAMPLE of the balance wanted (a different topic):
+{"plan":"icons CPU, cache, disk with hit/miss arrows; cache slots as tokens; update them to show eviction"}
+{"say":"A cache keeps hot data right next to the CPU."}
+{"cmd":"write","id":"hc","x":0,"y":0,"text":"Caching","size":34}
+{"cmd":"icon","id":"cpu","name":"cpu","label":"CPU","near":{"of":"hc","side":"below","gap":50}}
+{"cmd":"icon","id":"mem","name":"memory","label":"cache","sub":"1 ns","near":{"of":"cpu","side":"right","gap":140}}
+{"cmd":"icon","id":"disk","name":"database","label":"disk","sub":"10 ms","near":{"of":"mem","side":"right","gap":180}}
+{"cmd":"arrow","id":"hit","from":"cpu","to":"mem","label":"hit","color":"#2a8a3e"}
+{"say":"A miss walks all the way to the slow disk."}
+{"cmd":"arrow","id":"miss","from":"mem","to":"disk","label":"miss","dash":true,"color":"#d1382c"}
+{"cmd":"tokens","id":"slots","items":["user:7","post:3",""],"label":"cache slots","near":{"of":"mem","side":"below","gap":70}}
+{"cmd":"brace","id":"cap","around":["slots"],"side":"below","label":"3 slots"}
+{"say":"When it's full, the oldest entry is evicted."}
+{"cmd":"update","id":"slots","items":["post:3","feed:1","user:9"],"highlight":[2]}
+{"cmd":"highlight","id":"hl","target":"slots","style":"box","color":"#e07800"}`;
 }
 function buildMessages(question, selIds, inkIds = [], image = null) {
   const msgs = [{ role: 'system', content: systemPrompt(selIds) }];
@@ -1642,7 +1803,7 @@ function buildMessages(question, selIds, inkIds = [], image = null) {
     if (m.role === 'user') msgs.push({ role: 'user', content: (m.about && m.about.length ? `[About the selected drawings: ${m.about.join(', ')}] ` : '') + (m.sketch ? `[With my sketch: ${m.sketch.join(', ')}] ` : '') + m.text });
     else msgs.push({ role: 'assistant', content: (m.text || '(drew only)') + (m.drew && m.drew.length ? `\n(On the board I drew or changed: ${m.drew.join(', ')})` : '') });
   }
-  const text = (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + (inkIds.length ? `[I drew on the board myself: ${inkIds.join(', ')}${image ? '. A picture of my sketch and the drawings around it is attached.' : '.'}] ` : '') + question;
+  const text = (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + (inkIds.length ? `[I drew a sketch on the board (${inkIds.join(', ')}). ${image ? 'A picture of it, with the drawings around it, is attached: work out what it shows from the picture.' : 'Its strokes are listed in the board summary.'}] ` : '') + question;
   msgs.push({ role: 'user', content: image ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }] : text });
   return msgs;
 }
@@ -1660,7 +1821,7 @@ async function send(q) {
   const inkIds = [...inkSinceAsk].filter(id => objs.has(id));
   let image = null;
   if (inkIds.length) { try { const reg = inkRegion(inkIds); if (reg) image = await boardImage(reg); } catch (e) { console.warn('sketch image failed', e); } }
-  inkSinceAsk.clear();
+  inkSinceAsk.clear(); $('#attach').hidden = true; input.placeholder = 'Ask the teacher…';
   const messages = buildMessages(q, selIds, inkIds, image);
   const userMsg = { role: 'user', text: q, about: selIds.map(nameOf), sketch: inkIds.length ? inkIds : undefined };
   chat.push(userMsg); const ub = bubble(userMsg);
@@ -1694,12 +1855,13 @@ async function send(q) {
     try { r1 = await streamAnswer(messages, opts); }
     catch (e) { if (e.code === 'empty' && !myAbort.signal.aborted && !turn.cmds) r1 = await streamAnswer(messages, opts); else throw e; }
     modelApplied = r1.model;
-    // The teacher must always use the board. If the model only talked, ask it once to draw what it said.
-    if (turn.cmds === 0 && !myAbort.signal.aborted && run.gen === gen) {
+    // The teacher must teach by drawing. If the answer was mostly talk, ask once for the picture.
+    if ((turn.pics || 0) < 4 && !myAbort.signal.aborted && run.gen === gen) {
+      dlog('answer had only', turn.pics || 0, 'pictures: asking for a drawing');
       if (turn.thinking) { body.textContent = '✎ Drawing…'; }
       const follow = messages.concat(
         { role: 'assistant', content: r1.content.slice(0, 6000) || '(no answer)' },
-        { role: 'user', content: 'Now teach that on the whiteboard: draw it with 6-20 board commands (JSON Lines with "cmd"), placed in the free space, labelled pictures and arrows rather than paragraphs. At most one short say line. Do not repeat what you already said.' });
+        { role: 'user', content: 'That was too wordy for a whiteboard. Now SHOW it: add 10-25 drawing commands (icons, tokens, boxes, arrows, frames, braces, schedule, graph…) laid out with "near" next to what is already on the board. Labels of 1-4 words, no write sentences, at most one short say line. Do not repeat what you already said.' });
       const r2 = await streamAnswer(follow, opts);
       modelApplied = r2.model || modelApplied;
     }
@@ -1769,17 +1931,23 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       const items = Array.isArray(obj) ? obj : [obj];
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
+        if (typeof it.plan === 'string') dlog('plan:', it.plan.slice(0, 200));
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
-        if (it.say != null) { const t = str(it.say, 1200); enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null }); }
+        if (it.say != null) {
+          const t = trimSay(str(it.say, 1200)); if (t.length < String(it.say).trim().length) dlog('shortened a long spoken line');
+          enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
+        }
         if (it.cmd || it.type || it.op) {
           if (turn.cmds >= MAX_CMDS_PER_ANSWER) { dlog('over the per-answer command limit, skipped', it.cmd); continue; }
           const c = normalize(it); if (!c) { dlog('unknown or invalid command skipped', JSON.stringify(it).slice(0, 160)); continue; }
+          if (c.cmd === 'write' && (turn.writes = (turn.writes || 0) + 1) > MAX_WRITES_PER_ANSWER) { dlog('too much writing: skipped', c.text); continue; }
+          if (PICTURE.has(c.cmd)) turn.pics = (turn.pics || 0) + 1;
           turn.cmds++; enqueue({ cmd: c, run, turn });
         }
       }
     } else {
       jsonBuf = null;
-      const t = line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200);
+      const t = trimSay(line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200));
       enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
     }
   };
@@ -1904,7 +2072,7 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // ======================================================================
 // narration settings
 // ======================================================================
-function voiceCfg() { const v = settings.voice || (settings.voice = {}); return { mode: v.mode || 'kokoro', voice: v.voice || 'af_bella', speed: v.speed || 1, engine: v.engine || (v.gpu ? 'webgpu' : 'server'), lastMode: v.lastMode || 'kokoro' }; }
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); return { mode: v.mode || 'off', voice: v.voice || 'af_bella', speed: v.speed || 1, engine: v.engine || (v.gpu ? 'webgpu' : 'server'), lastMode: v.lastMode || 'kokoro' }; }
 function applyVoice() {
   const v = voiceCfg();
   Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });
@@ -1947,19 +2115,19 @@ let topicIsNew = false;
 function openTopic(forceNew = false) {
   topicIsNew = forceNew === true || !lesson;
   const L = topicIsNew ? null : lesson;
-  $('#tTopic').value = L ? L.topic : ''; $('#tAudience').value = L ? L.audience || '' : '';
-  $('#tExample').value = L ? L.example || '' : ''; $('#tNotes').value = L ? L.notes || '' : ''; $('#tSource').value = L ? L.source || '' : '';
-  $('#tWarn').hidden = !lesson || !topicIsNew; $('#tCancel').hidden = false;
-  $('#tOk').textContent = topicIsNew ? 'Start teaching' : 'Save';
-  dlg.querySelector('h2').textContent = topicIsNew ? 'What should the teacher teach?' : 'Edit this lesson';
+  $('#tTopic').value = L ? L.topic : '';
+  $('#tCancel').hidden = false;
+  $('#tOk').textContent = topicIsNew ? 'Start' : 'Rename';
+  dlg.querySelector('h2').textContent = topicIsNew ? 'New session' : 'Rename session';
   dlg.showModal(); setTimeout(() => $('#tTopic').focus(), 30);
 }
 $('#topicBtn').onclick = () => openTopic(false);
+$('#topicBtn').title = 'Rename this session';
 dlg.addEventListener('close', () => { if (!lesson && dlg.returnValue !== 'ok') setTimeout(openSessions, 0); });
 $('#topicForm').addEventListener('submit', async e => {
   if (e.submitter && e.submitter.value === 'cancel') return;
   const topic = $('#tTopic').value.trim(); if (!topic) { e.preventDefault(); return; }
-  const next = { topic: topic.slice(0, 200), audience: $('#tAudience').value.trim().slice(0, 200), example: $('#tExample').value.trim().slice(0, 300), notes: $('#tNotes').value.trim().slice(0, 6000), source: $('#tSource').value.trim().slice(0, 120) };
+  const next = { topic: topic.slice(0, 120) };
   if (topicIsNew || !lesson) {
     // the current lesson is already auto-saved; start a fresh one
     if (lesson) { saveNow(); await saveToServer(); }
@@ -1967,15 +2135,11 @@ $('#topicForm').addEventListener('submit', async e => {
     lesson = { ...next, plan: null, session: 'wbt-' + uuid() };
     sessionCreatedAt = new Date().toISOString();
     camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
-  } else {
-    if (next.topic !== lesson.topic || next.example !== lesson.example) lesson.plan = null;
-    lesson = { ...lesson, ...next };
-  }
+  } else lesson = { ...lesson, ...next };   // renaming keeps the board and chat
   renderTitle(); renderChat(); saveSoon();
 });
 function renderTitle() {
   const t = $('#titleText'); t.textContent = lesson ? lesson.topic : 'Whiteboard Teacher';
-  if (lesson && lesson.source) { const s = document.createElement('small'); s.textContent = ` · after ${lesson.source}`; t.appendChild(s); }
   document.title = lesson ? `${lesson.topic} — Whiteboard Teacher` : 'Whiteboard Teacher';
 }
 

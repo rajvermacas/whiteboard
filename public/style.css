@@ -156,3 +156,10 @@ foreignObject .katex { font-size: 1em; }
 .msg.user img.thumb { display: block; max-width: 180px; max-height: 120px; margin-top: 6px; border-radius: 6px; background: #fff; }
 #modelPop { max-height: min(70vh, calc(100% - 60px)); overflow-y: auto; }
 #modelPop .linkish { border: 1px solid #d0d5db; background: #fff; border-radius: 8px; padding: 5px 10px; font-size: 12px; color: #444c56; }
+
+/* ---------- drawing attached to the next question ---------- */
+#attach { display: flex; align-items: center; gap: 10px; margin: 0 10px; padding: 8px 10px; border: 1px solid #cfd8e3; border-bottom: 0; border-radius: 10px 10px 0 0; background: #f3f8fd; font-size: 12.5px; color: #444c56; }
+#attach[hidden] { display: none; }
+#attach img { width: 64px; height: 44px; object-fit: contain; background: #fff; border: 1px solid #e3e6ea; border-radius: 6px; }
+#attach span { flex: 1; }
+#attach button { border: 0; background: none; font-size: 15px; color: #7d848c; cursor: pointer; }
