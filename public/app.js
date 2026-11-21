@@ -1133,6 +1133,8 @@ function rubAt(bx, by) {
 const inkSinceAsk = new Set();
 const inkPreview = el('path', { fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'pointer-events': 'none' }, layerOv);
 svg.addEventListener('pointerdown', e => {
+  // a right-click (or Ctrl+click on a Mac) opens the drawing's menu: it must not select, pan or draw
+  if (e.button === 2 || (e.button === 0 && e.ctrlKey && IS_MAC)) return;
   svg.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 2) {
@@ -1269,8 +1271,198 @@ function zoomTap(px, py, out) {
   animateCamera({ scale: s, x: bx - sx / s, y: by - sy / s }, 260);
 }
 
+// ======================================================================
+// right-click a drawing → "Ask whiteboard": a small popup for quick Q&A about it (one drawing or the selection).
+// It only talks: nothing is drawn, said aloud, added to the chat or saved, and the lesson carries on untouched.
+// ======================================================================
+const ctxMenu = document.createElement('div'); ctxMenu.id = 'ctxMenu'; ctxMenu.hidden = true; ctxMenu.setAttribute('role', 'menu');
+const askPop = document.createElement('div'); askPop.id = 'askPop'; askPop.hidden = true; askPop.setAttribute('role', 'dialog');
+askPop.innerHTML = `<div class="apHead"><span class="apTitle"></span><button type="button" class="apX" title="Close (Esc)" aria-label="Close">✕</button></div>
+<div class="apLog" aria-live="polite"></div>
+<form class="apForm"><textarea rows="1" placeholder="Ask about this…" aria-label="Your question"></textarea><button type="submit" class="apSend" title="Ask (↵)" aria-label="Ask">➤</button></form>`;
+$('#boardWrap').append(ctxMenu, askPop);
+const apLog = askPop.querySelector('.apLog'), apInput = askPop.querySelector('textarea'), apSend = askPop.querySelector('.apSend');
+let askState = null;   // { ids, names, thread: [{q, a}], abort }
+
+svg.addEventListener('contextmenu', e => {
+  const id = hitTest(e.clientX, e.clientY);
+  if (!id || !objs.has(id) || penMode) { hideCtxMenu(); return; }   // empty board: the browser's own menu
+  e.preventDefault();
+  // right-clicking one of several selected drawings asks about them all; otherwise just this one
+  const ids = selection.has(id) && selection.size > 1 ? [...selection].filter(x => objs.has(x)) : [id];
+  if (ids.length === 1 && !selection.has(id)) setSelection([id]);
+  const names = ids.map(nameOf);
+  ctxMenu.innerHTML = '';
+  const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem');
+  b.innerHTML = `<span>💬 Ask whiteboard</span><small></small>`;
+  b.querySelector('small').textContent = ids.length > 1 ? `about ${ids.length} drawings` : `about “${names[0]}”`;
+  b.onclick = () => { hideCtxMenu(); openAskPop(ids); };
+  ctxMenu.appendChild(b);
+  const r = $('#boardWrap').getBoundingClientRect();
+  ctxMenu.hidden = false;
+  const w = ctxMenu.offsetWidth, h = ctxMenu.offsetHeight;
+  ctxMenu.style.left = clamp(e.clientX - r.left, 6, r.width - w - 6) + 'px';
+  ctxMenu.style.top = clamp(e.clientY - r.top, 6, r.height - h - 6) + 'px';
+  b.focus({ preventScroll: true });
+  dlog('user: right-click', ids.map(x => JSON.stringify(nameOf(x))).join(', '));
+});
+function hideCtxMenu() { ctxMenu.hidden = true; }
+document.addEventListener('pointerdown', e => {
+  if (!ctxMenu.hidden && !ctxMenu.contains(e.target)) hideCtxMenu();
+  if (!askPop.hidden && !askPop.contains(e.target) && !ctxMenu.contains(e.target)) closeAskPop();
+}, true);
+
+function openAskPop(ids) {
+  closeAskPop();
+  const names = ids.map(nameOf);
+  askState = { ids, names, thread: [], abort: null };
+  askPop.querySelector('.apTitle').textContent = ids.length > 1 ? `Ask about ${ids.length} drawings: ${names.map(n => `“${n}”`).join(', ')}` : `Ask about “${names[0]}”`;
+  askPop.querySelector('.apTitle').title = names.join(', ');
+  apLog.textContent = ''; apLog.hidden = true; apInput.value = ''; fitApInput(); apSend.disabled = false;
+  askPop.hidden = false;
+  placeAskPop(ids);
+  apInput.focus({ preventScroll: true });
+  dlog('ask popup: open about', names.map(n => JSON.stringify(n)).join(', '));
+}
+// next to the drawings (to the right if there is room, else left, else below), kept inside the board
+function placeAskPop(ids) {
+  const wrap = $('#boardWrap').getBoundingClientRect(), sv = svg.getBoundingClientRect();
+  const bs = ids.map(id => bbOf(objs.get(id)));
+  const x0 = Math.min(...bs.map(b => b.x)), y0 = Math.min(...bs.map(b => b.y)), x1 = Math.max(...bs.map(b => b.x + b.width)), y1 = Math.max(...bs.map(b => b.y + b.height));
+  const toX = bx => sv.left - wrap.left + (bx - camera.x) * camera.scale, toY = by => sv.top - wrap.top + (by - camera.y) * camera.scale;
+  const L = toX(x0), R = toX(x1), T = toY(y0), B = toY(y1), w = askPop.offsetWidth, h = Math.max(askPop.offsetHeight, 180), gap = 14;
+  let left = R + gap <= wrap.width - w - 8 ? R + gap : L - gap - w >= 8 ? L - gap - w : (L + R) / 2 - w / 2;
+  let top = left === (L + R) / 2 - w / 2 ? B + gap : T;
+  askPop.style.left = clamp(left, 8, Math.max(8, wrap.width - w - 8)) + 'px';
+  askPop.style.top = clamp(top, 8, Math.max(8, wrap.height - h - 8)) + 'px';
+}
+function closeAskPop() {
+  askPop.hidden = true;
+  if (!askState) return;
+  if (askState.abort) askState.abort.abort();
+  dlog('ask popup: closed after', askState.thread.length, 'question(s)');
+  askState = null;
+}
+askPop.querySelector('.apX').onclick = () => { closeAskPop(); $('#boardWrap').focus({ preventScroll: true }); };
+function fitApInput() { apInput.style.height = 'auto'; apInput.style.height = Math.min(apInput.scrollHeight, 120) + 'px'; }
+apInput.addEventListener('input', fitApInput);
+apInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); askPop.querySelector('.apForm').requestSubmit(); }
+});
+askPop.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAskPop(); $('#boardWrap').focus({ preventScroll: true }); } });
+askPop.querySelector('.apForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const q = apInput.value.trim();
+  if (!q || !askState || askState.abort) return;
+  apInput.value = ''; fitApInput();
+  askQuick(q);
+});
+
+// what the model gets: the drawings themselves, what touches or sits around them, what the teacher said while
+// drawing them, the lesson and the last few chat messages, then this popup's own thread
+function askContext(ids) {
+  const set = new Set(ids), lines = [];
+  lines.push(`Lesson: ${lesson ? lesson.topic : ''}`);
+  lines.push(`\nTHE DRAWING${ids.length > 1 ? 'S' : ''} THE LEARNER IS ASKING ABOUT:`);
+  ids.forEach(id => lines.push('- ' + objLine(objs.get(id), true)));
+  // connected: arrows to or from them, frames, braces and highlights on them, and what those arrows point at
+  const linked = new Set();
+  for (const [id, o] of objs) {
+    if (set.has(id)) continue; const c = o.cmd;
+    const touches = (c.cmd === 'arrow' && (set.has(c.from) || set.has(c.to))) || ((c.cmd === 'frame' || c.cmd === 'brace') && c.around.some(x => set.has(x))) || (c.cmd === 'highlight' && set.has(c.target)) || (c.cmd === 'flow' && set.has(c.on));
+    if (touches) { linked.add(id); if (c.cmd === 'arrow') [c.from, c.to].forEach(x => typeof x === 'string' && objs.has(x) && !set.has(x) && linked.add(x)); }
+  }
+  ids.forEach(id => { const c = objs.get(id).cmd; if (c.cmd === 'arrow') [c.from, c.to].forEach(x => typeof x === 'string' && objs.has(x) && !set.has(x) && linked.add(x)); if (c.around) c.around.forEach(x => objs.has(x) && !set.has(x) && linked.add(x)); if (c.target && objs.has(c.target) && !set.has(c.target)) linked.add(c.target); });
+  if (linked.size) { lines.push('\nCONNECTED TO THEM:'); [...linked].slice(0, 20).forEach(id => lines.push('- ' + objLine(objs.get(id)))); }
+  // nearby: the closest other drawings around them
+  const bs = ids.map(id => bbOf(objs.get(id))), cx = b => b.x + b.width / 2, cy = b => b.y + b.height / 2;
+  const dist = b => Math.min(...bs.map(a => Math.max(0, Math.abs(cx(a) - cx(b)) - (a.width + b.width) / 2) + Math.max(0, Math.abs(cy(a) - cy(b)) - (a.height + b.height) / 2)));
+  const near = [...objs.entries()].filter(([id]) => !set.has(id) && !linked.has(id)).map(([id, o]) => [id, dist(bbOf(o))]).filter(([, d]) => d < 260).sort((a, b) => a[1] - b[1]).slice(0, 12);
+  if (near.length) { lines.push('\nNEARBY ON THE BOARD:'); near.forEach(([id]) => lines.push('- ' + objLine(objs.get(id)))); }
+  // what the teacher was saying when they were drawn (the step that drew each one, and the one before it)
+  const said = [];
+  steps.forEach((st, i) => {
+    if (st.by !== 'teacher' || !st.cmds.some(c => set.has(c.id) || (c.ids && c.ids.some(x => set.has(x))))) return;
+    for (let j = Math.max(0, i - 1); j <= i; j++) { const s = steps[j]; if (s.by === 'teacher' && s.say && !said.includes(s.say)) said.push(s.say); }
+  });
+  if (said.length) { lines.push('\nWHAT THE TEACHER SAID WHILE DRAWING THEM:'); said.slice(-8).forEach(s => lines.push('- ' + clip(s, 300))); }
+  const recent = chat.filter(m => (m.role === 'user' || m.role === 'assistant') && m.text).slice(-4);
+  if (recent.length) { lines.push('\nTHE LESSON CHAT, LATEST MESSAGES:'); recent.forEach(m => lines.push(`${m.role === 'user' ? 'Learner' : 'Teacher'}: ${clip(m.text, 500)}`)); }
+  lines.push('\nTHE WHOLE BOARD, FOR REFERENCE:\n' + boardSummary());
+  return lines.join('\n');
+}
+const ASK_SYSTEM = `You answer a learner's quick question about one or more drawings on a teaching whiteboard, in a small popup next to them. The drawings, what they connect to, what is near them and what the teacher said while drawing them are given below; use them to know exactly what the learner is pointing at, and use the drawing's own names, numbers and labels.
+Answer short and direct: usually 2 to 5 sentences, a short list only when it truly helps. Lead with the answer itself, no preamble, no restating the question. Plain text only. For maths use inline LaTeX between single dollar signs, like $W_1 x + b$.
+You cannot draw or change the board here, so never write drawing commands, JSON or code for the board, and never offer to draw. If the question needs a full explanation, give the short answer and say in one line that asking it in the main chat will get it drawn.
+Follow-up questions in this popup continue the same thread about the same drawings. Answer in the language of the learner's question.`;
+
+async function askQuick(q) {
+  const st = askState; if (!st) return;
+  const ids = st.ids.filter(id => objs.has(id));
+  if (!ids.length) { apNote('Those drawings are no longer on the board.'); return; }
+  const item = { q, a: '' }; st.thread.push(item);
+  apLog.hidden = false;
+  const qd = document.createElement('div'); qd.className = 'apQ'; qd.textContent = q; apLog.appendChild(qd);
+  const ad = document.createElement('div'); ad.className = 'apA thinking'; ad.innerHTML = '<span class="apDots">thinking<i>.</i><i>.</i><i>.</i></span>'; apLog.appendChild(ad);
+  apLog.scrollTop = apLog.scrollHeight;
+  const ac = st.abort = new AbortController(); apSend.disabled = true;
+  const model = settings.model || (models[0] && models[0].id), eff = currentEffort();
+  const messages = [{ role: 'system', content: ASK_SYSTEM + '\n\n' + askContext(ids) }];
+  st.thread.slice(0, -1).forEach(t => { messages.push({ role: 'user', content: t.q }); messages.push({ role: 'assistant', content: t.a || '(no answer)' }); });
+  messages.push({ role: 'user', content: q });
+  dlog('ask popup: asking', JSON.stringify(clip(q, 120)), '· about', ids.join(','), '· model', model, eff, '· follow-up', st.thread.length - 1);
+  const t0 = performance.now();
+  let painted = 0;
+  const paint = () => { painted = item.a.length; ad.classList.remove('thinking'); renderMathText(ad, item.a); const nearEnd = apLog.scrollHeight - apLog.scrollTop - apLog.clientHeight < 40; if (nearEnd) apLog.scrollTop = apLog.scrollHeight; };
+  try {
+    await streamText(model, eff === 'auto' ? null : eff, (lesson ? lesson.session : 'wbt') + '-ask', messages, ac.signal, delta => {
+      item.a += delta; if (item.a.length - painted > 6 || /[\s$.]$/.test(delta)) paint();
+    });
+    if (!item.a.trim()) { item.a = ''; ad.classList.remove('thinking'); ad.classList.add('err'); ad.textContent = 'No answer came back. Try asking again.'; }
+    else paint();
+    dlog('ask popup: answered in', Math.round(performance.now() - t0), 'ms,', item.a.length, 'chars');
+  } catch (e) {
+    if (ac.signal.aborted) return;
+    ad.classList.remove('thinking'); ad.classList.add('err'); ad.textContent = 'Could not answer: ' + (e.message || e);
+    dlog('ask popup: failed', String(e.message || e));
+  } finally {
+    if (askState === st) { st.abort = null; apSend.disabled = false; apInput.focus({ preventScroll: true }); }
+  }
+}
+function apNote(text) { apLog.hidden = false; const d = document.createElement('div'); d.className = 'apA err'; d.textContent = text; apLog.appendChild(d); }
+// text with $…$ maths rendered by KaTeX (when loaded); everything else stays plain text
+function renderMathText(node, text) {
+  node.textContent = '';
+  const parts = String(text).split(/(\$\$[^$]+\$\$|\$[^$\n]+\$)/);
+  for (const p of parts) {
+    const m = /^\$\$([^$]+)\$\$$/.exec(p) || /^\$([^$\n]+)\$$/.exec(p);
+    if (m && window.katex) { const s = document.createElement('span'); try { window.katex.render(m[1], s, { throwOnError: false, displayMode: p.startsWith('$$') }); } catch { s.textContent = p; } node.appendChild(s); }
+    else if (p) node.appendChild(document.createTextNode(p));
+  }
+}
+// a streamed answer from /api/chat, handing each piece of text to onDelta (thinking is not shown)
+async function streamText(model, effort, session, messages, signal, onDelta) {
+  const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal, body: JSON.stringify({ model, effort, session, messages }) });
+  if (!res.ok || !res.body) { let msg = 'HTTP ' + res.status; try { const j = await res.json(); msg = (j.error && j.error.message) || msg; } catch {} throw new Error(msg); }
+  const reader = res.body.getReader(), dec = new TextDecoder(); let sse = '';
+  for (;;) {
+    const { done, value } = await reader.read(); if (done) break;
+    sse += dec.decode(value, { stream: true }); let nl;
+    while ((nl = sse.indexOf('\n')) >= 0) {
+      const ln = sse.slice(0, nl).trim(); sse = sse.slice(nl + 1);
+      if (!ln.startsWith('data:')) continue; const d = ln.slice(5).trim(); if (!d || d === '[DONE]') continue;
+      let j; try { j = JSON.parse(d); } catch { continue; }
+      if (j.error) throw new Error(j.error.message || 'stream error');
+      const c = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
+      if (typeof c === 'string' && c) onDelta(c);
+    }
+  }
+}
+
 document.addEventListener('keydown', e => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+  if (e.key === 'Escape' && (!ctxMenu.hidden || askState)) { e.preventDefault(); if (!ctxMenu.hidden) hideCtxMenu(); else closeAskPop(); return; }
+  if (askPop.contains(document.activeElement)) return;   // keys typed in the popup stay in the popup
   if (e.key === 'Escape') {
     if (selection.size) { setSelection([]); return; }
     if ($('#app').classList.contains('fs')) exitFullscreen();
@@ -2137,7 +2329,7 @@ $('#boardWrap').tabIndex = -1;
 let downOnDrawing = false;
 $('#boardWrap').addEventListener('pointerdown', e => { downOnDrawing = !!e.target.closest('#layerObjects'); }, { capture: true });
 $('#boardWrap').addEventListener('click', e => {
-  if (e.target.closest('button,input,select,textarea,a,label')) return;
+  if (e.target.closest('button,input,select,textarea,a,label,#askPop,#ctxMenu')) return;
   if (downOnDrawing) input.focus({ preventScroll: true });
   else $('#boardWrap').focus({ preventScroll: true });
 });
@@ -2317,28 +2509,30 @@ function boardSummary() {
   const list = [...objs.values()].slice(-70);
   if (list.length) {
     lines.push(`Objects on the board (${objs.size} total${objs.size > 70 ? ', last 70 shown' : ''}):`);
-    for (const o of list) {
-      const c = o.cmd, bb = bbOf(o), bits = [`${c.id} ${c.cmd}`, c.color];
-      if (c.text) bits.push(JSON.stringify(c.text.slice(0, 60)));
-      if (c.label) bits.push('label ' + JSON.stringify(c.label));
-      if (c.sub) bits.push('sub ' + JSON.stringify(c.sub));
-      if (c.values) bits.push('values ' + JSON.stringify(c.values).slice(0, 80));
-      if (c.cmd === 'arrow') bits.push(`from ${JSON.stringify(c.from)} to ${JSON.stringify(c.to)}`);
-      if (c.cmd === 'highlight') bits.push(`on ${c.target}`);
-      if (c.cmd === 'flow') bits.push(`dots moving along ${c.on}`);
-      if (c.cmd === 'ink') bits.push("the learner's own pen sketch");
-      if (c.cmd === 'icon') bits.push('icon ' + c.name);
-      if (c.cmd === 'tokens') bits.push('items ' + JSON.stringify(c.items.map(i => i.text)).slice(0, 90));
-      if (c.cmd === 'frame' || c.cmd === 'brace') bits.push('around ' + c.around.join(','));
-      if (c.cmd === 'schedule') bits.push('rows ' + c.rows.map(rw => rw.label).join(',') + ` · ${c.steps} steps`);
-      if (c.cmd === 'math') bits.push('tex ' + JSON.stringify(c.tex.slice(0, 60)));
-      if (c.cmd === 'graph') bits.push(`nodes ${c.nodes.map(n => n.id).join(',').slice(0, 80)}`);
-      if (c.cmd === 'network') bits.push(`layers ${c.layers.join('-')}`);
-      bits.push(`box x${r(bb.x)} y${r(bb.y)} w${r(bb.width)} h${r(bb.height)}`);
-      lines.push('- ' + bits.join(' · '));
-    }
+    for (const o of list) lines.push('- ' + objLine(o));
   }
   return lines.join('\n');
+}
+// one drawing, in a line: id, kind, its words and numbers, where it is (`full` keeps longer text and values)
+function objLine(o, full = false) {
+  const c = o.cmd, bb = bbOf(o), r = n => Math.round(n), bits = [`${c.id} ${c.cmd}`, c.color], n = full ? 4 : 1;
+  if (c.text) bits.push(JSON.stringify(c.text.slice(0, 60 * n)));
+  if (c.label) bits.push('label ' + JSON.stringify(c.label));
+  if (c.sub) bits.push('sub ' + JSON.stringify(c.sub));
+  if (c.values) bits.push('values ' + JSON.stringify(c.values).slice(0, 80 * n));
+  if (c.cmd === 'arrow') bits.push(`from ${JSON.stringify(c.from)} to ${JSON.stringify(c.to)}`);
+  if (c.cmd === 'highlight') bits.push(`on ${c.target}`);
+  if (c.cmd === 'flow') bits.push(`dots moving along ${c.on}`);
+  if (c.cmd === 'ink') bits.push("the learner's own pen sketch");
+  if (c.cmd === 'icon') bits.push('icon ' + c.name);
+  if (c.cmd === 'tokens') bits.push('items ' + JSON.stringify(c.items.map(i => i.text)).slice(0, 90 * n));
+  if (c.cmd === 'frame' || c.cmd === 'brace') bits.push('around ' + c.around.join(','));
+  if (c.cmd === 'schedule') bits.push('rows ' + c.rows.map(rw => rw.label).join(',') + ` · ${c.steps} steps`);
+  if (c.cmd === 'math') bits.push('tex ' + JSON.stringify(c.tex.slice(0, 60 * n)));
+  if (c.cmd === 'graph') bits.push(`nodes ${c.nodes.map(n => n.id).join(',').slice(0, 80 * n)}`);
+  if (c.cmd === 'network') bits.push(`layers ${c.layers.join('-')}`);
+  bits.push(`box x${r(bb.x)} y${r(bb.y)} w${r(bb.width)} h${r(bb.height)}`);
+  return bits.filter(Boolean).join(' · ');
 }
 function systemPrompt() {
   return `You are a great teacher at a whiteboard. The board SHOWS the idea (pictures, not text); your voice EXPLAINS it: the reasoning, the why, the cause and effect, while the pen draws. A learner should come away actually understanding, not just having seen a diagram.

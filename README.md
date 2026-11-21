@@ -84,6 +84,7 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
 | Erase | Delete/Backspace, or **Erase** in the "Selected" line |
 | Ask about it | select, then use the chips or type ("What is X?", "Change X to another example", Hinglish…) |
 | Steps | timeline bar under the board · ← → keys · ▶ replays · **Live** returns |
+| Quick question about a drawing | **right-click** it (Ctrl+click on a Mac) → **Ask whiteboard**: a small popup next to it answers briefly, using the drawing, what it connects to, what is near it and what the teacher said while drawing it. Ask follow-ups in the same popup. Right-click one of several selected drawings to ask about them all. It only talks: nothing is drawn, spoken, added to the chat or saved, and the lesson carries on. Uses the model and reasoning picked in ⚙. Enter asks, Shift+Enter new line, Esc closes |
 | Where am I? | the **Questions** panel (top of the chat) shows the main question and every side question / double-click under the answer it was asked in, indented: ▶ answering now (*you are here*), ⏸ waits to be gone back to, ⏳ answering on the side, ● ready, ✓ answered. It updates as inner answers finish and the teacher goes back out. Click a row to find it in the chat; click the header to fold it |
 | Keyboard focus | click an empty part of the board to put the keys on the board (then **Space** plays/pauses, ← → step) · click a drawing to type a question about it in the chat box |
 | Play / pause | **Space** with the board focused, same as the timeline's ▶/⏸ |
