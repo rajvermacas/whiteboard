@@ -361,4 +361,4 @@ ${parts.join('\n\n')}
 // a short summary for the front end (no page text)
 const summary = r => ({ url: r.url, host: r.host, ok: !!r.ok, source: r.source || '', title: r.title || '', chars: (r.text || '').length, error: r.ok ? undefined : r.error });
 
-module.exports = { readLinks, contextBlock, summary, findURLs, enabled, isPublicIP, checkURL, htmlToText, tweetId, _readLink: readLink, _request: request, _cache: cache };
+module.exports = { webSearch, readLinks, contextBlock, summary, findURLs, enabled, isPublicIP, checkURL, htmlToText, tweetId, _readLink: readLink, _request: request, _cache: cache };

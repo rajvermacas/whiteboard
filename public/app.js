@@ -38,7 +38,7 @@ const objs = new Map();        // id -> {cmd, g, bb, off:[dx,dy]}
 let camera = { x: -60, y: -60, scale: 1 };
 let chat = [];                 // [{role:'user'|'assistant'|'error'|'system', text, about?, drew?, meta?}]
 const selection = new Set();
-let settings = { model: null, efforts: {}, voice: { mode: 'off', voice: 'af_bella', speed: 1, engine: 'server' } };
+let settings = { model: null, efforts: {}, voice: { mode: 'kokoro', voice: 'af_bella', speed: 1, engine: 'server' } };
 let models = [];
 let gen = 0;                   // animation generation: bump to finish every running tween at once
 let streaming = false, queueRunning = false, replaying = false;
@@ -1636,9 +1636,9 @@ async function resumeSession(id) {
 }
 async function loadAll() {
   try { Object.assign(settings, JSON.parse(localStorage.getItem(LS_SET) || '{}')); } catch {}
-  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'off', voice: 'af_bella', speed: 1, engine: 'server' };
-  // narration became opt-in (v3): switch it off once for everyone; the learner can turn it back on in ⚙
-  if (!settings.voiceV3) { settings.voice = { ...settings.voice, mode: 'off', lastMode: 'kokoro' }; settings.voiceV3 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
+  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'kokoro', voice: 'af_bella', speed: 1, engine: 'server' };
+  // narration is on by default (v4): switch it on once for everyone (Kokoro, Bella); 🔊 / ⚙ turn it off and that is kept
+  if (!settings.voiceV4) { settings.voice = { ...settings.voice, mode: 'kokoro', voice: settings.voice.voice || 'af_bella' }; settings.voiceV3 = settings.voiceV4 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
   if (!settings.efforts || typeof settings.efforts !== 'object') settings.efforts = {};
   // migrate the single-board save from the first version
   try {
@@ -1809,12 +1809,18 @@ function continueParked() {
   dlog('continuing a set-aside answer:', items.length, 'lines · forks left:', forks.length);
   Voice.unlock();
   // back from a side question: say so out loud, show it on the board, and look at where that answer was drawing
-  if (p.why === 'question') {
+  // (any side answer counts: a question asked while paused, a double-click, or a question asked while looking back)
+  if (p.why === 'question' || side) {
     const topic = shortTopic(t.q);
-    const done = side && side.intro ? `That is ${side.q.replace(/^what is inside /, 'what is inside ')}.` : 'That answers your question.';
-    const line = `${done} Now, back to ${topic || 'where we were'}.`;
+    const isDrill = x => /^what is inside /.test(x.q || '');
+    const about = x => isDrill(x) ? x.q : shortTopic(x.q) || 'that side question';
+    // side answers in between that already finished (a question asked inside them): name them too, innermost first
+    const via = []; for (let x = side && side.from; x && x !== t && via.length < 5; x = x.from) via.push(x);
+    const done = side ? (isDrill(side) ? `That is ${side.q}.` : 'That answers your question.') : 'That answers your question.';
+    const also = via.length ? ` That also finishes ${via.map(about).join(', and then ')}.` : '';
+    const line = `${done}${also} Now, back to ${topic || 'where we were'}.`;
     items.unshift({ say: line, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(line) : null });
-    showBackBanner(topic || 'where we were', p.say);
+    showBackBanner(topic || 'where we were', p.say, [side, ...via].filter(Boolean).map(about));
     const ids = [...t.drew].filter(id => objs.has(id)).slice(-6);
     if (ids.length) {
       const b = ids.map(id => bbOf(objs.get(id))).reduce((r, b) => ({ x: Math.min(r.x, b.x), y: Math.min(r.y, b.y), width: Math.max(r.x + r.width, b.x + b.width) - Math.min(r.x, b.x), height: Math.max(r.y + r.height, b.y + b.height) - Math.min(r.y, b.y) }));
@@ -1846,7 +1852,7 @@ function releaseHeld(t) {
   const ub = t.heldUser.el; ub.classList.remove('pending'); t.heldUser.wait.remove(); if (t.pulse) { t.pulse.remove(); t.pulse = null; }
   if (!ub.isConnected) msgBox.appendChild(ub);
   ub.after(t.el); scrollChat();
-  liveTurn = t; t.run.gen = gen;
+  t.from = liveTurn; liveTurn = t; t.run.gen = gen;     // from: the answer it was asked inside (for the way back)
   if (!t.streamDone) { abortCtl = t.abort; activeStreams++; t.counted = true; streaming = true; }
   const items = t.held; t.held = null;
   if (t.intro) items.unshift({ say: t.intro, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(t.intro) : null });
@@ -1876,9 +1882,10 @@ function shortTopic(q) {
   return /^(how|what|why|when|where)\b/i.test(s) ? s : `“${s}”`;
 }
 let bannerTimer = null;
-function showBackBanner(topic, at) {
+function showBackBanner(topic, at, closed = []) {
   const el = $('#backBanner'); if (!el || scrub) return;
-  el.innerHTML = ''; const a = document.createElement('b'); a.textContent = `↩ Back to ${topic.replace(/^“|”$/g, '')}`; el.appendChild(a);
+  el.innerHTML = ''; const a = document.createElement('b'); a.textContent = `↩ Back to ${topic.replace(/^“(.*)”$/, '$1')}`; el.appendChild(a);
+  if (closed.length) { const c = document.createElement('span'); c.textContent = `done: ${closed.join(' ← ')}`; el.appendChild(c); }
   if (at) { const s = document.createElement('span'); s.textContent = `continuing from “${at.length > 70 ? at.slice(0, 70) + '…' : at}”`; el.appendChild(s); }
   el.hidden = false; el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
   clearTimeout(bannerTimer); bannerTimer = setTimeout(() => { el.hidden = true; }, 5000);
@@ -2133,6 +2140,7 @@ HOW TO TEACH HERE: SHOW IT ON THE BOARD, EXPLAIN IT IN YOUR VOICE
 10. THE LEARNER IS TECHNICAL: show the real internals, not just named boxes. When an idea has data inside it, draw that data with real (illustrative) numbers and shapes: tokens → their ids → the embedding vectors (a matrix, rows = tokens, labelled with its shape like "4×8"); a layer → its weight matrix; attention → Q, K, V matrices, the Q·Kᵀ score matrix, the softmax rows, the weighted sum. Show each computation as it happens: the input matrix, the weight matrix, the result matrix side by side with "×" / "=" between them, highlight one row and one column and the cell they produce, and state the shapes ((4×8)·(8×8) = 4×8). Keep matrices small (3-6 rows/cols) so the numbers stay readable. The numbers are mock values for illustration: pick simple ones (one decimal, like 0.2, 1.0, -0.5) and write a plausible result; never work out exact products or softmaxes in your head, and do not spend your thinking on arithmetic. What must be right are the shapes and which row meets which column. Say once that the numbers are illustrative.
 11. LAYERED BOARD: the board is drawn in layers. The first layer is the big picture (the components and the flow). Give every component a specific label so it can be opened later. The learner double-clicks a drawing to open its next layer: when asked to "open up" something, build its insides in fresh space right next to it (a frame labelled with its name, joined to it by a dashed arrow "inside"), one level deeper, with the actual data, shapes and the computation it performs, step by step. Never repeat the big picture there; go down one level, and make the parts inside it specific enough to be opened again.
 12. Language: reply in the language of the learner's latest message; that is English unless that message is in Hinglish or asks for Hinglish (then Hinglish in Latin script). Board labels and the "next" questions follow the same language. Say when numbers are only illustrative.
+13. FRESH FACTS: when the learner's message carries WEB SEARCH CONTEXT or LINK CONTEXT, ground names, versions, numbers, dates and claims in it and prefer it over your memory when they disagree; say once, briefly, that you looked it up ("I checked the web: ..."). Put the key facts on the board (a small "from the web" note with the source's site name is fine). If it does not cover the question, say what is known and do not invent details. Without such context, if the question depends on something recent that you are unsure of, say that your knowledge may be out of date.
 
 EXAMPLE of the balance wanted (a different topic; notice every spoken line gives a reason, not just a name):
 {"plan":{"depth":"explain","why":"wants to know why a cache makes programs faster","pictures":"CPU, cache, disk icons with hit/miss arrows and their times; cache slots as tokens; update them to show eviction"}}
@@ -2326,8 +2334,33 @@ async function readLinksFirst(q, ub, status, signal) {
     ub.appendChild(note); scrollChat();
   } catch (e) { if (signal.aborted) throw e; dlog('links: read failed', String(e)); }
 }
+// Proactive web search: the server asks the model (at low reasoning) whether a search could help, leaning to yes;
+// if so it searches (Tavily, or DuckDuckGo) while the thinking line says so, and a note under the learner's message
+// says what was searched. Returns true when the answer should get the results. Best effort: failures just skip it.
+async function searchFirst(messages, model, ub, status, signal) {
+  if (settings.webSearch === false) return false;
+  const slim = messages.filter(m => m.role !== 'system').slice(-12).map(m => ({ role: m.role, content: Array.isArray(m.content) ? m.content.filter(p => p && p.type === 'text') : m.content }));
+  const post = step => fetch('/api/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal, body: JSON.stringify({ model, session: lesson.session, messages: slim, step }) }).then(r => r.ok ? r.json() : null);
+  try {
+    const t0 = Date.now(), plan = await post('plan');
+    dlog('web search plan:', plan ? `${plan.search ? 'search' : 'no search'} via ${plan.via || '-'} ${JSON.stringify(plan.queries || [])}` : 'failed', `${Date.now() - t0}ms`);
+    if (!plan || !plan.search || !(plan.queries || []).length) return false;
+    status(`🔎 Searching the web: “${plan.queries[0].slice(0, 60)}”…`);
+    const r = await post('run');
+    if (!r) return true;
+    const hits = (r.results || []).flatMap(x => x.hits || []);
+    const host = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+    dlog('web search:', (r.results || []).map(x => `“${x.q}” ${x.engine || ''} ${x.error ? 'failed: ' + x.error : (x.hits || []).length + ' results'}`).join(' | '), `${Date.now() - t0}ms`);
+    const note = document.createElement('span'); note.className = 'about linknote';
+    note.textContent = hits.length ? `🔎 searched the web: ${[...new Set(hits.map(h => host(h.url)).filter(Boolean))].slice(0, 3).join(', ')}${hits.length > 3 ? ` (${hits.length} results)` : ''}` : '🔎 searched the web: nothing useful found';
+    note.title = (r.results || []).map(x => `“${x.q}” (${x.engine || 'search'})\n${(x.hits || []).map(h => `• ${h.title}\n  ${h.url}`).join('\n')}`).join('\n\n');
+    ub.appendChild(note); scrollChat();
+    return hits.length > 0;
+  } catch (e) { if (signal.aborted) throw e; dlog('web search failed', String(e)); return false; }
+}
 async function sendQ(q, opts, opened) {
   if (!lesson) newSession();
+  const askedIn = liveTurn;                 // the answer this question was asked inside (named on the way back)
   if (opts.parallel) { /* the lesson keeps going; see releaseHeld */ }
   else if (opts.side) parkLive('question');
   else if (opts.steer && (streamingLive() || queueRunning) && !scrub) {
@@ -2352,7 +2385,7 @@ async function sendQ(q, opts, opened) {
   if (image) { const im = document.createElement('img'); im.src = image; im.className = 'thumb'; im.alt = 'your sketch'; ub.appendChild(im); }
   const am = { role: 'assistant', text: '', drew: [], meta: '' };
   if (!held) chat.push(am);
-  const turn = { msg: am, q: opts.topic || q, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36) };
+  const turn = { msg: am, q: opts.topic || q, from: held ? null : askedIn, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36) };
   const body = turn.el.querySelector('.body'); body.classList.add('thinking');
   // asked in the background: its lines are held (and its bubbles kept out of the chat) until it takes over
   if (held) {
@@ -2387,20 +2420,23 @@ async function sendQ(q, opts, opened) {
     const opts = { model, effort, run, turn, signal: myAbort.signal, onReasoning: n => { reasoningChars += n; } };
     // links in the question: the server reads them first (the answer then gets them from its cache)
     await readLinksFirst(q, ub, s => { linkStatus = s; showThinking(); }, myAbort.signal);
+    // could the web help? the server decides (leaning to yes) and searches; the answer then gets the results
+    const searched = await searchFirst(messages, model, ub, s => { linkStatus = s; showThinking(); }, myAbort.signal);
     linkStatus = ''; showThinking();
+    const first = { ...opts, search: searched };
     let r1;
     // a completely empty reply (no text, no thinking) is usually a provider hiccup: retry once quietly
-    try { r1 = await streamAnswer(messages, opts); }
+    try { r1 = await streamAnswer(messages, first); }
     catch (e) {
       if (myAbort.signal.aborted || turn.cmds) throw e;
-      if (e.code === 'empty') r1 = await streamAnswer(messages, opts);
+      if (e.code === 'empty') r1 = await streamAnswer(messages, first);
       else if (e.code === 'thinking_budget' && lowerEffort(model, effort)) {
         // it thought until the token limit without answering: try once more with the lowest reasoning level
         const low = lowerEffort(model, effort);
         dlog('thinking used the whole budget at', effort || 'auto', '· retrying at', low);
         if (turn.thinking) body.textContent = `✎ Thought too long, trying again with ${low} reasoning…`;
-        effort = low; opts.effort = low; reasoningChars = 0;
-        r1 = await streamAnswer(messages, opts);
+        effort = low; opts.effort = first.effort = low; reasoningChars = 0;
+        r1 = await streamAnswer(messages, first);
       } else throw e;
     }
     modelApplied = r1.model;
@@ -2463,7 +2499,7 @@ async function sendQ(q, opts, opened) {
 
 // One streamed Chat Completions call. Say lines and board commands are queued as each line completes.
 // fix = true: a tidy-up pass. Only board edits are taken (no talking, no clear, never the learner's ink), at most FIX_MAX.
-async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, fix = false }) {
+async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, fix = false, search = false }) {
   let fixes = 0;
   let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, reasoned = 0;
   let usage = null, firstT = 0;   // the provider's token count (last chunk) and when the reply started arriving
@@ -2530,7 +2566,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
 
   const res = await fetch('/api/chat', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
-    body: JSON.stringify({ model, effort, session: lesson.session, messages }),
+    body: JSON.stringify({ model, effort, session: lesson.session, messages, search: search || undefined }),
   });
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
@@ -2677,6 +2713,7 @@ $('#modelSearch').onkeydown = e => {
   }
 };
 $('#tidyChk').onchange = e => { settings.tidy = e.target.checked; saveSettings(); };
+$('#searchChk').onchange = e => { settings.webSearch = e.target.checked; saveSettings(); };
 $('#copyLogBtn').onclick = async () => {
   const info = [`Whiteboard Teacher debug log`, `browser: ${navigator.userAgent}`, `isolated: ${self.crossOriginIsolated}, cores: ${navigator.hardwareConcurrency}, webgpu: ${!!navigator.gpu}`,
     `model: ${settings.model} · ${currentEffort()} · voice: ${JSON.stringify(voiceCfg())} · voice status: ${JSON.stringify(Voice.status())} (${Voice.device() || '-'})`,
@@ -2693,7 +2730,7 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // narration settings
 // ======================================================================
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
-function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : v.mode ? 'kokoro' : 'off'; return { mode, voice: v.voice || 'af_bella', speed: v.speed || 1, engine: 'server', lastMode: 'kokoro' }; }
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_bella', speed: v.speed || 1, engine: 'server', lastMode: 'kokoro' }; }
 function applyVoice() {
   const v = voiceCfg();
   Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });
@@ -2945,6 +2982,7 @@ function mcpSetup() {
   const had = await loadAll();
   updateEmpty();
   $('#tidyChk').checked = settings.tidy !== false;
+  $('#searchChk').checked = settings.webSearch !== false;
   applyVoice(); updateTimeline();
   renderTitle(); renderChat(); applyCamera();
   if (MCP_MODE) mcpSetup(); else await loadModels();
