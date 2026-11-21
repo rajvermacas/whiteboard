@@ -67,6 +67,13 @@ button { font: inherit; cursor: pointer; }
 .msg.assistant { align-self: flex-start; background: #fff; border: 1px solid #e6e8eb; border-bottom-left-radius: 4px; }
 .msg.assistant .meta { display: block; font-size: 11px; color: #9aa1a9; margin-top: 4px; }
 .msg.assistant .thinking { color: #7d848c; font-style: italic; }
+.msg.assistant .teaching { display: block; margin-top: 4px; font-size: 12.5px; color: #1d6fb8; font-style: italic; }
+.msg.assistant .teaching.paused { color: #9aa1a9; }
+.msg.assistant .teaching i { font-style: normal; display: inline-block; animation: teachDot 1.2s ease-in-out infinite; }
+.msg.assistant .teaching i:nth-child(2) { animation-delay: .2s; }
+.msg.assistant .teaching i:nth-child(3) { animation-delay: .4s; }
+@keyframes teachDot { 0%, 60%, 100% { opacity: .2; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .msg.assistant .teaching i { animation: none; opacity: .7; } }
 .msg.error { align-self: stretch; background: #fdecea; color: #a1281e; border: 1px solid #f5c6c0; font-size: 13px; }
 .msg.system { align-self: center; background: none; color: #8a9199; font-size: 12px; text-align: center; }
 
@@ -76,6 +83,7 @@ button { font: inherit; cursor: pointer; }
 #selLine button { border: 1px solid #d0d5db; background: #fff; border-radius: 6px; padding: 2px 8px; font-size: 12px; }
 
 #chips { min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 12px; overflow-x: auto; flex: 0 0 auto; scrollbar-width: none; }
+#chips .chipWait { flex: 0 0 auto; color: #8a94a0; font-size: 12.5px; padding: 5px 4px; white-space: nowrap; animation: pendingPulse 1.4s ease-in-out infinite; }
 #chips button { flex: 0 0 auto; border: 1px solid #cfd8e3; background: #fff; color: #1d6fb8; border-radius: 999px; padding: 5px 11px; font-size: 12.5px; white-space: nowrap; }
 #chips button:hover { background: #eef5fc; }
 #chips button.primary { background: #1d6fb8; color: #fff; border-color: #1d6fb8; }

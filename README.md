@@ -53,7 +53,7 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
 - press ▶ to replay from there,
 - press **Live** to return to the current board.
 
-**Suggested questions.** Each answer ends with 3 follow-up questions about what was just drawn. They appear as chips above the input, next to *Quiz me on this* and *Hinglish mein samjhao*.
+**Suggested questions.** Every suggested question is written by the model for what is on the board right now; none are fixed. Each answer ends with 3 follow-up questions about what was just drawn. When you select a drawing (or several), sketch something yourself, open a named lesson before asking anything, or an answer came without follow-ups, a quick low-reasoning call writes them (*✨ suggesting questions…* shows meanwhile). They follow the language of your last message. Two buttons are actions rather than suggestions: *Open up “…”* (the same as double-clicking the drawing) and *Check my drawing* (sends your sketch).
 
 **Talk while it teaches.** You can send a message while an answer is still being drawn, for example "simpler please" or "wait, why 4×?". The teacher finishes the sentence it is on (voice and pen), drops the rest of that answer, and responds to you, knowing it was interrupted and where. **Stop** is a separate button.
 

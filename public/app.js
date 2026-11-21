@@ -1714,34 +1714,103 @@ function renderChat() {
   chat.forEach(bubble);
   renderChips();
 }
+// Suggested prompts are all written by the model for what is on the board right now; none are fixed. After an
+// answer they are the "next" questions it gave; otherwise (a drawing selected, several selected, a sketch of yours,
+// an empty board, an answer without them) a quick low-reasoning call writes them, cached per situation.
+const suggestCache = new Map(); let suggestTimer = null, suggestAbort = null;
 function renderChips() {
   const box = $('#chips'); box.textContent = '';
   const add = (label, q, primary) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (primary) b.className = 'primary'; b.onclick = () => (isPaused() && !scrub ? send(q || label, { side: true }) : send(q || label)); box.appendChild(b); };
   if (!lesson) { add('Choose a topic', null, true); box.lastChild.onclick = openTopic; return; }
   const ids = [...selection].filter(id => objs.has(id));
+  const dynamic = (kind, names) => {
+    const key = `${lesson.session}|${kind}|${names.join('|')}|${chat.length}`;
+    const got = suggestCache.get(key);
+    if (Array.isArray(got)) { got.forEach(q => add(q)); return; }
+    const w = document.createElement('span'); w.className = 'chipWait'; w.textContent = '✨ suggesting questions…'; box.appendChild(w);
+    if (got === 'pending') return;
+    clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(() => { suggestCache.set(key, 'pending'); writeSuggestions(kind, names, key); }, 350);   // not on every click
+  };
   if ([...inkSinceAsk].some(id => objs.has(id))) {
-    add('Check my drawing', 'Check my drawing.', true);
-    add('Turn my sketch into a clean diagram'); add('What is missing in my drawing?'); add('Mera drawing check karo (Hinglish)');
+    add('Check my drawing', 'Check my drawing.', true);   // sends your sketch to be checked
+    dynamic('sketch', [...objs.keys()].filter(id => !inkSinceAsk.has(id)).slice(-12).map(nameOf));
     return;
   }
   if (ids.length === 1) {
     const n = nameOf(ids[0]);
-    add(`Open up “${n}”`, drillQuestion(n), true); add(`What is “${n}”?`); add(`Why is “${n}” drawn like this?`); add(`Change “${n}” to another example`); add(`Hinglish mein samjhao: “${n}”`);
+    add(`Open up “${n}”`, drillQuestion(n), true);       // the same as double-clicking it
+    dynamic('one', [n]);
   } else if (ids.length > 1) {
-    add('How are these connected?'); add('Compare these'); add('Hinglish mein samjhao ye kaise jude hain');
+    dynamic('many', ids.slice(0, 8).map(nameOf));
   } else if (!chat.some(m => m.role === 'user')) {
-    if (!lesson.autoName) add(`Explain ${lesson.topic}`, `Explain ${lesson.topic}, starting from the big picture, with one concrete example.`, true);
+    if (!lesson.autoName) dynamic('start', [lesson.topic]);
   } else {
-    // follow-ups the teacher suggested for what it just drew; the generic ones otherwise
     const last = [...chat].reverse().find(m => m.role === 'assistant');
     const o = lesson.outline, more = o && o.done < o.parts.length;
     if (more) add(`Continue: ${o.done + 1}. ${o.parts[o.done]}`, `Continue the lesson with part ${o.done + 1}: ${o.parts[o.done]}.`, true);
-    if (last && last.next && last.next.length) { last.next.forEach((q, i) => add(q, null, i === 0 && !more)); add('Quiz me on this'); add('Hinglish mein samjhao'); }
-    else { add('Go one level deeper'); add('Show a worked example with numbers'); add('What is a common mistake?'); add('Summarise the board'); add('Quiz me on this'); add('Hinglish mein samjhao'); }
+    if (last && last.next && last.next.length) last.next.forEach((q, i) => add(q, null, i === 0 && !more));
+    else if (last && last.text && !streamingLive()) dynamic('after', []);
   }
+}
+async function writeSuggestions(kind, names, key) {
+  if (suggestAbort) suggestAbort.abort();
+  const ac = suggestAbort = new AbortController();
+  const L = lesson, model = settings.model || (models[0] && models[0].id);
+  const lastUser = [...chat].reverse().find(m => m.role === 'user'), lastA = [...chat].reverse().find(m => m.role === 'assistant' && m.text);
+  const labels = [...new Set([...objs.keys()].map(nameOf).filter(Boolean))].slice(-30);
+  const ask = {
+    one: `The learner selected the drawing “${names[0]}” on the board. Write questions about it: what it is, why it is there or works that way, what it connects to, an example or a "what if".`,
+    many: `The learner selected these drawings together: ${names.map(n => `“${n}”`).join(', ')}. Write questions about how they relate, compare or flow into each other.`,
+    sketch: `The learner just drew their own sketch on the board (near: ${names.map(n => `“${n}”`).join(', ') || 'an empty board'}). Write questions they could ask about their sketch: to check it, improve it, or find what is missing. Their sketch is attached when they ask.`,
+    start: `The lesson is called “${names[0]}” and nothing has been asked yet. Write good first questions to start it: the big picture, how it works inside, a concrete example.`,
+    after: 'Write the follow-up questions the learner would naturally ask next about what was just explained and drawn.',
+  }[kind];
+  const ctx = [`Lesson: ${L.topic || ''}`, lastUser ? `Learner last asked: ${String(lastUser.text).slice(0, 300)}` : '', lastA ? `Teacher last said: ${String(lastA.text).slice(-600)}` : '', labels.length ? `On the board: ${labels.join(', ')}` : ''].filter(Boolean).join('\n');
+  try {
+    const out = await quickText(model, L.session + '-suggest', [
+      { role: 'system', content: 'You write the suggested questions shown as buttons under a whiteboard lesson for a technical learner. Reply with only a JSON array of 3 questions, each at most 8 words, specific to this board (name its actual things), not generic ("tell me more"), and different from each other. Write them in the language of the learner\'s last message (English if there is none).' },
+      { role: 'user', content: `${ctx}\n\n${ask}` }], ac.signal);
+    const m = out.match(/\[[\s\S]*\]/); const list = m ? JSON.parse(m[0]) : [];
+    const qs = (Array.isArray(list) ? list : []).map(x => clip(String(x || '').trim(), 70)).filter(Boolean).slice(0, 4);
+    suggestCache.set(key, qs);
+    dlog('suggested', kind, JSON.stringify(qs));
+  } catch (e) { if (ac.signal.aborted) { suggestCache.delete(key); return; } suggestCache.set(key, []); dlog('suggestions failed', String(e)); }
+  if (suggestCache.size > 60) suggestCache.delete(suggestCache.keys().next().value);
+  if (lesson === L) renderChips();
+}
+// one short non-streamed answer from the model (titles, suggestions), read from the SSE stream
+async function quickText(model, session, messages, signal) {
+  const eff = defaultEffort(model);
+  const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal, body: JSON.stringify({ model, effort: eff === 'auto' ? null : eff, session, messages }) });
+  if (!res.ok || !res.body) throw new Error('http ' + res.status);
+  const reader = res.body.getReader(), dec = new TextDecoder(); let sse = '', out = '';
+  for (;;) {
+    const { done, value } = await reader.read(); if (done) break;
+    sse += dec.decode(value, { stream: true }); let nl;
+    while ((nl = sse.indexOf('\n')) >= 0) {
+      const ln = sse.slice(0, nl).trim(); sse = sse.slice(nl + 1);
+      if (!ln.startsWith('data:')) continue; const d = ln.slice(5).trim(); if (!d || d === '[DONE]') continue;
+      try { const j = JSON.parse(d), c = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content; if (typeof c === 'string') out += c; } catch {}
+    }
+  }
+  return out;
+}
+// "teaching…" at the end of the live answer, with animated dots, for as long as the teacher is working (while Stop
+// shows). Not while it is still thinking (that line has its own timer) and it says "paused" while paused.
+const teachEl = document.createElement('span'); teachEl.className = 'teaching'; teachEl.setAttribute('aria-hidden', 'true');
+function renderTeaching(working = liveWorking(), paused = isPaused()) {
+  const t = liveTurn, host = t && !t.held && t.el && t.el.isConnected ? t.el : null;
+  if (!working || scrub || !host || t.thinking) { teachEl.remove(); return; }
+  const label = paused ? 'paused' : 'teaching';
+  if (teachEl.dataset.label !== label) { teachEl.dataset.label = label; teachEl.innerHTML = paused ? 'paused' : 'teaching<i>.</i><i>.</i><i>.</i>'; }
+  teachEl.classList.toggle('paused', paused);
+  const meta = host.querySelector('.meta');
+  if (teachEl.parentNode !== host || teachEl.nextSibling !== meta) { host.insertBefore(teachEl, meta); scrollChat(); }
 }
 function updateSendBtn() {
   const working = liveWorking(), p = isPaused();
+  renderTeaching(working, p);
   const pb = $('#pauseBtn');
   if (scrub) {
     // a scrubbed lesson: this button stops its playback, the same as the timeline's ⏸
@@ -1947,7 +2016,7 @@ function typeInto(turn, text, cps) {
   if (turn.typing) return;
   turn.typing = true; typers.add(turn); updateSendBtn();
   const body = turn.el.querySelector('.body');
-  if (turn.thinking) { body.textContent = ''; body.classList.remove('thinking'); turn.thinking = false; }
+  if (turn.thinking) { body.textContent = ''; body.classList.remove('thinking'); turn.thinking = false; renderTeaching(); }
   let acc = 0;
   const tick = () => {
     if (!turn.pendingType) { turn.typing = false; typers.delete(turn); updateSendBtn(); return; }
@@ -2023,7 +2092,7 @@ async function runQueue() {
     }
     const run = it.run;
     dlog('draw', it.cmd.cmd, it.cmd.id || '', run.gen === gen ? '' : '(stale run)');
-    if (it.turn.thinking) { const bd = it.turn.el.querySelector('.body'); bd.classList.remove('thinking'); bd.textContent = ''; it.turn.thinking = false; }
+    if (it.turn.thinking) { const bd = it.turn.el.querySelector('.body'); bd.classList.remove('thinking'); bd.textContent = ''; it.turn.thinking = false; renderTeaching(); }
     const before = it.cmd.id;
     queueBusy = true;
     const nextSay = queue.findIndex(x => x.say != null);
@@ -2791,21 +2860,9 @@ async function nameSession(q, model) {
   const L = lesson; if (!L || !L.autoName || L.naming) return;
   L.naming = true;
   try {
-    const eff = defaultEffort(model);
-    const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, effort: eff === 'auto' ? null : eff, session: L.session + '-title', messages: [
+    const out = await quickText(model, L.session + '-title', [
       { role: 'system', content: 'You name whiteboard lessons. Reply with only a short title of 2-5 words for a lesson that starts with the learner question below: the subject, in Title Case, in the language of the question, no quotes, no trailing punctuation.' },
-      { role: 'user', content: q.slice(0, 800) }] }) });
-    if (!res.ok || !res.body) throw new Error('http ' + res.status);
-    const reader = res.body.getReader(), dec = new TextDecoder(); let sse = '', out = '';
-    for (;;) {
-      const { done, value } = await reader.read(); if (done) break;
-      sse += dec.decode(value, { stream: true }); let nl;
-      while ((nl = sse.indexOf('\n')) >= 0) {
-        const ln = sse.slice(0, nl).trim(); sse = sse.slice(nl + 1);
-        if (!ln.startsWith('data:')) continue; const d = ln.slice(5).trim(); if (!d || d === '[DONE]') continue;
-        try { const j = JSON.parse(d), c = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content; if (typeof c === 'string') out += c; } catch {}
-      }
-    }
+      { role: 'user', content: q.slice(0, 800) }]);
     const title = (out.split('\n').map(x => x.trim()).find(Boolean) || '').replace(/^(title|name)\s*:\s*/i, '').replace(/^["'“”*#\s]+|["'“”*.\s]+$/g, '').slice(0, 60);
     if (title && lesson === L && L.autoName) { L.topic = title; L.autoName = false; renderTitle(); saveSoon(); dlog('session named', JSON.stringify(title)); }
   } catch (e) { dlog('naming the session failed', String(e)); }
