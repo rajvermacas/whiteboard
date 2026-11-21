@@ -53,6 +53,10 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
 - press ▶ to replay from there,
 - press **Live** to return to the current board.
 
+**Asking while the teacher teaches.** Press **Enter** (or Send) to ask on the side: the question goes to the model at once in its own request, the lesson keeps going, and when the answer is ready the teacher finishes its sentence, says "You asked: …", teaches it, then says "Now, back to …" and carries on where it stopped. Questions inside side answers nest and unwind in order. Press **⌘↵** (Mac) / **Ctrl+↵** (Windows), or ↪ Steer, to steer instead: the teacher finishes its sentence, drops the rest of that answer and answers with your message taken in. While paused, a question is answered at once and the lesson comes back after it.
+
+**Prompt caching.** The long system prompt is the same for every call; what changes (the board, the lesson outline, the selection) goes at the start of the latest message. Providers that cache by prompt prefix (GLM on OpenGateway, for example) then reuse the system prompt and chat history across an answer, its side questions and follow-ups: a side question measured 4,096 of 4,596 prompt tokens cached.
+
 **Suggested questions.** Every suggested question is written by the model for what is on the board right now; none are fixed. Each answer ends with 3 follow-up questions about what was just drawn. When you select a drawing (or several), sketch something yourself, open a named lesson before asking anything, or an answer came without follow-ups, a quick low-reasoning call writes them (*✨ suggesting questions…* shows meanwhile). They follow the language of your last message. Two buttons are actions rather than suggestions: *Open up “…”* (the same as double-clicking the drawing) and *Check my drawing* (sends your sketch).
 
 **Talk while it teaches.** You can send a message while an answer is still being drawn, for example "simpler please" or "wait, why 4×?". The teacher finishes the sentence it is on (voice and pen), drops the rest of that answer, and responds to you, knowing it was interrupted and where. **Stop** is a separate button.

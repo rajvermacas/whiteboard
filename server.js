@@ -264,7 +264,8 @@ function upstreamFor(model, session) {
 // latest information; only then does it search. If that call fails or is slow, keyword rules decide. The results go to the teacher as marked,
 // untrusted context. WEB_SEARCH=off turns it off; Tavily is used when TAVILY_API_KEY is set, DuckDuckGo otherwise.
 const searchOn = () => links.enabled() && !/^(0|off|false|no)$/i.test(process.env.WEB_SEARCH || '');
-const lastUserText = msgs => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === 'user') return textOf(msgs[i].content); return ''; };
+// the learner's own words (without the BOARD NOW state the app puts in front of them)
+const lastUserText = msgs => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === 'user') return textOf(msgs[i].content).replace(/^BOARD NOW[\s\S]*?END OF BOARD NOW\s*/, ''); return ''; };
 const today = () => new Date().toISOString().slice(0, 10);
 const PLANNER = () => `You decide whether to run a web search before a teacher answers a learner. Today is ${today()}. Most questions do not need one: search only when a good answer needs current or latest information that may be newer than your training or may have changed since:
 - the latest, newest, current or recent state of something: news, releases, versions, prices, availability, benchmarks, leaderboards, rankings, who leads or owns what
@@ -367,9 +368,10 @@ const textOf = c => Array.isArray(c) ? c.filter(p => p.type === 'text').map(p =>
 async function addLinkContext(msgs) {
   if (!links.enabled()) return;
   let i = msgs.length - 1; while (i >= 0 && msgs[i].role !== 'user') i--;
-  if (i < 0 || !links.findURLs(textOf(msgs[i].content)).length) return;
+  const own = i < 0 ? '' : textOf(msgs[i].content).replace(/^BOARD NOW[\s\S]*?END OF BOARD NOW\s*/, '');
+  if (i < 0 || !links.findURLs(own).length) return;
   let block = '';
-  try { block = links.contextBlock(await links.readLinks(textOf(msgs[i].content))); } catch (e) { console.warn('link context failed:', e.message); }
+  try { block = links.contextBlock(await links.readLinks(own)); } catch (e) { console.warn('link context failed:', e.message); }
   if (!block) return;
   const m = msgs[i];
   m.content = Array.isArray(m.content) ? [...m.content, { type: 'text', text: '\n\n' + block }] : m.content + '\n\n' + block;

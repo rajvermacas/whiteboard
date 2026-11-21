@@ -1720,7 +1720,7 @@ function renderChat() {
 const suggestCache = new Map(); let suggestTimer = null, suggestAbort = null;
 function renderChips() {
   const box = $('#chips'); box.textContent = '';
-  const add = (label, q, primary) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (primary) b.className = 'primary'; b.onclick = () => (isPaused() && !scrub ? send(q || label, { side: true }) : send(q || label)); box.appendChild(b); };
+  const add = (label, q, primary) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (primary) b.className = 'primary'; b.onclick = () => ask(q || label); box.appendChild(b); };
   if (!lesson) { add('Choose a topic', null, true); box.lastChild.onclick = openTopic; return; }
   const ids = [...selection].filter(id => objs.has(id));
   const dynamic = (kind, names) => {
@@ -1824,8 +1824,11 @@ function updateSendBtn() {
   syncPlayButton();
   // while the teacher works you can still send: the message steers the answer (Stop is its own button)
   $('#stopBtn').hidden = !working;
-  sendBtn.title = working ? 'Send now: the teacher finishes its sentence, then takes your message into account' : '';
-  input.placeholder = p ? 'Ask about it while paused… (▶ to resume)' : working ? 'Add something while the teacher answers…' : (inkSinceAsk.size && !penMode ? input.placeholder : 'Ask the teacher…');
+  const teaching = working && !p && !scrub;
+  $('#steerBtn').hidden = !teaching;
+  $('#steerBtn').title = `Steer the lesson (${STEER_KEY}): the teacher finishes its sentence, drops the rest of this answer and takes your message in`;
+  sendBtn.title = teaching ? 'Ask on the side (↵): answered in parallel, the lesson goes on, then comes back to where it was' : '';
+  input.placeholder = p ? 'Ask about it while paused… (▶ to resume)' : teaching ? `↵ ask on the side · ${STEER_KEY} steer the lesson` : (inkSinceAsk.size && !penMode ? input.placeholder : 'Ask the teacher…');
 }
 $('#stopBtn').onclick = () => stopAll();
 $('#pauseBtn').onclick = () => { if (scrub) { if (scrub.playing) stopPlayback(); return; } setPaused(!isPaused()); };
@@ -1945,7 +1948,7 @@ function renderPendingPill() {
   const el = $('#pendingPill'); if (!el) return;
   const n = pendingHeld.size, first = [...pendingHeld][0];
   el.hidden = !n;
-  if (n) el.textContent = `⏳ Opening up ${first.q.replace(/^what is inside /, '')}${n > 1 ? ` (+${n - 1})` : ''} … the lesson goes on meanwhile`;
+  if (n) el.textContent = `⏳ ${/^what is inside /.test(first.q) ? 'Opening up ' + first.q.replace(/^what is inside /, '') : `Answering “${clip(first.q, 50)}”`}${n > 1 ? ` (+${n - 1})` : ''} … the lesson goes on meanwhile`;
 }
 // "how attention works" from "Explain how attention works, with an example." (the parent's own question)
 function shortTopic(q) {
@@ -1990,7 +1993,16 @@ function scheduleAutoBack() {
 }
 // Clicking the board puts the cursor in the chat box, so the next keys type a question. Buttons, sliders and fields keep their own focus.
 $('#boardWrap').addEventListener('click', e => { if (!e.target.closest('button,input,select,textarea,a,label')) input.focus({ preventScroll: true }); });
-input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#composer').requestSubmit(); } });
+// While the teacher is teaching: Enter (or Send) asks on the side (a fork: answered in parallel, the lesson goes on and
+// comes back after it); ⌘/Ctrl+Enter (or ↪ Steer) steers the lesson (it stops after its sentence and takes the message in).
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const STEER_KEY = IS_MAC ? '⌘↵' : 'Ctrl+↵';
+let submitMode = 'fork';
+input.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+  e.preventDefault(); submitMode = (e.metaKey || e.ctrlKey) ? 'steer' : 'fork'; $('#composer').requestSubmit();
+});
+$('#steerBtn').onclick = () => { submitMode = 'steer'; $('#composer').requestSubmit(); };
 input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(120, input.scrollHeight) + 'px'; });
 $('#composer').addEventListener('submit', e => {
   e.preventDefault();
@@ -1998,9 +2010,18 @@ $('#composer').addEventListener('submit', e => {
   if (!q && [...inkSinceAsk].some(id => objs.has(id))) q = 'Check my drawing.';
   if (!q) return;
   input.value = ''; input.style.height = 'auto';
-  if (isPaused() && !scrub) send(q, { side: true });
-  else send(q, { steer: !scrub && (streamingLive() || queueRunning) });
+  const mode = submitMode; submitMode = 'fork';
+  ask(q, mode);
 });
+// one place that decides how a question goes in: while paused it is a side question (answered now, then back);
+// while teaching it forks in the background (default) or steers (⌘/Ctrl+Enter); otherwise it is a new question
+function ask(q, mode = 'fork') {
+  if (isPaused() && !scrub) return send(q, { side: true });
+  const teaching = !scrub && (streamingLive() || queueRunning);
+  if (teaching && mode === 'steer') return send(q, { steer: true });
+  if (teaching && liveTurn) return send(q, { parallel: true, aside: true, topic: q, intro: `You asked: “${clip(q, 90)}”.` });
+  return send(q);
+}
 $('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(); chat = []; renderChat(); saveSoon(); };
 $('#selAsk').onclick = () => input.focus();
 $('#selErase').onclick = () => { if (!scrub) learnerErase([...selection]); };
@@ -2153,14 +2174,12 @@ function boardSummary() {
   }
   return lines.join('\n');
 }
-function systemPrompt(selIds) {
+function systemPrompt() {
   return `You are a great teacher at a whiteboard. The board SHOWS the idea (pictures, not text); your voice EXPLAINS it: the reasoning, the why, the cause and effect, while the pen draws. A learner should come away actually understanding, not just having seen a diagram.
 
-Session name: "${lesson.topic}" (just a label for this whiteboard; teach whatever the learner asks, on any subject).
-
 BOARD (infinite; units are board units; x grows right, y grows down)
-${boardSummary()}
-${outlinePrompt()}${selIds.length ? `\nTHE LEARNER SELECTED: ${selIds.map(id => `${id} (${nameOf(id)})`).join(', ')}. Work on these directly: update them, build next to them, point at them.\n` : ''}
+What is on the board right now (every drawing, where it is), the lesson in progress and what the learner selected come at the start of the learner's latest message, under "BOARD NOW". Always work from the latest BOARD NOW; older messages describe older boards.
+
 OUTPUT: JSON Lines only, one object per line, nothing else (no markdown, no code fences, no prose outside JSON).
 Spoken line: {"say":"one short sentence"}   It is spoken while the drawing commands right after it are drawn, so it must explain exactly those.
 Board commands (each line has "cmd"). Place things with "near" instead of guessing coordinates: "near":{"of":"<id>","side":"right|left|below|above","gap":70}. Give x,y only for the very first object of a new area (use the free space listed above).
@@ -2240,14 +2259,25 @@ EXAMPLE of the balance wanted (a different topic; notice every spoken line gives
 {"say":"So a cache is a bet on reuse: win it often, and slow storage feels fast."}
 {"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}`;
 }
-function buildMessages(question, selIds, inkIds = [], image = null, steer = false) {
-  const msgs = [{ role: 'system', content: systemPrompt(selIds) }];
+// The parts of the prompt that change between calls (board, outline, selection, session name) go at the start of the
+// latest user message, not in the system prompt: providers cache a prompt by its unchanged beginning, so the long
+// system prompt and the chat history stay cached across the answer, its side questions and its follow-ups.
+function boardNow(selIds = []) {
+  return `BOARD NOW (session "${lesson.topic}": just a label for this whiteboard; teach whatever the learner asks)
+${boardSummary()}
+${outlinePrompt()}${selIds.length ? `\nTHE LEARNER SELECTED: ${selIds.map(id => `${id} (${nameOf(id)})`).join(', ')}. Work on these directly: update them, build next to them, point at them.\n` : ''}
+END OF BOARD NOW
+
+`;
+}
+function buildMessages(question, selIds, inkIds = [], image = null, steer = false, aside = false) {
+  const msgs = [{ role: 'system', content: systemPrompt() }];
   const hist = chat.filter(m => m.role === 'user' || m.role === 'assistant').slice(-8);
   for (const m of hist) {
     if (m.role === 'user') msgs.push({ role: 'user', content: (m.about && m.about.length ? `[About the selected drawings: ${m.about.join(', ')}] ` : '') + (m.sketch ? `[With my sketch: ${m.sketch.join(', ')}] ` : '') + m.text });
     else msgs.push({ role: 'assistant', content: (m.text || '(drew only)') + (m.interrupted ? '\n(The learner interrupted me here with their next message.)' : '') + (m.drew && m.drew.length ? `\n(On the board I drew or changed: ${m.drew.join(', ')})` : '') });
   }
-  const text = (steer ? '[I sent this while you were still answering, so you stopped after your current sentence. Take it into account now: answer or adjust as it asks, then carry on with whatever part of your previous answer still matters, without repeating what is already on the board.] ' : '') + (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + (inkIds.length ? `[I drew a sketch on the board (${inkIds.join(', ')}). ${image ? 'A picture of it, with the drawings around it, is attached: work out what it shows from the picture.' : 'Its strokes are listed in the board summary.'}] ` : '') + question;
+  const text = boardNow(selIds) + (aside ? '[I asked this on the side while you were teaching. Answer just this question, building in free space next to what it is about; your earlier explanation continues by itself afterwards, so do not continue or repeat it here.] ' : '') + (steer ? '[I sent this while you were still answering, so you stopped after your current sentence. Take it into account now: answer or adjust as it asks, then carry on with whatever part of your previous answer still matters, without repeating what is already on the board.] ' : '') + (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + (inkIds.length ? `[I drew a sketch on the board (${inkIds.join(', ')}). ${image ? 'A picture of it, with the drawings around it, is attached: work out what it shows from the picture.' : 'Its strokes are listed in the board summary.'}] ` : '') + question;
   msgs.push({ role: 'user', content: image ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }] : text });
   return msgs;
 }
@@ -2310,7 +2340,7 @@ async function tidyPass({ question, answer, model, run, turn, signal }) {
   let image = null;
   if (vm && region) { try { image = await boardImage(region); } catch (e) { dlog('tidy: picture failed', String(e)); } }
   const r = n => Math.round(n);
-  const text = `REVIEW YOUR BOARD. ${image ? `The attached picture shows what you just drew (board area x ${r(region.x)}..${r(region.x + region.width)}, y ${r(region.y)}..${r(region.y + region.height)}). Look at it the way the learner sees it.` : 'You cannot see a picture this time: use the checks below and the object list.'}
+  const text = boardNow() + `REVIEW YOUR BOARD. ${image ? `The attached picture shows what you just drew (board area x ${r(region.x)}..${r(region.x + region.width)}, y ${r(region.y)}..${r(region.y + region.height)}). Look at it the way the learner sees it.` : 'You cannot see a picture this time: use the checks below and the object list.'}
 Objects you drew in this answer: ${ids.join(', ')}.
 Automatic checks found:
 ${issues.length ? issues.map(s => '- ' + s).join('\n') : '- nothing obvious'}
@@ -2324,7 +2354,7 @@ Reply with JSON Lines of fix commands only:
 At most ${FIX_MAX} lines. No say lines, no plan, no write, no clear. Never touch ink objects (the learner's sketches). Leave what is fine alone.
 If the board already looks clear, reply with exactly {"ok":true}`;
   const msgs = [
-    { role: 'system', content: systemPrompt([]) },
+    { role: 'system', content: systemPrompt() },
     { role: 'user', content: question },
     { role: 'assistant', content: answer.slice(0, 6000) || '(drew only)' },
     { role: 'user', content: image ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }] : text },
@@ -2452,7 +2482,7 @@ async function sendQ(q, opts, opened) {
   let image = null;
   if (inkIds.length) { try { const reg = inkRegion(inkIds); if (reg) image = await boardImage(reg); } catch (e) { console.warn('sketch image failed', e); } }
   inkSinceAsk.clear(); $('#attach').hidden = true; input.placeholder = 'Ask the teacher…';
-  const messages = buildMessages(q, selIds, inkIds, image, !!opts.steer);
+  const messages = buildMessages(q, selIds, inkIds, image, !!opts.steer, !!opts.aside);
   const userMsg = { role: 'user', text: q, about: selIds.map(nameOf), sketch: inkIds.length ? inkIds : undefined, steer: opts.steer || undefined };
   const held = !!opts.parallel;
   if (!held) chat.push(userMsg);
@@ -2466,7 +2496,7 @@ async function sendQ(q, opts, opened) {
   if (held) {
     // the question shows at once, marked as waiting; the answer's bubble appears when it takes over
     turn.el.remove(); ub.classList.add('pending');
-    const w = document.createElement('span'); w.className = 'wait'; w.textContent = '⏳ Opening it up… the lesson goes on until it is ready'; ub.appendChild(w);
+    const w = document.createElement('span'); w.className = 'wait'; w.textContent = opts.aside ? '⏳ Answering on the side… the lesson goes on until it is ready' : '⏳ Opening it up… the lesson goes on until it is ready'; ub.appendChild(w);
     turn.held = []; turn.heldUser = { msg: userMsg, el: ub, wait: w }; turn.intro = opts.intro; turn.pulse = opts.pulse || null;
     pendingHeld.add(turn); renderPendingPill();
   }
@@ -2523,7 +2553,7 @@ async function sendQ(q, opts, opened) {
       if (turn.thinking) { body.textContent = '✎ Drawing…'; }
       const follow = messages.concat(
         { role: 'assistant', content: r1.content.slice(0, 6000) || '(no answer)' },
-        { role: 'user', content: 'That was too wordy for a whiteboard. Now SHOW it: add 10-25 drawing commands (icons, tokens, boxes, arrows, frames, braces, schedule, graph…) laid out with "near" next to what is already on the board. Labels of 1-4 words, no write sentences, at most one short say line. Do not repeat what you already said.' });
+        { role: 'user', content: boardNow() + 'That was too wordy for a whiteboard. Now SHOW it: add 10-25 drawing commands (icons, tokens, boxes, arrows, frames, braces, schedule, graph…) laid out with "near" next to what is already on the board. Labels of 1-4 words, no write sentences, at most one short say line. Do not repeat what you already said.' });
       const r2 = await streamAnswer(follow, opts);
       modelApplied = r2.model || modelApplied;
       answer += '\n' + r2.content;
