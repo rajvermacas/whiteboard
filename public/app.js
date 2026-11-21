@@ -1247,7 +1247,9 @@ document.addEventListener('keydown', e => {
     $('#modelPop').hidden = true;
     return;
   }
-  if (!typing && (e.key === 'Delete' || e.key === 'Backspace') && selection.size && !scrub) { e.preventDefault(); learnerErase([...selection]); }
+  // Delete erases the selected drawing; with the chat box focused and empty only Delete does, so Backspace keeps editing text
+  const inChat = document.activeElement === input;
+  if ((!typing || (inChat && e.key === 'Delete' && !input.value)) && (e.key === 'Delete' || e.key === 'Backspace') && selection.size && !scrub) { e.preventDefault(); learnerErase([...selection]); }
   if (!typing && !e.metaKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && navSteps().length) { e.preventDefault(); stepBy(e.key === 'ArrowLeft' ? -1 : 1); }
 });
 
@@ -1279,10 +1281,12 @@ document.addEventListener('fullscreenchange', () => { if (!document.fullscreenEl
 new ResizeObserver(() => applyCamera()).observe(svg);
 
 async function replay() {
-  const nav = navSteps(); if (!nav.length || liveBusy()) return;
+  const nav = navSteps(); if (!nav.length) return;
+  if (liveBusy()) parkLive();
   Voice.unlock();
-  await showStep(nav[0], true);
-  playFrom(nav[0], true);
+  // playFrom shows the first step itself, after it has set the play button to ⏸
+  enterScrub();
+  playFrom(nav[0]);
 }
 // The drawing goes with the next question; the learner can type one, or send nothing and get it checked.
 async function showAttach(focus) {
@@ -1378,7 +1382,10 @@ function enterScrub() {
 function exitScrub(keepCamera = false) {
   if (!scrub) return;
   const live = scrub.live; scrub = null;
-  stopAll(); resetBoard();
+  // an answer set aside to look back keeps going (Continue in the bar picks it up); anything else is stopped
+  if (parked) { gen++; Voice.stop(); narrationDone = Promise.resolve(); updateSendBtn(); }
+  else stopAll();
+  resetBoard();
   for (const c of live.objs) { const cc = cloneCmd(c); cc._placed = true; drawObject(cc, { gen }, false); }
   if (!keepCamera) { camera = { ...live.camera }; applyCamera(); }
   document.body.classList.remove('scrubbing');
@@ -1413,31 +1420,51 @@ async function showStep(i, animate) {
   }
   replaying = false; updateSendBtn();
 }
+// Play from step i to the last step (then back to live), until stopped. Each run has an id: a newer play or step
+// takes over, and an older run that is still waiting stops itself.
 async function playFrom(i, fromReplay = false) {
   if (!scrub) return;
+  const id = scrub.playId = (scrub.playId || 0) + 1;
+  const playing = () => scrub && scrub.playId === id && scrub.playing;
   scrub.playing = true; updateTimeline();
   const nav = navSteps();
   let k = nav.indexOf(i); if (k < 0) k = 0;
   if (!fromReplay) await showStep(nav[k], true);
-  while (scrub && scrub.playing && k + 1 < nav.length) {
+  while (playing() && k + 1 < nav.length) {
     k++;
     // apply 'you' steps between teacher steps instantly, then animate the next teacher step
     await showStep(nav[k], true);
   }
-  if (scrub && scrub.playing) { await sleep(600); if (scrub && scrub.playing && k === nav.length - 1) exitScrub(true); }
-  if (scrub) { scrub.playing = false; updateTimeline(); }
+  if (playing()) { await sleep(600); if (playing() && k === nav.length - 1) exitScrub(true); }
+  if (scrub && scrub.playId === id) { scrub.playing = false; updateTimeline(); }
 }
-const liveBusy = () => streaming || (queueRunning && !scrub);
+// stop playback where it is (the board stays on the current step)
+function stopPlayback() {
+  if (!scrub) return;
+  scrub.playing = false; scrub.playId = (scrub.playId || 0) + 1;
+  gen++; Voice.stop(); narrationDone = Promise.resolve();
+  updateTimeline();
+}
+// the live answer is busy: its text is still streaming (a set-aside answer does not count) or its drawing is still running
+const liveBusy = () => streamingLive() || (queueRunning && !scrub);
+// ‹ / › (and ←/→): go to the previous or next step and play on from there to the last step, until paused
 function stepBy(d) {
-  const nav = navSteps(); if (!nav.length || liveBusy()) return;
-  if (scrub) scrub.playing = false;
+  const nav = navSteps(); if (!nav.length) return;
   Voice.unlock();
-  if (!scrub) { if (d < 0) showStep(nav[nav.length - 1], true); return; }
+  if (!scrub) {
+    if (d > 0) return;   // the live end is already here
+    // going back while the teacher is answering (or paused) sets that answer aside, as a question does; Continue picks it up
+    if (liveBusy()) parkLive();
+    // the live board is at the newest step, so "previous" is the step before it
+    enterScrub();
+    playFrom(nav[Math.max(0, nav.length - 2)]);
+    return;
+  }
   const k = nav.indexOf(scrub.i);
   const nk = k + d;
   if (nk >= nav.length) { exitScrub(true); return; }
   if (nk < 0) return;
-  showStep(nav[nk], true);
+  playFrom(nav[nk]);
 }
 function showCaption(text) {
   const c = $('#caption');
@@ -1453,25 +1480,46 @@ function updateTimeline() {
   if (document.activeElement !== range) range.value = String(k);
   $('#tlLabel').textContent = scrub ? `Step ${k + 1} / ${nav.length} · answer ${answerNo(scrub.i)}` : `${nav.length} step${nav.length === 1 ? '' : 's'} · live`;
   $('#tlLive').hidden = !scrub;
-  $('#tlPlay').textContent = scrub && scrub.playing ? '⏸' : '▶';
-  $('#tlPlay').title = scrub && scrub.playing ? 'Pause' : 'Play the lesson from this step, with narration';
+  updateSendBtn();   // the chat's pause button and the timeline's ▶/⏸ follow the same state
+}
+// the lesson is working: streaming, drawing, typing or narrating
+function liveWorking() { return streamingLive() || queueRunning || replaying || typers.size > 0 || Voice.speaking(); }
+// The timeline's ▶/⏸ follows the same state as the chat's pause button: while the lesson runs it shows ⏸ (pauses it),
+// while paused it shows ▶ (resumes it). A scrubbed lesson shows ⏸ while it plays from the step to the end.
+function syncPlayButton() {
+  const p = isPaused(), playing = scrub ? !!scrub.playing : liveWorking() && !p;
+  const b = $('#tlPlay');
+  b.textContent = playing ? '⏸' : '▶';
+  b.title = playing ? 'Pause' : parked ? 'Continue the answer where it was left off' : p ? 'Resume the lesson' : scrub ? 'Play from this step to the end, with narration' : 'Play the lesson from the start, with narration';
 }
 $('#tlPrev').onclick = () => stepBy(-1);
 $('#tlNext').onclick = () => stepBy(1);
 $('#tlLive').onclick = () => exitScrub();
 $('#tlPlay').onclick = () => {
   Voice.unlock();
+  if (scrub && scrub.playing) { stopPlayback(); return; }
   const nav = navSteps(); if (!nav.length) return;
-  if (scrub && scrub.playing) { stopAll(); scrub.playing = false; updateTimeline(); return; }
-  if (!scrub) { replay(); return; }
+  const atEnd = !scrub || nav.indexOf(scrub.i) === nav.length - 1;
+  // an answer that is set aside (paused, or a question came in while it was paused) continues where it left off
+  if (parked && atEnd) { if (scrub) exitScrub(true); continueParked(); return; }
+  if (!scrub) {
+    // the live lesson: the same as the chat's pause button
+    if (isPaused()) { setPaused(false); return; }
+    if (liveWorking()) { setPaused(true); return; }
+    replay();   // a completed answer: play it from the beginning
+    return;
+  }
+  // at the last step of a completed answer: play it again from the beginning; otherwise from this step to the end
+  if (atEnd) { replay(); return; }
   playFrom(scrub.i);
 };
 let rangeTimer = null;
 $('#tlRange').addEventListener('input', e => {
   const nav = navSteps(), k = Number(e.target.value);
   clearTimeout(rangeTimer);
-  if (liveBusy()) return;
-  if (scrub) scrub.playing = false;
+  // dragging back from the live end sets the busy answer aside, like the step buttons do
+  if (!scrub && liveBusy()) { if (k >= nav.length - 1) return; parkLive(); }
+  stopPlayback();
   rangeTimer = setTimeout(() => showStep(nav[k], false), 40);
 });
 
@@ -1665,17 +1713,24 @@ function renderChips() {
   }
 }
 function updateSendBtn() {
-  const working = streamingLive() || queueRunning || replaying || typers.size > 0 || Voice.speaking(), p = isPaused();
-  const pb = $('#pauseBtn'); pb.hidden = !working && !p; pb.textContent = p ? '▶' : '⏸'; pb.classList.toggle('on', p);
-  pb.title = p ? 'Resume the lesson' : 'Pause the lesson (you can ask something while paused)';
+  const working = liveWorking(), p = isPaused();
+  const pb = $('#pauseBtn');
+  if (scrub) {
+    // a scrubbed lesson: this button stops its playback, the same as the timeline's ⏸
+    pb.hidden = !scrub.playing; pb.textContent = '⏸'; pb.classList.remove('on'); pb.title = 'Stop the playback';
+  } else {
+    pb.hidden = !working && !p; pb.textContent = p ? '▶' : '⏸'; pb.classList.toggle('on', p);
+    pb.title = p ? 'Resume the lesson' : 'Pause the lesson (you can ask something while paused)';
+  }
   renderResumeBar();
+  syncPlayButton();
   // while the teacher works you can still send: the message steers the answer (Stop is its own button)
   $('#stopBtn').hidden = !working;
   sendBtn.title = working ? 'Send now: the teacher finishes its sentence, then takes your message into account' : '';
   input.placeholder = p ? 'Ask about it while paused… (▶ to resume)' : working ? 'Add something while the teacher answers…' : (inkSinceAsk.size && !penMode ? input.placeholder : 'Ask the teacher…');
 }
 $('#stopBtn').onclick = () => stopAll();
-$('#pauseBtn').onclick = () => setPaused(!isPaused());
+$('#pauseBtn').onclick = () => { if (scrub) { if (scrub.playing) stopPlayback(); return; } setPaused(!isPaused()); };
 $('#resumeGo').onclick = () => continueParked();
 $('#resumeX').onclick = () => dropParked();
 
@@ -1705,6 +1760,7 @@ function parkLive() {
   dlog('set aside the paused answer:', t.parkedQ.length, 'lines', t.streamDone ? '' : '(still streaming)');
   gen++; Voice.stop(); narrationDone = Promise.resolve(); finishTyping(); hideIcon(pen); hideIcon(eraser);
   setPaused(false);
+  renderResumeBar();
 }
 function continueParked() {
   const p = parked; if (!p || streamingLive() || queueRunning) return;
@@ -1730,6 +1786,8 @@ function renderResumeBar() {
   bar.hidden = !show;
   if (show) $('#resumeText').textContent = `⏸ Paused at: “${parked.say || 'the previous answer'}”`;
 }
+// Clicking the board puts the cursor in the chat box, so the next keys type a question. Buttons, sliders and fields keep their own focus.
+$('#boardWrap').addEventListener('click', e => { if (!e.target.closest('button,input,select,textarea,a,label')) input.focus({ preventScroll: true }); });
 input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#composer').requestSubmit(); } });
 input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(120, input.scrollHeight) + 'px'; });
 $('#composer').addEventListener('submit', e => {
