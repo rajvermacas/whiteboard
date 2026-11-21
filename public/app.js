@@ -40,6 +40,8 @@ const objs = new Map();        // id -> {cmd, g, bb, off:[dx,dy]}
 let camera = { x: -60, y: -60, scale: 1 };
 let chat = [];                 // [{role:'user'|'assistant'|'error'|'system', text, about?, drew?, meta?}]
 const selection = new Set();
+const pops = [];   // "Ask whiteboard" popups: { el, key, ids, names, thread: [{q, a}], abort, at: [bx, by], min, unread }
+let popZ = 10;
 let settings = { model: null, efforts: {}, voice: { mode: 'kokoro', voice: 'af_bella', speed: 0.85, engine: 'server' } };
 let models = [];
 let gen = 0;                   // animation generation: bump to finish every running tween at once
@@ -840,7 +842,7 @@ function applyCamera() {
   svg.setAttribute('viewBox', `${camera.x} ${camera.y} ${vw} ${vh}`);
   grid.setAttribute('x', camera.x - 64); grid.setAttribute('y', camera.y - 64); grid.setAttribute('width', vw + 128); grid.setAttribute('height', vh + 128);
   $('#zoomPct').textContent = Math.round(camera.scale / defaultScale() * 100) + '%';
-  drawSelection();
+  drawSelection(); if (pops.length) placePops();
   saveSoon();
 }
 function viewRect() { const { W, H } = viewSize(); return { x: camera.x, y: camera.y, width: W / camera.scale, height: H / camera.scale }; }
@@ -1274,15 +1276,11 @@ function zoomTap(px, py, out) {
 // ======================================================================
 // right-click a drawing → "Ask whiteboard": a small popup for quick Q&A about it (one drawing or the selection).
 // It only talks: nothing is drawn, said aloud, added to the chat or saved, and the lesson carries on untouched.
+// Each popup stays until its ✕: clicking elsewhere (or Esc) folds it into a small pill that stays by its drawings,
+// moving with the board; click the pill to open it again. A new session closes them all.
 // ======================================================================
 const ctxMenu = document.createElement('div'); ctxMenu.id = 'ctxMenu'; ctxMenu.hidden = true; ctxMenu.setAttribute('role', 'menu');
-const askPop = document.createElement('div'); askPop.id = 'askPop'; askPop.hidden = true; askPop.setAttribute('role', 'dialog');
-askPop.innerHTML = `<div class="apHead"><span class="apTitle"></span><button type="button" class="apX" title="Close (Esc)" aria-label="Close">✕</button></div>
-<div class="apLog" aria-live="polite"></div>
-<form class="apForm"><textarea rows="1" placeholder="Ask about this…" aria-label="Your question"></textarea><button type="submit" class="apSend" title="Ask (↵)" aria-label="Ask">➤</button></form>`;
-$('#boardWrap').append(ctxMenu, askPop);
-const apLog = askPop.querySelector('.apLog'), apInput = askPop.querySelector('textarea'), apSend = askPop.querySelector('.apSend');
-let askState = null;   // { ids, names, thread: [{q, a}], abort }
+$('#boardWrap').append(ctxMenu);
 
 svg.addEventListener('contextmenu', e => {
   const id = hitTest(e.clientX, e.clientY);
@@ -1307,56 +1305,87 @@ svg.addEventListener('contextmenu', e => {
   dlog('user: right-click', ids.map(x => JSON.stringify(nameOf(x))).join(', '));
 });
 function hideCtxMenu() { ctxMenu.hidden = true; }
+// a click anywhere outside a popup folds it (it never closes by itself)
 document.addEventListener('pointerdown', e => {
   if (!ctxMenu.hidden && !ctxMenu.contains(e.target)) hideCtxMenu();
-  if (!askPop.hidden && !askPop.contains(e.target) && !ctxMenu.contains(e.target)) closeAskPop();
+  for (const p of pops) if (!p.min && !p.el.contains(e.target)) minimisePop(p);
 }, true);
 
 function openAskPop(ids) {
-  closeAskPop();
+  const key = [...ids].sort().join(',');
+  const had = pops.find(p => p.key === key);
+  if (had) { expandPop(had); return; }
   const names = ids.map(nameOf);
-  askState = { ids, names, thread: [], abort: null };
-  askPop.querySelector('.apTitle').textContent = ids.length > 1 ? `Ask about ${ids.length} drawings: ${names.map(n => `“${n}”`).join(', ')}` : `Ask about “${names[0]}”`;
-  askPop.querySelector('.apTitle').title = names.join(', ');
-  apLog.textContent = ''; apLog.hidden = true; apInput.value = ''; fitApInput(); apSend.disabled = false;
-  askPop.hidden = false;
-  placeAskPop(ids);
-  apInput.focus({ preventScroll: true });
-  dlog('ask popup: open about', names.map(n => JSON.stringify(n)).join(', '));
+  const el = document.createElement('div'); el.className = 'askPop'; el.setAttribute('role', 'dialog');
+  el.innerHTML = `<div class="apHead"><button type="button" class="apTitle"></button><button type="button" class="apMin" title="Minimise (Esc)" aria-label="Minimise">–</button><button type="button" class="apX" title="Close" aria-label="Close">✕</button></div>
+<div class="apLog" aria-live="polite" hidden></div>
+<form class="apForm"><textarea rows="1" placeholder="Ask a quick question…" aria-label="Your question"></textarea><button type="submit" class="apSend" title="Ask (↵)" aria-label="Ask">➤</button></form>`;
+  const p = { el, key, ids, names, thread: [], abort: null, at: [0, 0], min: false, unread: false };
+  const title = el.querySelector('.apTitle');
+  title.textContent = ids.length > 1 ? `💬 ${ids.length} drawings: ${names.map(n => `“${n}”`).join(', ')}` : `💬 “${names[0]}”`;
+  title.title = 'Ask about ' + names.join(', ');
+  title.onclick = () => p.min ? expandPop(p) : minimisePop(p);
+  el.querySelector('.apMin').onclick = () => minimisePop(p, true);
+  el.querySelector('.apX').onclick = () => closePop(p);
+  const input = el.querySelector('textarea');
+  // border-box: the height has to include the border, or the text is cut and scrolls
+  const fit = () => { input.style.height = ''; const h = Math.min(input.scrollHeight + 2, 120); input.style.height = Math.max(36, h) + 'px'; input.style.overflowY = input.scrollHeight + 2 > 120 ? 'auto' : 'hidden'; };
+  input.addEventListener('input', fit);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el.querySelector('.apForm').requestSubmit(); } });
+  el.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); minimisePop(p, true); } });
+  el.addEventListener('pointerdown', () => { el.style.zIndex = ++popZ; });
+  el.querySelector('.apForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const q = input.value.trim(); if (!q || p.abort) return;
+    input.value = ''; fit(); askQuick(p, q);
+  });
+  $('#boardWrap').appendChild(el); pops.push(p);
+  el.style.zIndex = ++popZ;
+  anchorPop(p);
+  input.focus({ preventScroll: true });
+  dlog('ask popup: open about', names.map(n => JSON.stringify(n)).join(', '), '·', pops.length, 'popup(s)');
 }
-// next to the drawings (to the right if there is room, else left, else below), kept inside the board
-function placeAskPop(ids) {
+// where it opens: next to the drawings (right if there is room, else left, else below); kept as a board position
+function anchorPop(p) {
   const wrap = $('#boardWrap').getBoundingClientRect(), sv = svg.getBoundingClientRect();
-  const bs = ids.map(id => bbOf(objs.get(id)));
+  const bs = p.ids.filter(id => objs.has(id)).map(id => bbOf(objs.get(id)));
   const x0 = Math.min(...bs.map(b => b.x)), y0 = Math.min(...bs.map(b => b.y)), x1 = Math.max(...bs.map(b => b.x + b.width)), y1 = Math.max(...bs.map(b => b.y + b.height));
   const toX = bx => sv.left - wrap.left + (bx - camera.x) * camera.scale, toY = by => sv.top - wrap.top + (by - camera.y) * camera.scale;
-  const L = toX(x0), R = toX(x1), T = toY(y0), B = toY(y1), w = askPop.offsetWidth, h = Math.max(askPop.offsetHeight, 180), gap = 14;
-  let left = R + gap <= wrap.width - w - 8 ? R + gap : L - gap - w >= 8 ? L - gap - w : (L + R) / 2 - w / 2;
-  let top = left === (L + R) / 2 - w / 2 ? B + gap : T;
-  askPop.style.left = clamp(left, 8, Math.max(8, wrap.width - w - 8)) + 'px';
-  askPop.style.top = clamp(top, 8, Math.max(8, wrap.height - h - 8)) + 'px';
+  const L = toX(x0), R = toX(x1), T = toY(y0), B = toY(y1), w = p.el.offsetWidth, h = Math.max(p.el.offsetHeight, 180), gap = 14;
+  const below = !(R + gap <= wrap.width - w - 8) && !(L - gap - w >= 8);
+  const left = clamp(below ? (L + R) / 2 - w / 2 : R + gap <= wrap.width - w - 8 ? R + gap : L - gap - w, 8, Math.max(8, wrap.width - w - 8));
+  const top = clamp(below ? B + gap : T, 8, Math.max(8, wrap.height - h - 8));
+  p.at = [camera.x + (left - (sv.left - wrap.left)) / camera.scale, camera.y + (top - (sv.top - wrap.top)) / camera.scale];
+  placePop(p);
 }
-function closeAskPop() {
-  askPop.hidden = true;
-  if (!askState) return;
-  if (askState.abort) askState.abort.abort();
-  dlog('ask popup: closed after', askState.thread.length, 'question(s)');
-  askState = null;
+// on screen at its board position (it moves with the board), but never lost off the edge
+function placePop(p) {
+  const wrap = $('#boardWrap').getBoundingClientRect(), sv = svg.getBoundingClientRect();
+  const x = sv.left - wrap.left + (p.at[0] - camera.x) * camera.scale, y = sv.top - wrap.top + (p.at[1] - camera.y) * camera.scale;
+  const w = p.el.offsetWidth, h = p.el.offsetHeight;
+  p.el.style.left = clamp(x, 6, Math.max(6, wrap.width - w - 6)) + 'px';
+  p.el.style.top = clamp(y, 6, Math.max(6, wrap.height - h - 6)) + 'px';
 }
-askPop.querySelector('.apX').onclick = () => { closeAskPop(); $('#boardWrap').focus({ preventScroll: true }); };
-function fitApInput() { apInput.style.height = 'auto'; apInput.style.height = Math.min(apInput.scrollHeight, 120) + 'px'; }
-apInput.addEventListener('input', fitApInput);
-apInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); askPop.querySelector('.apForm').requestSubmit(); }
-});
-askPop.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAskPop(); $('#boardWrap').focus({ preventScroll: true }); } });
-askPop.querySelector('.apForm').addEventListener('submit', e => {
-  e.preventDefault();
-  const q = apInput.value.trim();
-  if (!q || !askState || askState.abort) return;
-  apInput.value = ''; fitApInput();
-  askQuick(q);
-});
+function placePops() { for (const p of pops) placePop(p); }
+function minimisePop(p, focusBoard) {
+  if (p.min) return;
+  p.min = true; p.el.classList.add('min'); placePop(p);
+  if (focusBoard) $('#boardWrap').focus({ preventScroll: true });
+  dlog('ask popup: minimised', JSON.stringify(p.names.join(', ')));
+}
+function expandPop(p) {
+  p.min = false; p.unread = false; p.el.classList.remove('min', 'unread'); p.el.style.zIndex = ++popZ;
+  placePop(p);
+  const log = p.el.querySelector('.apLog'); log.scrollTop = log.scrollHeight;
+  p.el.querySelector('textarea').focus({ preventScroll: true });
+}
+function closePop(p) {
+  if (p.abort) p.abort.abort();
+  p.el.remove(); pops.splice(pops.indexOf(p), 1);
+  dlog('ask popup: closed after', p.thread.length, 'question(s)');
+  $('#boardWrap').focus({ preventScroll: true });
+}
+function closeAllPops() { while (pops.length) { const p = pops.pop(); if (p.abort) p.abort.abort(); p.el.remove(); } }
 
 // what the model gets: the drawings themselves, what touches or sits around them, what the teacher said while
 // drawing them, the lesson and the last few chat messages, then this popup's own thread
@@ -1392,31 +1421,32 @@ function askContext(ids) {
   return lines.join('\n');
 }
 const ASK_SYSTEM = `You answer a learner's quick question about one or more drawings on a teaching whiteboard, in a small popup next to them. The drawings, what they connect to, what is near them and what the teacher said while drawing them are given below; use them to know exactly what the learner is pointing at, and use the drawing's own names, numbers and labels.
-Answer short and direct: usually 2 to 5 sentences, a short list only when it truly helps. Lead with the answer itself, no preamble, no restating the question. Plain text only. For maths use inline LaTeX between single dollar signs, like $W_1 x + b$.
+Answer short and direct: usually 2 to 5 sentences, a short list only when it truly helps. Lead with the answer itself, no preamble, no restating the question. Use Markdown where it helps (**bold** for the key term, short - lists); no tables or images. For maths use inline LaTeX between single dollar signs, like $W_1 x + b$.
 You cannot draw or change the board here, so never write drawing commands, JSON or code for the board, and never offer to draw. If the question needs a full explanation, give the short answer and say in one line that asking it in the main chat will get it drawn.
 Follow-up questions in this popup continue the same thread about the same drawings. Answer in the language of the learner's question.`;
 
-async function askQuick(q) {
-  const st = askState; if (!st) return;
-  const ids = st.ids.filter(id => objs.has(id));
-  if (!ids.length) { apNote('Those drawings are no longer on the board.'); return; }
-  const item = { q, a: '' }; st.thread.push(item);
-  apLog.hidden = false;
-  const qd = document.createElement('div'); qd.className = 'apQ'; qd.textContent = q; apLog.appendChild(qd);
-  const ad = document.createElement('div'); ad.className = 'apA thinking'; ad.innerHTML = '<span class="apDots">thinking<i>.</i><i>.</i><i>.</i></span>'; apLog.appendChild(ad);
-  apLog.scrollTop = apLog.scrollHeight;
-  const ac = st.abort = new AbortController(); apSend.disabled = true;
+async function askQuick(p, q) {
+  const log = p.el.querySelector('.apLog'), send = p.el.querySelector('.apSend');
+  const note = text => { log.hidden = false; const d = document.createElement('div'); d.className = 'apA err'; d.textContent = text; log.appendChild(d); };
+  const ids = p.ids.filter(id => objs.has(id));
+  if (!ids.length) { note('Those drawings are no longer on the board.'); return; }
+  const item = { q, a: '' }; p.thread.push(item);
+  log.hidden = false;
+  const qd = document.createElement('div'); qd.className = 'apQ'; qd.textContent = q; log.appendChild(qd);
+  const ad = document.createElement('div'); ad.className = 'apA thinking'; ad.innerHTML = '<span class="apDots">thinking<i>.</i><i>.</i><i>.</i></span>'; log.appendChild(ad);
+  log.scrollTop = log.scrollHeight; placePop(p);
+  const ac = p.abort = new AbortController(); send.disabled = true; p.el.classList.add('busy');
   const model = settings.model || (models[0] && models[0].id), eff = currentEffort();
   const messages = [{ role: 'system', content: ASK_SYSTEM + '\n\n' + askContext(ids) }];
-  st.thread.slice(0, -1).forEach(t => { messages.push({ role: 'user', content: t.q }); messages.push({ role: 'assistant', content: t.a || '(no answer)' }); });
+  p.thread.slice(0, -1).forEach(t => { messages.push({ role: 'user', content: t.q }); messages.push({ role: 'assistant', content: t.a || '(no answer)' }); });
   messages.push({ role: 'user', content: q });
-  dlog('ask popup: asking', JSON.stringify(clip(q, 120)), '· about', ids.join(','), '· model', model, eff, '· follow-up', st.thread.length - 1);
+  dlog('ask popup: asking', JSON.stringify(clip(q, 120)), '· about', ids.join(','), '· model', model, eff, '· follow-up', p.thread.length - 1);
   const t0 = performance.now();
   let painted = 0;
-  const paint = () => { painted = item.a.length; ad.classList.remove('thinking'); renderMathText(ad, item.a); const nearEnd = apLog.scrollHeight - apLog.scrollTop - apLog.clientHeight < 40; if (nearEnd) apLog.scrollTop = apLog.scrollHeight; };
+  const paint = () => { painted = item.a.length; ad.classList.remove('thinking'); ad.innerHTML = mdToHtml(item.a); const nearEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40; if (nearEnd) log.scrollTop = log.scrollHeight; };
   try {
     await streamText(model, eff === 'auto' ? null : eff, (lesson ? lesson.session : 'wbt') + '-ask', messages, ac.signal, delta => {
-      item.a += delta; if (item.a.length - painted > 6 || /[\s$.]$/.test(delta)) paint();
+      item.a += delta; if (item.a.length - painted > 6 || /[\s$.*]$/.test(delta)) paint();
     });
     if (!item.a.trim()) { item.a = ''; ad.classList.remove('thinking'); ad.classList.add('err'); ad.textContent = 'No answer came back. Try asking again.'; }
     else paint();
@@ -1426,19 +1456,47 @@ async function askQuick(q) {
     ad.classList.remove('thinking'); ad.classList.add('err'); ad.textContent = 'Could not answer: ' + (e.message || e);
     dlog('ask popup: failed', String(e.message || e));
   } finally {
-    if (askState === st) { st.abort = null; apSend.disabled = false; apInput.focus({ preventScroll: true }); }
+    if (p.abort === ac) { p.abort = null; send.disabled = false; p.el.classList.remove('busy'); }
+    if (pops.includes(p)) { if (p.min) { p.unread = true; p.el.classList.add('unread'); } else p.el.querySelector('textarea').focus({ preventScroll: true }); }
   }
 }
-function apNote(text) { apLog.hidden = false; const d = document.createElement('div'); d.className = 'apA err'; d.textContent = text; apLog.appendChild(d); }
-// text with $…$ maths rendered by KaTeX (when loaded); everything else stays plain text
-function renderMathText(node, text) {
-  node.textContent = '';
-  const parts = String(text).split(/(\$\$[^$]+\$\$|\$[^$\n]+\$)/);
-  for (const p of parts) {
-    const m = /^\$\$([^$]+)\$\$$/.exec(p) || /^\$([^$\n]+)\$$/.exec(p);
-    if (m && window.katex) { const s = document.createElement('span'); try { window.katex.render(m[1], s, { throwOnError: false, displayMode: p.startsWith('$$') }); } catch { s.textContent = p; } node.appendChild(s); }
-    else if (p) node.appendChild(document.createTextNode(p));
+// a small, safe Markdown renderer for the popup: **bold**, *italic*, `code`, ``` blocks, # headings, - / 1. lists,
+// [links](https://…) and $…$ / $$…$$ maths (KaTeX). Everything is escaped first, so no HTML from the model gets in.
+function mdToHtml(src) {
+  const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const keep = [];   // code and maths, kept out of the Markdown rules and put back at the end
+  const hold = html => '\u0000' + (keep.push(html) - 1) + '\u0000';
+  const tex = (t, display) => { if (!window.katex) return esc(display ? `$$${t}$$` : `$${t}$`); try { return window.katex.renderToString(t, { throwOnError: false, displayMode: display }); } catch { return esc(t); } };
+  let s = String(src || '').replace(/\r/g, '');
+  s = s.replace(/```[^\n]*\n([\s\S]*?)(```|$)/g, (m, code) => '\n' + hold(`<pre><code>${esc(code.replace(/\n$/, ''))}</code></pre>`) + '\n');
+  s = s.replace(/`([^`\n]+)`/g, (m, c) => hold(`<code>${esc(c)}</code>`));
+  s = s.replace(/\$\$([^$]+)\$\$/g, (m, t) => hold(tex(t, true))).replace(/\$([^$\n]+)\$/g, (m, t) => hold(tex(t, false)));
+  const inline = t => esc(t)
+    .replace(/\*\*(?=\S)([^*]*?\S)\*\*|__(?=\S)([^_]*?\S)__/g, (m, a, b) => `<strong>${a ?? b}</strong>`)
+    .replace(/(^|[^*\w])\*(?=\S)([^*\n]*?\S)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/(^|[^_\w])_(?=\S)([^_\n]*?\S)_(?![_\w])/g, '$1<em>$2</em>')
+    .replace(/~~(?=\S)([^~]*?\S)~~/g, '<del>$1</del>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  const out = []; let para = [], list = null;
+  const flushPara = () => { if (para.length) { out.push(`<p>${para.map(inline).join('<br>')}</p>`); para = []; } };
+  const flushList = () => { if (list) { out.push(`<${list.tag}>${list.items.map(i => `<li>${inline(i)}</li>`).join('')}</${list.tag}>`); list = null; } };
+  for (const line of s.split('\n')) {
+    let m;
+    if (!line.trim()) { flushPara(); flushList(); continue; }
+    if (/^\u0000\d+\u0000$/.test(line.trim()) && /^<pre/.test(keep[+line.trim().slice(1, -1)])) { flushPara(); flushList(); out.push(line.trim()); continue; }
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) { flushPara(); flushList(); out.push(`<h4>${inline(m[2])}</h4>`); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flushPara(); flushList(); out.push('<hr>'); continue; }
+    if ((m = /^\s*(?:[-*+•])\s+(.*)$/.exec(line)) || (m = /^\s*\d+[.)]\s+(.*)$/.exec(line))) {
+      const tag = /^\s*\d/.test(line) ? 'ol' : 'ul';
+      flushPara(); if (list && list.tag !== tag) flushList(); if (!list) list = { tag, items: [] };
+      list.items.push(m[1]); continue;
+    }
+    if ((m = /^>\s?(.*)$/.exec(line))) { flushPara(); flushList(); out.push(`<blockquote>${inline(m[1])}</blockquote>`); continue; }
+    if (list && /^\s{2,}\S/.test(line)) { list.items[list.items.length - 1] += ' ' + line.trim(); continue; }
+    flushList(); para.push(line);
   }
+  flushPara(); flushList();
+  return out.join('').replace(/\u0000(\d+)\u0000/g, (m, i) => keep[+i]);
 }
 // a streamed answer from /api/chat, handing each piece of text to onDelta (thinking is not shown)
 async function streamText(model, effort, session, messages, signal, onDelta) {
@@ -1461,8 +1519,8 @@ async function streamText(model, effort, session, messages, signal, onDelta) {
 
 document.addEventListener('keydown', e => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
-  if (e.key === 'Escape' && (!ctxMenu.hidden || askState)) { e.preventDefault(); if (!ctxMenu.hidden) hideCtxMenu(); else closeAskPop(); return; }
-  if (askPop.contains(document.activeElement)) return;   // keys typed in the popup stay in the popup
+  if (e.key === 'Escape' && !ctxMenu.hidden) { e.preventDefault(); hideCtxMenu(); return; }
+  if (document.activeElement && document.activeElement.closest('.askPop')) return;   // keys typed in the popup stay in the popup
   if (e.key === 'Escape') {
     if (selection.size) { setSelection([]); return; }
     if ($('#app').classList.contains('fs')) exitFullscreen();
@@ -1796,6 +1854,7 @@ function resetBoard() {
   objs.clear(); selection.clear(); updateEmpty(); drawSelection(); updateSelectionUI();
 }
 function applySession(d) {
+  closeAllPops();
   stopAll(); scrub = null; resetBoard(); resetTree();
   steps = Array.isArray(d.steps) ? d.steps : (d.objs && d.objs.length ? [{ say: '', by: 'teacher', cmds: d.objs.map(c => ({ ...c, _placed: true })), t: 'base' }] : []);
   lesson = d.lesson; sessionCreatedAt = d.createdAt || new Date().toISOString();
@@ -2329,7 +2388,7 @@ $('#boardWrap').tabIndex = -1;
 let downOnDrawing = false;
 $('#boardWrap').addEventListener('pointerdown', e => { downOnDrawing = !!e.target.closest('#layerObjects'); }, { capture: true });
 $('#boardWrap').addEventListener('click', e => {
-  if (e.target.closest('button,input,select,textarea,a,label,#askPop,#ctxMenu')) return;
+  if (e.target.closest('button,input,select,textarea,a,label,.askPop,#ctxMenu')) return;
   if (downOnDrawing) input.focus({ preventScroll: true });
   else $('#boardWrap').focus({ preventScroll: true });
 });
@@ -3242,6 +3301,7 @@ const dlg = $('#topicDlg');
 let topicIsNew = false;
 // New session: starts at once with a default name; the first question names it (see nameSession).
 async function newSession() {
+  closeAllPops();
   if (lesson && !untouched()) { saveNow(); await saveToServer(); }
   stopAll(); if (scrub) exitScrub(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline();
   lesson = { topic: 'New session', autoName: true, plan: null, session: 'wbt-' + uuid() };
