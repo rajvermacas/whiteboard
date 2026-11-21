@@ -1669,6 +1669,7 @@ function exitScrub(keepCamera = false) {
   // an answer set aside to look back keeps going (Continue in the bar picks it up); anything else is stopped
   if (parked) { gen++; Voice.stop(); narrationDone = Promise.resolve(); updateSendBtn(); }
   else stopAll();
+  if (isPaused()) setPaused(false);   // a look-back playback held on ⏸ is not the live lesson's pause
   resetBoard();
   for (const c of live.objs) { const cc = cloneCmd(c); cc._placed = true; drawObject(cc, { gen }, false); }
   if (!keepCamera) { camera = { ...live.camera }; applyCamera(); }
@@ -1679,7 +1680,7 @@ function exitScrub(keepCamera = false) {
 async function showStep(i, animate) {
   if (i < 0 || i >= steps.length) return;
   enterScrub();
-  gen++; Voice.stop(); narrationDone = Promise.resolve(); finishTyping();
+  gen++; if (isPaused()) setPaused(false); Voice.stop(); narrationDone = Promise.resolve(); finishTyping();
   const run = { gen }, token = ++scrub.token;
   const target = animate ? i - 1 : i;
   if (target < scrub.applied) { resetBoard(); scrub.applied = -1; }
@@ -1719,14 +1720,14 @@ async function playFrom(i, fromReplay = false) {
     // apply 'you' steps between teacher steps instantly, then animate the next teacher step
     await showStep(nav[k], true);
   }
-  if (playing()) { await sleep(600); if (playing() && k === nav.length - 1) exitScrub(true); }
+  if (playing()) { await psleep(600); if (playing() && k === nav.length - 1) exitScrub(true); }
   if (scrub && scrub.playId === id) { scrub.playing = false; updateTimeline(); }
 }
 // stop playback where it is (the board stays on the current step)
 function stopPlayback() {
   if (!scrub) return;
   scrub.playing = false; scrub.playId = (scrub.playId || 0) + 1;
-  gen++; Voice.stop(); narrationDone = Promise.resolve();
+  gen++; if (isPaused()) setPaused(false); Voice.stop(); narrationDone = Promise.resolve();
   updateTimeline();
 }
 // the live answer is busy: its text is still streaming (a set-aside answer does not count) or its drawing is still running
@@ -1772,7 +1773,7 @@ function liveWorking() { return streamingLive() || queueRunning || replaying || 
 // The timeline's ▶/⏸ follows the same state as the chat's pause button: while the lesson runs it shows ⏸ (pauses it),
 // while paused it shows ▶ (resumes it). A scrubbed lesson shows ⏸ while it plays from the step to the end.
 function syncPlayButton() {
-  const p = isPaused(), playing = scrub ? !!scrub.playing : liveWorking() && !p;
+  const p = isPaused(), playing = scrub ? !!scrub.playing && !p : liveWorking() && !p;
   const b = $('#tlPlay');
   b.textContent = playing ? '⏸' : '▶';
   b.title = playing ? 'Pause' : parked ? 'Continue the answer where it was left off' : p ? 'Resume the lesson' : scrub ? 'Play from this step to the end, with narration' : 'Play the lesson from the start, with narration';
@@ -1783,7 +1784,8 @@ $('#tlLive').onclick = () => exitScrub();
 $('#tlPlay').onclick = () => {
   Voice.unlock();
   const say = what => dlog('timeline ▶/⏸:', what, '· live:', lab(liveTurn), '· stack:', forkStack());
-  if (scrub && scrub.playing) { say('stop the look-back playback at step ' + scrub.i); stopPlayback(); return; }
+  // looking back: ⏸ freezes the playback mid-step (pen, narration, pacing) and ▶ carries on from exactly there
+  if (scrub && scrub.playing) { say((isPaused() ? 'resume' : 'pause') + ' the look-back playback at step ' + scrub.i); setPaused(!isPaused()); return; }
   const nav = navSteps(); if (!nav.length) return;
   const atEnd = !scrub || nav.indexOf(scrub.i) === nav.length - 1;
   // an answer that is set aside (paused, or a question came in while it was paused) continues where it left off
@@ -2091,8 +2093,8 @@ function updateSendBtn() {
   renderTeaching(working, p);
   const pb = $('#pauseBtn');
   if (scrub) {
-    // a scrubbed lesson: this button stops its playback, the same as the timeline's ⏸
-    pb.hidden = !scrub.playing; pb.textContent = '⏸'; pb.classList.remove('on'); tip(pb, 'Stop the playback');
+    // a scrubbed lesson: this button pauses / resumes its playback, the same as the timeline's ⏸/▶
+    const held = isPaused(); pb.hidden = !scrub.playing; pb.textContent = held ? '▶' : '⏸'; pb.classList.toggle('on', held); tip(pb, held ? 'Resume the playback' : 'Pause the playback');
   } else {
     pb.hidden = !working && !p; pb.textContent = p ? '▶' : '⏸'; pb.classList.toggle('on', p);
     tip(pb, p ? 'Play' : 'Pause');
@@ -2113,7 +2115,7 @@ $('#stopBtn').onclick = () => { dlog('user: ■ stop'); stopAll(true, 'stop butt
 // icon buttons: the label shows on hover (and is what screen readers read)
 function tip(el, text) { if (el.dataset.tip !== text) { el.dataset.tip = text; el.setAttribute('aria-label', text); el.removeAttribute('title'); } }
 tip($('#stopBtn'), 'Stop');
-$('#pauseBtn').onclick = () => { dlog('user:', scrub ? 'stop playback' : isPaused() ? '▶ play' : '⏸ pause'); if (scrub) { if (scrub.playing) stopPlayback(); return; } setPaused(!isPaused()); };
+$('#pauseBtn').onclick = () => { dlog('user:', scrub ? (isPaused() ? 'resume playback' : 'pause playback') : isPaused() ? '▶ play' : '⏸ pause'); if (scrub) { if (scrub.playing) setPaused(!isPaused()); return; } setPaused(!isPaused()); };
 $('#resumeGo').onclick = () => { dlog('user: ▶ continue set-aside answer'); continueParked(); };
 $('#resumeX').onclick = () => { dlog('user: ✕ drop set-aside answer', lab(parked && parked.turn)); dropParked(); };
 
@@ -2402,13 +2404,14 @@ input.addEventListener('keydown', e => {
   e.preventDefault(); submitMode = (e.metaKey || e.ctrlKey) ? 'steer' : 'fork'; $('#composer').requestSubmit();
 });
 $('#steerBtn').onclick = () => { submitMode = 'steer'; $('#composer').requestSubmit(); };
-input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(120, input.scrollHeight) + 'px'; });
+function fitInput() { input.style.height = ''; const sh = input.scrollHeight + 2; input.style.height = Math.max(40, Math.min(sh, 140)) + 'px'; input.style.overflowY = sh > 140 ? 'auto' : 'hidden'; }
+input.addEventListener('input', fitInput);
 $('#composer').addEventListener('submit', e => {
   e.preventDefault();
   let q = input.value.trim();
   if (!q && [...inkSinceAsk].some(id => objs.has(id))) q = 'Check my drawing.';
   if (!q) return;
-  input.value = ''; input.style.height = 'auto';
+  input.value = ''; fitInput();
   const mode = submitMode; submitMode = 'fork';
   ask(q, mode);
 });
