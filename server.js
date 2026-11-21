@@ -1,6 +1,6 @@
 // Whiteboard Teacher — local server
-// Serves the app from ./public and proxies LLM calls to OpenCode Go and/or OpenRouter, so the API keys never
-// reach the browser.
+// Serves the app from ./public and proxies LLM calls to OpenCode Go, OpenRouter and/or OpenGateway, so the API keys
+// never reach the browser.
 // Zero dependencies: needs Node 18+ (uses built-in fetch). Run: node server.js
 'use strict';
 const http = require('http');
@@ -40,8 +40,17 @@ const OR_FALLBACKS = /^(1|true|yes)$/i.test(process.env.OPENROUTER_ALLOW_FALLBAC
 const OR_EXTRA = (process.env.OPENROUTER_MODELS || '').split(',').map(x => x.trim()).filter(Boolean);
 const OR_PREFIX = 'or:';
 const isOR = id => typeof id === 'string' && id.startsWith(OR_PREFIX);
-// default: the OpenRouter model when an OpenRouter key is set, else OpenCode Go's DeepSeek V4.1 Flash
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || (OR_KEY ? OR_PREFIX + OR_MODEL : 'deepseek-v4.1-flash');
+// OpenGateway (optional): an OpenAI-compatible API. Its models appear in the picker as "og:<slug>". All of its active
+// chat models are listed; OPENGATEWAY_MODEL is the one used by default.
+const OG_KEY = process.env.OPENGATEWAY_API_KEY || '';
+const OG_BASE = (process.env.OPENGATEWAY_API_BASE || 'https://apis.opengateway.ai/v1').replace(/\/+$/, '');
+const OG_MODEL = process.env.OPENGATEWAY_MODEL || 'deepseek/deepseek-v4.1-flash-eco';
+const OG_PREFIX = 'og:';
+const isOG = id => typeof id === 'string' && id.startsWith(OG_PREFIX);
+// default: the OpenGateway model when its key is set, else the OpenRouter model when its key is set, else OpenCode Go's DeepSeek V4.1 Flash
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || (OG_KEY ? OG_PREFIX + OG_MODEL : OR_KEY ? OR_PREFIX + OR_MODEL : 'deepseek-v4.1-flash');
+// the env var that holds the key for a given model id (used in error messages)
+const keyNameFor = id => isOG(id) ? 'OPENGATEWAY_API_KEY' : isOR(id) ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY';
 const USER_AGENT = 'whiteboard-teacher/1.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
@@ -49,8 +58,8 @@ if (typeof fetch !== 'function') {
   console.error(`\n✖  Node ${process.version} is too old: this app needs Node 18 or newer (built-in fetch).\n`);
   process.exit(1);
 }
-if (!API_KEY && !OR_KEY) {
-  console.warn('\n⚠  No API key: set OPENCODE_API_KEY and/or OPENROUTER_API_KEY in .env (see .env.example).\n');
+if (!API_KEY && !OR_KEY && !OG_KEY) {
+  console.warn('\n⚠  No API key: set OPENCODE_API_KEY, OPENROUTER_API_KEY and/or OPENGATEWAY_API_KEY in .env (see .env.example).\n');
 }
 
 const MIME = {
@@ -86,9 +95,9 @@ function upstreamHeaders(session) {
 let modelCache = null, modelCacheAt = 0;
 async function getModels() {
   if (modelCache && Date.now() - modelCacheAt < 10 * 60_000) return modelCache;
-  const [oc, or] = await Promise.allSettled([API_KEY ? openCodeModels() : Promise.resolve([]), OR_KEY ? openRouterModels() : Promise.resolve([])]);
-  const list = [...(or.status === 'fulfilled' ? or.value : []), ...(oc.status === 'fulfilled' ? oc.value : [])];
-  if (!list.length) throw new Error([oc, or].filter(x => x.status === 'rejected').map(x => x.reason && x.reason.message).join('; ') || 'no API key configured');
+  const [oc, or, og] = await Promise.allSettled([API_KEY ? openCodeModels() : Promise.resolve([]), OR_KEY ? openRouterModels() : Promise.resolve([]), OG_KEY ? openGatewayModels() : Promise.resolve([])]);
+  const list = [...(og.status === 'fulfilled' ? og.value : []), ...(or.status === 'fulfilled' ? or.value : []), ...(oc.status === 'fulfilled' ? oc.value : [])];
+  if (!list.length) throw new Error([oc, or, og].filter(x => x.status === 'rejected').map(x => x.reason && x.reason.message).join('; ') || 'no API key configured');
   modelCache = { models: list, default: list.some(m => m.id === DEFAULT_MODEL) ? DEFAULT_MODEL : list[0].id };
   modelCacheAt = Date.now();
   return modelCache;
@@ -102,12 +111,33 @@ async function openRouterModels() {
     const m = info.find(x => x.id === slug) || {}, params = m.supported_parameters || [];
     const pinned = slug === OR_MODEL && OR_PROVIDER.length ? ` · ${OR_PROVIDER.join(', ')}` : '';
     return {
-      id: OR_PREFIX + slug, name: `${m.name || slug}${pinned}`, provider: 'openrouter',
+      id: OR_PREFIX + slug, name: `${m.name || slug}${pinned}`, provider: 'openrouter', providerName: 'OpenRouter',
       efforts: !m.id || params.includes('reasoning') ? ['minimal', 'low', 'medium', 'high'] : [],
       defaultEffort: null,
       output: (m.top_provider && m.top_provider.max_completion_tokens) || 32000,
       api: 'chat', free: /:free$/.test(slug),
       vision: !!(m.architecture && Array.isArray(m.architecture.input_modalities) && m.architecture.input_modalities.includes('image')),
+      featured: true,
+    };
+  });
+}
+// OpenGateway: every active chat model in its catalogue, with OPENGATEWAY_MODEL always included. If the catalogue
+// cannot be read, only OPENGATEWAY_MODEL is offered.
+async function openGatewayModels() {
+  let data = null;
+  try { const r = await fetch(`${OG_BASE}/models`, { headers: { 'Authorization': `Bearer ${OG_KEY}`, 'User-Agent': USER_AGENT } }); if (r.ok) data = (await r.json()).data || null; } catch {}
+  const usable = (data || []).filter(m => m.status === 'active' && (m.endpoints || []).includes('chat_completions') && (!m.modalities || (m.modalities.output || ['text']).includes('text')));
+  const slugs = [...new Set([OG_MODEL, ...(data ? usable.map(m => m.id) : [])])];
+  return slugs.map(slug => {
+    const m = usable.find(x => x.id === slug) || {};
+    return {
+      id: OG_PREFIX + slug, name: slug, provider: 'opengateway', providerName: 'OpenGateway',
+      // the catalogue reports a reasoning block for reasoning models; its effort is honoured as reasoning_effort
+      efforts: !m.id || m.reasoning ? ['low', 'medium', 'high'] : [],
+      defaultEffort: null,
+      output: m.max_output_tokens || 32000,
+      api: 'chat', free: false,
+      vision: !!(m.modalities && Array.isArray(m.modalities.input) && m.modalities.input.includes('image')),
       featured: true,
     };
   });
@@ -131,7 +161,7 @@ async function openCodeModels() {
         free: /free/i.test(m.id) || /free/i.test(m.name || ''),
         vision: !!(m.modalities && Array.isArray(m.modalities.input) && m.modalities.input.some(x => /image/.test(x))),
         featured: !!(m.go && m.go.featured),
-        provider: 'opencode',
+        provider: 'opencode', providerName: 'OpenCode Go',
       };
     });
   return list;
@@ -157,18 +187,21 @@ async function maxTokensFor(model) {
 async function handleChat(req, res) {
   let body;
   try { body = JSON.parse(await readBody(req, 12_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
-  const model = typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL, viaOR = isOR(model);
-  if (viaOR ? !OR_KEY : !API_KEY) return sendJSON(res, 500, { error: { code: 'no_api_key', message: `${viaOR ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY'} is not set on the server (.env).` } });
+  const model = typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL, viaOR = isOR(model), viaOG = isOG(model);
+  const prefix = viaOG ? OG_PREFIX : viaOR ? OR_PREFIX : '';
+  if (!(viaOG ? OG_KEY : viaOR ? OR_KEY : API_KEY)) return sendJSON(res, 500, { error: { code: 'no_api_key', message: `${keyNameFor(model)} is not set on the server (.env).` } });
 
   const messages = Array.isArray(body.messages) ? body.messages.slice(-40) : [];
   if (!messages.length) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'No messages' } });
   const payload = {
-    model: viaOR ? model.slice(OR_PREFIX.length) : model,
+    model: prefix ? model.slice(prefix.length) : model,
     messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : m.role === 'system' ? 'system' : 'user', content: cleanContent(m.content) })),
     stream: true,
     // Reasoning models can spend thousands of tokens thinking before they write; leave room for both.
     max_tokens: await maxTokensFor(model),
     temperature: 0.6,
+    // OpenRouter and OpenGateway then send a final usage chunk with the exact token count (for tokens/second)
+    ...(viaOR || viaOG ? { stream_options: { include_usage: true } } : {}),
   };
   if (viaOR) {
     if (typeof body.effort === 'string' && body.effort) payload.reasoning = { effort: body.effort };
@@ -178,10 +211,13 @@ async function handleChat(req, res) {
   const ac = new AbortController();
   res.on('close', () => ac.abort());   // browser pressed Stop / closed tab
 
+  const upstream = viaOG ? { base: OG_BASE, headers: { 'Authorization': `Bearer ${OG_KEY}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT } }
+    : viaOR ? { base: OR_BASE, headers: { 'Authorization': `Bearer ${OR_KEY}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT, 'X-Title': 'Whiteboard Teacher' } }
+    : { base: API_BASE, headers: upstreamHeaders(String(body.session || '').slice(0, 100)) };
   let up;
   try {
-    up = await fetch(`${viaOR ? OR_BASE : API_BASE}/chat/completions`, {
-      method: 'POST', headers: viaOR ? { 'Authorization': `Bearer ${OR_KEY}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT, 'X-Title': 'Whiteboard Teacher' } : upstreamHeaders(String(body.session || '').slice(0, 100)),
+    up = await fetch(`${upstream.base}/chat/completions`, {
+      method: 'POST', headers: upstream.headers,
       body: JSON.stringify(payload), signal: ac.signal,
     });
   } catch (e) {
@@ -197,7 +233,7 @@ async function handleChat(req, res) {
     return sendJSON(res, up.status, { error: { code, message: String(msg).slice(0, 500) } });
   }
 
-  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'Connection': 'keep-alive', 'X-Model': viaOR ? OR_PREFIX + payload.model : payload.model });
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'Connection': 'keep-alive', 'X-Model': prefix ? prefix + payload.model : payload.model });
   try {
     for await (const chunk of up.body) {
       if (!res.write(chunk)) await new Promise(r => res.once('drain', r));
@@ -409,6 +445,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`\n  Whiteboard Teacher → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}\n  LLM: OpenCode Go (${API_BASE}), default model ${DEFAULT_MODEL}\n`);
+  const providers = [API_KEY && `OpenCode Go (${API_BASE})`, OG_KEY && `OpenGateway (${OG_BASE})`, OR_KEY && `OpenRouter (${OR_BASE})`].filter(Boolean);
+  console.log(`\n  Whiteboard Teacher → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}\n  LLM: ${providers.join(', ') || 'no provider key set'}, default model ${DEFAULT_MODEL}\n`);
   if (process.env.TTS !== 'off') loadTTS(); // warm the voice up in the background
 });

@@ -51,6 +51,7 @@ button { font: inherit; cursor: pointer; }
 #modelPop { position: absolute; top: 40px; left: 10px; right: 10px; z-index: 5; background: #fff; border: 1px solid #e3e6ea; border-radius: 12px; padding: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.12); font-size: 13px; }
 #modelPop label { display: flex; flex-direction: column; gap: 4px; }
 #modelPop select { font: inherit; padding: 6px; border-radius: 8px; border: 1px solid #d0d5db; }
+#modelPop #modelSearch { font: inherit; box-sizing: border-box; width: 100%; padding: 6px 8px; margin-bottom: 8px; border-radius: 8px; border: 1px solid #d0d5db; }
 .effortRow { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
 .seg { display: inline-flex; }
 .seg button { border: 1px solid #d0d5db; background: #fff; padding: 4px 10px; margin-left: -1px; font-size: 12px; }

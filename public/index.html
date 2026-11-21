@@ -76,9 +76,11 @@
         <button id="clearChatBtn" title="Clear chat">Clear chat</button>
       </div>
       <div id="modelPop" hidden>
+        <input id="modelSearch" type="search" placeholder="Search models or providers…" autocomplete="off" spellcheck="false" aria-label="Search models">
         <label>Model
           <select id="modelSelect"></select>
         </label>
+        <p class="note" id="providerNote"></p>
         <div class="effortRow">Reasoning
           <span class="seg" id="effortSeg"></span>
         </div>

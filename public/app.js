@@ -2192,8 +2192,8 @@ async function send(q, opts = {}) {
       if (turn.thinking && !turn.cmds) { turn.el.remove(); chat.splice(chat.indexOf(am), 1); }
       const text = code === 'rate_limited' ? 'Rate limited by OpenCode Go. Wait a moment and ask again.'
         : code === 'thinking_budget' ? `${modelName(model)} used its whole token budget thinking and never wrote an answer. Pick a lower reasoning level (⚙ in the chat header) or another model, then ask again.`
-        : code === 'not_granted' ? `The API key was rejected (${err.message}). Check ${String(model).startsWith('or:') ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY'} in .env (just the key, nothing before it) and restart the server.`
-        : code === 'no_api_key' ? `No API key on the server. Put ${String(model).startsWith('or:') ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY'} in .env and restart.`
+        : code === 'not_granted' ? `The API key was rejected (${err.message}). Check ${keyNameFor(model)} in .env (just the key, nothing before it) and restart the server.`
+        : code === 'no_api_key' ? `No API key on the server. Put ${keyNameFor(model)} in .env and restart.`
         : code === 'empty' ? `${modelName(model)} returned an empty answer. Try again, or pick another model.`
         : code === 'stalled' ? `${modelName(model)} stopped responding mid-answer. What arrived is shown; ask again or pick another model.`
         : code === 'network' || err instanceof TypeError ? 'Cannot reach the local server. Is `npm start` still running?'
@@ -2209,7 +2209,8 @@ async function send(q, opts = {}) {
       am.text = turn.text.trim(); am.drew = [...turn.drew].slice(0, 80);
       if (turn.next) am.next = turn.next;
       if (turn.depth) am.depth = turn.depth;
-      am.meta = `${modelApplied || model || 'model'}${effort ? ' · ' + effort : ''} · ${Math.round((Date.now() - t0) / 1000)}s${turn.fixes ? ` · tidied ${turn.fixes}` : ''}`;
+      const st = turn.stats, speed = st && st.ms > 0 && st.tok > 0 ? `${st.est ? '≈' : ''}${Math.round(st.tok / (st.ms / 1000))} tok/s` : '';
+      am.meta = `${modelApplied || model || 'model'}${effort ? ' · ' + effort : ''} · ${Math.round((Date.now() - t0) / 1000)}s${speed ? ' · ' + speed : ''}${turn.fixes ? ` · tidied ${turn.fixes}` : ''}`;
       const meta = turn.el.querySelector('.meta'); if (meta) meta.textContent = am.meta;
       if (final && turn.thinking && !failed) { body.classList.remove('thinking'); body.textContent = am.drew.length ? '(drew on the board)' : '(no answer)'; turn.thinking = false; }
       renderChips(); saveSoon();
@@ -2226,6 +2227,7 @@ async function send(q, opts = {}) {
 async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, fix = false }) {
   let fixes = 0;
   let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, reasoned = 0;
+  let usage = null, firstT = 0;   // the provider's token count (last chunk) and when the reply started arriving
   // brace depth outside strings: >0 means the JSON object continues on the next line
   const depthOf = t => { let d = 0, q = false, esc = false; for (const ch of t) { if (esc) { esc = false; continue; } if (ch === '\\') { esc = true; continue; } if (ch === '"') q = !q; else if (!q) { if (ch === '{' || ch === '[') d++; else if (ch === '}' || ch === ']') d--; } } return d; };
   const tryParse = t => {
@@ -2321,9 +2323,11 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       let j; try { j = JSON.parse(data); } catch { continue; }
       if (j.error) throw Object.assign(new Error(j.error.message || 'stream error'), { code: j.error.code || j.error.type || 'stream_error' });
       if (j.model) modelApplied = j.model;
+      if (j.usage) usage = j.usage;   // final chunk, when the provider reports usage
       const ch = j.choices && j.choices[0]; if (!ch) continue;
       if (ch.finish_reason) finish = ch.finish_reason;
       const delta = ch.delta; if (!delta) continue;
+      if (!firstT && (delta.content || delta.reasoning_content || delta.reasoning)) firstT = Date.now();
       const rz = delta.reasoning_content || delta.reasoning;
       if (typeof rz === 'string' && rz) { reasoned += rz.length; onReasoning && onReasoning(rz.length); }
       if (typeof delta.content === 'string' && delta.content) {
@@ -2337,6 +2341,14 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   if (jsonBuf) { const b = jsonBuf; jsonBuf = null; try { handleLine(b); } catch {} }
   if (!content.trim()) {
     throw Object.assign(new Error(''), { code: reasoned && (finish === 'length' || !finish) ? 'thinking_budget' : 'empty' });
+  }
+  // tokens/second over this reply's streaming time (a turn can stream several replies: drawing follow-up, tidy-up)
+  if (turn && firstT) {
+    const exact = !!(usage && usage.completion_tokens != null);
+    const st = turn.stats || (turn.stats = { tok: 0, ms: 0, est: false });
+    st.tok += exact ? usage.completion_tokens : Math.round((reasoned + content.length) / 4);   // no count from the provider: about 4 characters a token
+    st.ms += Date.now() - firstT;
+    if (!exact) st.est = true;
   }
   return { content, model: modelApplied };
 }
@@ -2360,7 +2372,12 @@ function currentEffort() {
   if (saved === 'auto' || (saved && ef.includes(saved))) return saved;
   return defaultEffort(id);
 }
-function renderModelLabel() { const e = currentEffort(); $('#modelLabel').textContent = `${modelName(settings.model) || '…'} · ${EFFORT_LABEL[e] || e}`; }
+// the provider a model is served by, shown next to it: OpenCode Go, OpenRouter or OpenGateway
+function providerName(id) { const m = modelInfo(id); return m ? (m.providerName || 'OpenCode Go') : ''; }
+// the env var that holds the key for a model (used in error messages)
+function keyNameFor(id) { const s = String(id); return s.startsWith('og:') ? 'OPENGATEWAY_API_KEY' : s.startsWith('or:') ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY'; }
+// header chip: provider · model · reasoning level
+function renderModelLabel() { const e = currentEffort(); $('#modelLabel').textContent = [providerName(settings.model), modelName(settings.model) || '…', EFFORT_LABEL[e] || e].filter(Boolean).join(' · '); }
 function renderEffort() {
   const seg = $('#effortSeg'); seg.textContent = '';
   const ef = effortsOf(settings.model), cur = currentEffort();
@@ -2370,6 +2387,7 @@ function renderEffort() {
     b.onclick = () => { settings.efforts[settings.model] = e; saveSettings(); renderEffort(); renderModelLabel(); };
     seg.appendChild(b);
   }
+  $('#providerNote').textContent = providerName(settings.model) ? `Provider: ${providerName(settings.model)}` : '';
   $('#effortNote').textContent = ef.length
     ? 'Lower reasoning starts drawing sooner. Auto = the model’s own default (often slow to start).'
     : 'This model has no adjustable reasoning level.';
@@ -2379,22 +2397,44 @@ async function loadModels() {
     const r = await fetch('/api/models'); const j = await r.json();
     models = j.models || [];
     if (!settings.model || !models.some(m => m.id === settings.model)) { settings.model = j.default || (models[0] && models[0].id); saveSettings(); }
-    // the first time an OpenRouter default is available, switch to it once; later choices are kept
-    if (j.default && j.default.startsWith('or:') && !settings.orDefaultApplied && models.some(m => m.id === j.default)) { settings.model = j.default; settings.orDefaultApplied = true; saveSettings(); }
+    // the first time a non-OpenCode default is available (OpenGateway or OpenRouter), switch to it once; later choices are kept
+    if (j.default && /^(og|or):/.test(j.default) && !settings.remoteDefaultApplied && models.some(m => m.id === j.default)) { settings.model = j.default; settings.remoteDefaultApplied = true; saveSettings(); }
     if (j.error) bubble({ role: 'error', text: `Could not list models (${j.error.code}): ${j.error.message}` });
   } catch { models = []; bubble({ role: 'error', text: 'Cannot reach the local server. Start it with `npm start`.' }); }
-  const sel = $('#modelSelect'); sel.textContent = '';
-  const oc = m => m.provider !== 'openrouter';
-  const groups = [['OpenRouter', m => !oc(m)], ['OpenCode Go · Featured', m => oc(m) && m.featured && !m.free], ['OpenCode Go · Free', m => oc(m) && m.free], ['OpenCode Go · All other models', m => oc(m) && !m.featured && !m.free]];
-  for (const [label, test] of groups) {
-    const list = models.filter(test).sort((a, b) => a.name.localeCompare(b.name)); if (!list.length) continue;
-    const og = document.createElement('optgroup'); og.label = label;
-    for (const m of list) { const o = document.createElement('option'); o.value = m.id; o.textContent = `${m.name}  (${m.id})`; og.appendChild(o); }
-    sel.appendChild(og);
-  }
-  sel.value = settings.model || '';
+  fillModelSelect();
   renderEffort(); renderModelLabel();
 }
+// the search text in the picker; every word typed must appear in a model's provider, name or id (case-insensitive)
+let modelQuery = '';
+function fillModelSelect() {
+  const sel = $('#modelSelect'); sel.textContent = '';
+  const words = modelQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hit = m => { const hay = `${m.providerName || 'OpenCode Go'} ${m.name} ${m.id}`.toLowerCase(); return words.every(w => hay.includes(w)); };
+  const oc = m => m.provider !== 'openrouter' && m.provider !== 'opengateway';
+  const groups = [['OpenGateway', m => m.provider === 'opengateway'], ['OpenRouter', m => m.provider === 'openrouter'], ['OpenCode Go · Featured', m => oc(m) && m.featured && !m.free], ['OpenCode Go · Free', m => oc(m) && m.free], ['OpenCode Go · All other models', m => oc(m) && !m.featured && !m.free]];
+  let shown = 0;
+  for (const [label, test] of groups) {
+    const list = models.filter(test).filter(hit).sort((a, b) => a.name.localeCompare(b.name)); if (!list.length) continue;
+    const og = document.createElement('optgroup'); og.label = label;
+    // each option names its provider, so the choice is clear even when several providers are on
+    for (const m of list) { const o = document.createElement('option'); o.value = m.id; o.textContent = `${m.providerName || 'OpenCode Go'} · ${m.name}${oc(m) ? `  (${m.id})` : ''}`; og.appendChild(o); shown++; }
+    sel.appendChild(og);
+  }
+  if (!shown) { const o = document.createElement('option'); o.disabled = true; o.textContent = `No model matches “${modelQuery.trim()}”`; sel.appendChild(o); }
+  sel.value = settings.model || '';   // stays unselected when the current model is filtered out
+}
+$('#modelSearch').oninput = e => { modelQuery = e.target.value; fillModelSelect(); };
+$('#modelSearch').onkeydown = e => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); $('#modelSelect').focus(); }
+  else if (e.key === 'Escape') { e.target.value = ''; modelQuery = ''; fillModelSelect(); }
+  else if (e.key === 'Enter') {
+    // Enter picks the first match
+    e.preventDefault();
+    const first = $('#modelSelect').querySelector('option:not([disabled])'); if (!first) return;
+    settings.model = first.value; saveSettings(); renderEffort(); renderModelLabel();
+    e.target.value = ''; modelQuery = ''; fillModelSelect();
+  }
+};
 $('#tidyChk').onchange = e => { settings.tidy = e.target.checked; saveSettings(); };
 $('#copyLogBtn').onclick = async () => {
   const info = [`Whiteboard Teacher debug log`, `browser: ${navigator.userAgent}`, `isolated: ${self.crossOriginIsolated}, cores: ${navigator.hardwareConcurrency}, webgpu: ${!!navigator.gpu}`,
@@ -2644,6 +2684,7 @@ function mcpSetup() {
   document.body.classList.add('mcpMode');
   if (EMBED) document.body.classList.add('embed');
   $('#modelSelect').closest('label').hidden = true;
+  $('#modelSearch').hidden = true;
   $('#tidyChk').closest('label').hidden = true;
   $('#emptyHint').textContent = 'Ask in opencode → its answer is drawn here';
   $('#attach span').textContent = 'Your drawing is ready. In opencode, ask "check my drawing".';

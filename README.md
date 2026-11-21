@@ -1,6 +1,6 @@
 # Whiteboard Teacher (local)
 
-An AI teacher that explains **any topic** by drawing on an infinite whiteboard. You ask in the side chat; the teacher answers with short caption lines in the chat while a pen draws the explanation on the board: icons, token rows, message diagrams, time charts and labelled arrows rather than paragraphs. It is modelled on Claude's *whiteboard-teacher* artifact and uses **OpenCode Go** and/or **OpenRouter** as the LLM.
+An AI teacher that explains **any topic** by drawing on an infinite whiteboard. You ask in the side chat; the teacher answers with short caption lines in the chat while a pen draws the explanation on the board: icons, token rows, message diagrams, time charts and labelled arrows rather than paragraphs. It is modelled on Claude's *whiteboard-teacher* artifact and uses **OpenCode Go**, **OpenRouter** and/or **OpenGateway** as the LLM. Each enabled provider's models show in the picker, labelled with the provider.
 
 ## Run it
 
@@ -188,13 +188,16 @@ When the tab is open, the MCP server draws there and doesn't open a browser tab.
 
 | Var | Default |
 |---|---|
-| `OPENCODE_API_KEY` | OpenCode Go key (this and/or `OPENROUTER_API_KEY`) |
-| `OPENROUTER_API_KEY` | OpenRouter key. When set, the OpenRouter model becomes the default (switched to once in the picker) |
+| `OPENCODE_API_KEY` | OpenCode Go key (any mix of the three keys is fine) |
+| `OPENGATEWAY_API_KEY` | OpenGateway key. When set, its model becomes the default (switched to once in the picker); all its active chat models are listed |
+| `OPENGATEWAY_MODEL` | `deepseek/deepseek-v4.1-flash-eco`: the OpenGateway default model; OpenGateway ids are written `og:<slug>` |
+| `OPENGATEWAY_API_BASE` | `https://apis.opengateway.ai/v1` |
+| `OPENROUTER_API_KEY` | OpenRouter key. When set (and no OpenGateway key), the OpenRouter model becomes the default (switched to once in the picker) |
 | `OPENROUTER_MODEL` | `deepseek/deepseek-v4.1-flash` |
 | `OPENROUTER_PROVIDER` | `baidu/fp8`: the provider(s) that serve `OPENROUTER_MODEL`, comma list; empty lets OpenRouter choose |
 | `OPENROUTER_ALLOW_FALLBACKS` | `false`: no other provider is used if the pinned one is down |
 | `OPENROUTER_MODELS` | extra OpenRouter models for the picker, comma list (not provider-pinned) |
-| `DEFAULT_MODEL` | the OpenRouter model if its key is set, else `deepseek-v4.1-flash`; OpenRouter ids are written `or:<slug>` |
+| `DEFAULT_MODEL` | the OpenGateway model if its key is set, else the OpenRouter model if its key is set, else `deepseek-v4.1-flash`; OpenRouter ids are written `or:<slug>` |
 | `PORT` / `HOST` | `5173` / `127.0.0.1` |
 | `OPENCODE_GO_API_BASE` | `https://opencode.ai/zen/go/v1` |
 | `TTS` | set to `off` to disable the server voice |
