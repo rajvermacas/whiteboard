@@ -7,6 +7,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const links = require('./links');   // reads links in the learner's message (LINK_FETCH=off disables)
 
 // ---------- .env loader (tiny, no dependency) ----------
 function loadEnv(file) {
@@ -211,6 +212,10 @@ async function handleChat(req, res) {
   const ac = new AbortController();
   res.on('close', () => ac.abort());   // browser pressed Stop / closed tab
 
+  // links in the learner's last message: read them (cached) and add what they say as clearly marked, untrusted context
+  await addLinkContext(payload.messages);
+  if (ac.signal.aborted) return;
+
   const upstream = viaOG ? { base: OG_BASE, headers: { 'Authorization': `Bearer ${OG_KEY}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT } }
     : viaOR ? { base: OR_BASE, headers: { 'Authorization': `Bearer ${OR_KEY}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT, 'X-Title': 'Whiteboard Teacher' } }
     : { base: API_BASE, headers: upstreamHeaders(String(body.session || '').slice(0, 100)) };
@@ -242,6 +247,28 @@ async function handleChat(req, res) {
     if (!ac.signal.aborted) res.write(`data: ${JSON.stringify({ error: { code: 'stream_error', message: String(e.message || e) } })}\n\n`);
   }
   res.end();
+}
+
+// ---------- link context ----------
+const textOf = c => Array.isArray(c) ? c.filter(p => p.type === 'text').map(p => p.text).join('\n') : String(c || '');
+async function addLinkContext(msgs) {
+  if (!links.enabled()) return;
+  let i = msgs.length - 1; while (i >= 0 && msgs[i].role !== 'user') i--;
+  if (i < 0 || !links.findURLs(textOf(msgs[i].content)).length) return;
+  let block = '';
+  try { block = links.contextBlock(await links.readLinks(textOf(msgs[i].content))); } catch (e) { console.warn('link context failed:', e.message); }
+  if (!block) return;
+  const m = msgs[i];
+  m.content = Array.isArray(m.content) ? [...m.content, { type: 'text', text: '\n\n' + block }] : m.content + '\n\n' + block;
+}
+// POST /api/links {text}: reads the links in a message ahead of /api/chat (which then gets them from the cache) and
+// says what was read, for the status line under the learner's message. Only a summary is returned, not the page text.
+async function handleLinks(req, res) {
+  let body;
+  try { body = JSON.parse(await readBody(req, 200_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
+  if (!links.enabled()) return sendJSON(res, 200, { enabled: false, links: [] });
+  const results = await links.readLinks(String(body.text || '')).catch(() => []);
+  sendJSON(res, 200, { enabled: true, links: results.map(links.summary) });
 }
 
 // ---------- sessions: auto-saved lessons on disk (./sessions/<id>.json) ----------
@@ -429,6 +456,7 @@ const server = http.createServer(async (req, res) => {
       catch (e) { return sendJSON(res, 502, { error: { code: 'upstream_error', message: String(e.message || e) }, models: [{ id: DEFAULT_MODEL, name: DEFAULT_MODEL, efforts: [] }], default: DEFAULT_MODEL }); }
     }
     if (url.pathname === '/api/chat' && req.method === 'POST') return handleChat(req, res);
+    if (url.pathname === '/api/links' && req.method === 'POST') return handleLinks(req, res);
     if (url.pathname === '/api/tts' && req.method === 'POST') return handleTTS(req, res);
     if (url.pathname === '/api/tts/status' && req.method === 'GET') { loadTTS(); return sendJSON(res, 200, ttsStatus()); }
     if (url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) return handleSessions(req, res, url);

@@ -59,6 +59,8 @@
         <button id="penDone">Done</button>
       </div>
       <div id="caption" hidden></div>
+      <div id="backBanner" hidden role="status" aria-live="polite"></div>
+      <div id="pendingPill" hidden role="status" aria-live="polite"></div>
       <div id="timeline" hidden>
         <button id="tlPrev" title="Previous step (←)">‹</button>
         <button id="tlPlay" title="Play">▶</button>
@@ -67,7 +69,7 @@
         <span id="tlLabel"></span>
         <button id="tlLive" hidden title="Back to the live board">Live ●</button>
       </div>
-      <div id="emptyHint">Ask a question → the teacher talks in the chat and draws here at the same time</div>
+      <div id="emptyHint">Ask a question → the teacher talks in the chat and draws here at the same time. Double-click any drawing to open up what is inside it.</div>
     </section>
 
     <aside id="chat">
@@ -88,20 +90,12 @@
         <hr>
         <label>Narration
           <select id="voiceMode">
-            <option value="kokoro">Kokoro (natural voice, runs in your browser)</option>
-            <option value="browser">Browser's built-in voice</option>
+            <option value="kokoro">Kokoro (natural voice, runs on this computer)</option>
             <option value="off">Off</option>
           </select>
         </label>
         <div class="vrow" id="kokoroRow">
           <label>Voice <select id="voiceName"></select></label>
-          <label>Run the voice on
-            <select id="voiceEngine">
-              <option value="server">This computer, via the app's server (fastest)</option>
-              <option value="wasm">Inside the browser, CPU (slow)</option>
-              <option value="webgpu">Inside the browser, GPU (310 MB download)</option>
-            </select>
-          </label>
         </div>
         <button id="voicePreview" type="button" class="linkish">▶ Preview voice</button>
         <label>Speaking speed <span id="voiceSpeedVal"></span>
