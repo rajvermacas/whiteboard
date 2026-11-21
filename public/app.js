@@ -1837,6 +1837,11 @@ function takeSwitch() { const f = switchReq; switchReq = null; if (f) f(); }
 function requestRelease(t) {
   if (t.releasing || !t.held) return;
   t.releasing = true;
+  // voice its first lines now, so they are ready when the current sentence ends
+  if (Voice.enabled()) {
+    if (t.intro && !t.introVoice) t.introVoice = Voice.prepare(t.intro);
+    Voice.prefetch([t.introVoice, ...t.held.filter(i => i.say != null && i.voice).slice(0, 1).map(i => i.voice)]);
+  }
   const go = () => releaseHeld(t);
   // nothing is being said or drawn right now: take over at once; otherwise at the next sentence boundary
   if (!queueRunning) { go(); return; }
@@ -1855,7 +1860,7 @@ function releaseHeld(t) {
   t.from = liveTurn; liveTurn = t; t.run.gen = gen;     // from: the answer it was asked inside (for the way back)
   if (!t.streamDone) { abortCtl = t.abort; activeStreams++; t.counted = true; streaming = true; }
   const items = t.held; t.held = null;
-  if (t.intro) items.unshift({ say: t.intro, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(t.intro) : null });
+  if (t.intro) items.unshift({ say: t.intro, turn: t, run: t.run, voice: Voice.enabled() ? t.introVoice || Voice.prepare(t.intro) : null });
   dlog('a background answer takes over:', items.length, 'lines');
   Voice.unlock();
   items.forEach(enqueue);
@@ -1993,6 +1998,7 @@ async function runQueue() {
     // a background answer is ready: let the current sentence finish, then hand over before the next one starts
     if (switchReq && queue[0] && queue[0].say != null) { await Promise.race([narrationDone, psleep(8000)]); takeSwitch(); continue; }
     const it = queue.shift(); if (!it) continue;
+    if (it.say != null && Voice.enabled()) Voice.prefetch(queue.filter(q => q.say != null && q.voice).slice(0, 2).map(q => q.voice));
     currentItem = it;
     try {
     if (it.say != null) {
@@ -2334,7 +2340,7 @@ async function readLinksFirst(q, ub, status, signal) {
     ub.appendChild(note); scrollChat();
   } catch (e) { if (signal.aborted) throw e; dlog('links: read failed', String(e)); }
 }
-// Proactive web search: the server asks the model (at low reasoning) whether a search could help, leaning to yes;
+// Web search when needed: the server asks the model (at low reasoning) whether the answer needs current information;
 // if so it searches (Tavily, or DuckDuckGo) while the thinking line says so, and a note under the learner's message
 // says what was searched. Returns true when the answer should get the results. Best effort: failures just skip it.
 async function searchFirst(messages, model, ub, status, signal) {
@@ -2421,7 +2427,8 @@ async function sendQ(q, opts, opened) {
     // links in the question: the server reads them first (the answer then gets them from its cache)
     await readLinksFirst(q, ub, s => { linkStatus = s; showThinking(); }, myAbort.signal);
     // could the web help? the server decides (leaning to yes) and searches; the answer then gets the results
-    const searched = await searchFirst(messages, model, ub, s => { linkStatus = s; showThinking(); }, myAbort.signal);
+    // (not for opening up a drawing: that is about the board, and it must start as fast as possible)
+    const searched = /^what is inside /.test(turn.q || '') ? false : await searchFirst(messages, model, ub, s => { linkStatus = s; showThinking(); }, myAbort.signal);
     linkStatus = ''; showThinking();
     const first = { ...opts, search: searched };
     let r1;

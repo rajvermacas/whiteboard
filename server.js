@@ -216,7 +216,7 @@ async function handleChat(req, res) {
   await addLinkContext(payload.messages);
   if (ac.signal.aborted) return;
 
-  // the learner's question could use the web (the planner decides, leaning to yes): add what a search found
+  // the learner's question needs current information (the planner decides): add what a web search found
   if (body.search && !links.findURLs(lastUserText(payload.messages)).length) {
     await addSearchContext(payload.messages, model, String(body.session || ''), ac.signal);
     if (ac.signal.aborted) return;
@@ -260,26 +260,24 @@ function upstreamFor(model, session) {
 }
 
 // ---------- proactive web search ----------
-// Before an answer, a quick call to the same model (low reasoning) decides whether a web search could help, leaning
-// strongly to yes. If that call fails or is slow, keyword rules decide. The results go to the teacher as marked,
+// Before an answer, a quick call to the same model (low reasoning) decides whether the answer needs current or
+// latest information; only then does it search. If that call fails or is slow, keyword rules decide. The results go to the teacher as marked,
 // untrusted context. WEB_SEARCH=off turns it off; Tavily is used when TAVILY_API_KEY is set, DuckDuckGo otherwise.
 const searchOn = () => links.enabled() && !/^(0|off|false|no)$/i.test(process.env.WEB_SEARCH || '');
 const lastUserText = msgs => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === 'user') return textOf(msgs[i].content); return ''; };
 const today = () => new Date().toISOString().slice(0, 10);
-const PLANNER = () => `You decide whether to run a web search before a teacher answers a learner. Today is ${today()}. Your own knowledge may be out of date or wrong, and a search costs almost nothing, so search whenever there is even a slight hint that fresh or exact facts could help:
-- anything recent or that changes over time: news, releases, versions, prices, benchmarks, leaderboards, rankings, "latest", "current", "new", "now", "today", years from ${new Date().getFullYear() - 2} on
-- any named thing: a product, model, library, framework, API, tool, company, paper, person, project, standard, event or place
-- specific facts you might misremember: numbers, dates, specs, limits, defaults, config options, error messages, commands
-- comparisons ("X vs Y"), recommendations ("best ..."), "is it true that ...", or the learner asking to look something up
-- anything you are not fully sure about
-Do not search only for timeless fundamentals you know well and that no named, changing thing is involved in (how attention works, what a hash map is, the chain rule), for pure arithmetic, small talk, or questions about the drawing on the board. When in doubt, search.
+const PLANNER = () => `You decide whether to run a web search before a teacher answers a learner. Today is ${today()}. Most questions do not need one: search only when a good answer needs current or latest information that may be newer than your training or may have changed since:
+- the latest, newest, current or recent state of something: news, releases, versions, prices, availability, benchmarks, leaderboards, rankings, who leads or owns what
+- events, announcements or products from about the last two years (${new Date().getFullYear() - 1}-${new Date().getFullYear()}), or anything you have not heard of
+- facts about a specific product, model, library, API or company that change between versions (defaults, limits, flags, pricing, specs), when the question depends on them being up to date
+- the learner asks to look something up or check the web
+Do not search for concepts, fundamentals, how established things work (attention, transformers, hash maps, TCP, the chain rule, how React hooks work), history that is settled, arithmetic, small talk, or questions about the drawing on the board, even when they name a well-known thing. If you are unsure whether newer information matters, search.
 Reply with JSON only, no other text: {"search": true or false, "queries": ["1 or 2 short web search queries in English"]}`;
 // fallback when the planner can't answer: the same idea as keyword rules
 function searchHint(text) {
   const t = String(text || '');
-  if (/^open up “/i.test(t) && !/[A-Z][a-z]+[A-Z]|\d/.test(t.slice(9, 60))) return false;   // a drill into a plain drawing
-  return /\b(latest|newest|recent|current|currently|today|now|this (year|month|week)|news|release[ds]?|version|v\d|price|pricing|cost|benchmark|leaderboard|rank|best|vs\.?|versus|compare|announce[ds]?|launch(ed)?|update[ds]?|deprecated|who is|look (it )?up|search|20[2-9]\d)\b/i.test(t)
-    || /\b[A-Z][a-z]+[A-Z]\w*|\b[A-Z]{2,}\d*\b|\w+\.(js|py|io|ai)\b|\b\d+(\.\d+)+\b/.test(t);
+  if (/^open up “/i.test(t)) return false;   // opening up a drawing on the board
+  return /\b(latest|newest|most recent|recently|current(ly)?|today|right now|this (year|month|week)|news|just (released|announced|launched)|new (version|release|model)|price|pricing|benchmark|leaderboard|look (it )?up|search (the web|online|for)|20[2-9]\d)\b/i.test(t);
 }
 async function planSearch(msgs, model, session, signal) {
   const q = lastUserText(msgs).slice(0, 2000);

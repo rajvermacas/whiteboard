@@ -115,19 +115,44 @@ window.Voice = (() => {
   const enabled = () => cfg.mode !== 'off';
   function unlock() { if (cfg.mode === 'kokoro') unlockAudio(); }
 
+  // Lines are voiced on demand, not all at once: the server's Kokoro makes one line at a time, so voicing every
+  // line as it streams in would put a long queue in front of anything said next (a double-click's answer, a side
+  // question). Only the line about to play and the next few (prefetch) are made, and a line that must play now
+  // jumps to the front.
+  const wantQ = []; let inflight = 0; const MAX_INFLIGHT = 1;   // one at a time: a line that must play next waits for at most one other
   function prepare(text) {
     const clean = speakable(text);
-    const h = { text: clean, raw: text, audio: null };
-    if (!clean || cfg.mode !== 'kokoro') return h;
-    h.audio = synthKokoro(clean); h.audio.catch(() => {});
-    return h;
+    return { text: clean, raw: text, audio: null, started: false };
+  }
+  function want(h, urgent) {
+    if (!h || !h.text || cfg.mode !== 'kokoro' || h.started) return;
+    if (!h.audio) { h.audio = new Promise((res, rej) => { h.res = res; h.rej = rej; }); h.audio.catch(() => {}); }
+    const i = wantQ.indexOf(h);
+    if (i >= 0) { if (!urgent) return; wantQ.splice(i, 1); }
+    if (urgent) wantQ.unshift(h); else wantQ.push(h);
+    pump();
+  }
+  function pump() {
+    while (inflight < MAX_INFLIGHT && wantQ.length) {
+      const h = wantQ.shift(); h.started = true; inflight++;
+      synthKokoro(h.text).then(h.res, h.rej).finally(() => { inflight--; pump(); });
+    }
+  }
+  // the next lines in the order they will be said: voice them ahead (and before anything prefetched earlier)
+  function prefetch(list) {
+    const next = (list || []).filter(h => h && h.text && !h.started);
+    for (let k = next.length - 1; k >= 0; k--) { const i = wantQ.indexOf(next[k]); if (i >= 0) wantQ.splice(i, 1); }
+    for (const h of next) want(h, false);
+    // move them in front of older prefetches (lines set aside or dropped)
+    const mine = wantQ.filter(h => next.includes(h)), rest = wantQ.filter(h => !next.includes(h));
+    wantQ.splice(0, wantQ.length, ...mine, ...rest);
   }
 
   async function play(h) {
     const myEpoch = epoch;
     const none = { duration: 0, done: Promise.resolve(), cancelled: true };
     if (!h || !h.text || cfg.mode === 'off') return none;
-    if (!h.audio) h.audio = synthKokoro(h.text);
+    if (!h.started) want(h, true);
     // wait for Kokoro (longer while the model is still loading); never switch to another voice
     const limit = status.state === 'loading' || serverState !== 'ready' ? 300000 : Math.max(60000, h.text.length * 400);
     let buf;
@@ -170,6 +195,7 @@ window.Voice = (() => {
   }
   function stop() {
     epoch++;
+    wantQ.length = 0;            // lines not started yet are voiced again when (if) they are played
     if (current) { const c = current; current = null; c.stop(); }
     speakingNow = false;
   }
@@ -193,7 +219,7 @@ window.Voice = (() => {
   }
 
   return {
-    configure, enabled, unlock, prepare, play, stop, pause, resume, speakable, describe, preview,
+    configure, enabled, unlock, prepare, prefetch, play, stop, pause, resume, speakable, describe, preview,
     speaking: () => speakingNow,
     status: () => status,
     device: () => 'server',
