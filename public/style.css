@@ -226,3 +226,32 @@ foreignObject .katex { font-size: 1em; }
 #composer .ib:hover::after, #composer .ib:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
 #composer .ib:last-child::after { left: auto; right: 0; transform: translateY(4px); }
 #composer .ib:last-child:hover::after, #composer .ib:last-child:focus-visible::after { transform: translateY(0); }
+
+/* question tree: main → side → side …, top left of the board */
+#qtree { flex: 0 0 auto; max-height: 34%; overflow: auto; margin: 8px 10px 0; background: #fff; border: 1px solid #e3e6ea; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.05); font-size: 13px; color: #1f2328; }
+#qtree[hidden] { display: none; }
+#qtree .qtHead { display: flex; justify-content: space-between; gap: 10px; width: 100%; border: 0; background: none; padding: 7px 10px; font: inherit; font-weight: 600; color: #57606a; cursor: pointer; text-align: left; }
+#qtree.busy .qtHead span:first-child::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #1d6fb8; margin-right: 6px; vertical-align: 1px; animation: pendingPulse 1.6s ease-in-out infinite; }
+#qtree .qtList { list-style: none; margin: 0; padding: 0 6px 6px; }
+#qtree .qt { position: relative; display: grid; grid-template-columns: 18px 1fr; column-gap: 4px; padding: 4px 6px 4px calc(6px + var(--d) * 18px); border-radius: 8px; cursor: pointer; }
+#qtree .qt:hover { background: #f3f5f7; }
+#qtree .qt::before { content: ''; position: absolute; left: calc(var(--d) * 18px - 6px); top: 0; bottom: 50%; width: 8px; border-left: 1.5px solid #c9d1d9; border-bottom: 1.5px solid #c9d1d9; border-bottom-left-radius: 5px; }
+#qtree .qt[style*="--d:0"]::before { display: none; }
+#qtree .qtIcon { grid-row: span 2; text-align: center; color: #8c959f; }
+#qtree .qtText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#qtree .qtTag { display: inline-block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: #8c959f; border: 1px solid #d8dee4; border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
+#qtree .qtState { font-size: 11.5px; color: #8c959f; }
+#qtree .qt.path .qtText { font-weight: 500; }
+#qtree .qt.here { background: #eef5fc; }
+#qtree .qt.here .qtText { font-weight: 600; color: #14507f; }
+#qtree .qt.live .qtIcon, #qtree .qt.live .qtState { color: #1d6fb8; }
+#qtree .qt.waiting .qtIcon, #qtree .qt.waiting .qtState { color: #a06a00; }
+#qtree .qt.bg .qtIcon, #qtree .qt.ready .qtIcon { color: #1d6fb8; }
+#qtree .qt.ready .qtState { color: #2a8a3e; }
+#qtree .qt.done .qtIcon { color: #2a8a3e; }
+#qtree .qt.done .qtText, #qtree .qt.stopped .qtText, #qtree .qt.steered .qtText { color: #6e7781; }
+#qtree .qt.stopped .qtIcon { color: #d1382c; }
+#qtree .qtOlder { padding: 0 12px 8px; font-size: 11.5px; color: #8c959f; }
+.msg.flash { animation: msgFlash 1.2s ease; }
+@keyframes msgFlash { 0%, 40% { box-shadow: 0 0 0 3px #9cc3e6; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (max-width: 760px) { #qtree { font-size: 12px; } }

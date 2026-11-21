@@ -1484,6 +1484,7 @@ const liveBusy = () => streamingLive() || (queueRunning && !scrub);
 // ‹ / › (and ←/→): go to the previous or next step and play on from there to the last step, until paused
 function stepBy(d) {
   const nav = navSteps(); if (!nav.length) return;
+  dlog('step', d > 0 ? '›' : '‹', scrub ? `from step ${scrub.i}` : 'from the live board', '· live:', lab(liveTurn));
   Voice.unlock();
   if (!scrub) {
     if (d > 0) return;   // the live end is already here
@@ -1531,21 +1532,23 @@ $('#tlNext').onclick = () => stepBy(1);
 $('#tlLive').onclick = () => exitScrub();
 $('#tlPlay').onclick = () => {
   Voice.unlock();
-  if (scrub && scrub.playing) { stopPlayback(); return; }
+  const say = what => dlog('timeline ▶/⏸:', what, '· live:', lab(liveTurn), '· stack:', forkStack());
+  if (scrub && scrub.playing) { say('stop the look-back playback at step ' + scrub.i); stopPlayback(); return; }
   const nav = navSteps(); if (!nav.length) return;
   const atEnd = !scrub || nav.indexOf(scrub.i) === nav.length - 1;
   // an answer that is set aside (paused, or a question came in while it was paused) continues where it left off
   // (while a side answer is still running, the button pauses/resumes that instead)
-  if (parked && atEnd && (scrub || (!liveWorking() && !isPaused()))) { if (scrub) exitScrub(true); continueParked(); return; }
+  if (parked && atEnd && (scrub || (!liveWorking() && !isPaused()))) { say('continue the set-aside answer'); if (scrub) exitScrub(true); continueParked(); return; }
   if (!scrub) {
     // the live lesson: the same as the chat's pause button
-    if (isPaused()) { setPaused(false); return; }
-    if (liveWorking()) { setPaused(true); return; }
-    replay();   // a completed answer: play it from the beginning
+    if (isPaused()) { say('resume'); setPaused(false); return; }
+    if (liveWorking()) { say('pause'); setPaused(true); return; }
+    say('replay the lesson'); replay();   // a completed answer: play it from the beginning
     return;
   }
   // at the last step of a completed answer: play it again from the beginning; otherwise from this step to the end
-  if (atEnd) { replay(); return; }
+  if (atEnd) { say('replay the lesson'); replay(); return; }
+  say(`look back: play from step ${scrub.i} to the end${parked ? ', then continue the set-aside answer' : ''}`);
   playFrom(scrub.i);
 };
 let rangeTimer = null;
@@ -1601,7 +1604,7 @@ function resetBoard() {
   objs.clear(); selection.clear(); updateEmpty(); drawSelection(); updateSelectionUI();
 }
 function applySession(d) {
-  stopAll(); scrub = null; resetBoard();
+  stopAll(); scrub = null; resetBoard(); resetTree();
   steps = Array.isArray(d.steps) ? d.steps : (d.objs && d.objs.length ? [{ say: '', by: 'teacher', cmds: d.objs.map(c => ({ ...c, _placed: true })), t: 'base' }] : []);
   lesson = d.lesson; sessionCreatedAt = d.createdAt || new Date().toISOString();
   chat = Array.isArray(d.chat) ? d.chat : [];
@@ -1832,6 +1835,7 @@ function renderTeaching(working = liveWorking(), paused = isPaused()) {
   if (teachEl.parentNode !== host || teachEl.nextSibling !== meta) { host.insertBefore(teachEl, meta); scrollChat(); }
 }
 function updateSendBtn() {
+  renderTreeSoon();
   const working = liveWorking(), p = isPaused();
   renderTeaching(working, p);
   const pb = $('#pauseBtn');
@@ -1876,14 +1880,14 @@ function streamingLive() { return activeStreams - forks.filter(f => !f.turn.stre
 // Looking back with ‹ / the slider sets the answer aside the same way; reaching the end of the recap picks it up.
 let liveTurn = null;
 function parkLive(why = 'look') {   // why: 'question' (a side question) or 'look' (looking back)
-  const t = liveTurn;
+  const t = liveTurn, wasPaused = isPaused();
   const busy = t && !forks.some(f => f.turn === t) && (!t.streamDone || queue.length || queueBusy || Voice.speaking());
   if (!busy) { if (streamingLive() || queueRunning) stopAll(false, 'set aside: nothing left'); setPaused(false); return; }
   t.parkedQ = queue.splice(0);
   const cut = lastSay && lastSay.turn === t && (queueBusy || Voice.speaking() || (t.parkedQ.length && t.parkedQ[0].say == null));
   if (cut) t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? Voice.prepare(lastSay.say) : null });
   if (currentItem && currentItem.cmd && currentItem.turn === t) currentItem.keep = true;
-  forks.push({ turn: t, why, abort: t.abort, say: lastSay && lastSay.turn === t ? lastSay.say : '' }); parked = forks[forks.length - 1];
+  forks.push({ turn: t, why, wasPaused, abort: t.abort, say: lastSay && lastSay.turn === t ? lastSay.say : '' }); parked = forks[forks.length - 1];
   if (abortCtl === t.abort) abortCtl = null;          // Stop during the side answer must not cut the set-aside stream
   dlog('set aside', lab(t), '(' + why + '):', t.parkedQ.length, 'lines', t.streamDone ? '' : '(still streaming)', '· stack:', forkStack());
   gen++; Voice.stop(); narrationDone = Promise.resolve(); finishTyping(); hideIcon(pen); hideIcon(eraser);
@@ -1984,18 +1988,98 @@ function releaseHeld(t, idle = false) {
 }
 function dropHeld(t) {
   if (!pendingHeld.has(t)) return;
-  dlog('background answer dropped:', lab(t));
+  dlog('background answer dropped:', lab(t)); t.dropped = true;
   pendingHeld.delete(t); t.held = null; renderPendingPill(); updateSendBtn();
   if (t.pulse) { t.pulse.remove(); t.pulse = null; }
   if (t.heldUser) { t.heldUser.el.classList.remove('pending'); t.heldUser.wait.textContent = '✕ not opened (stopped or failed)'; }
 }
 function renderPendingPill() {
+  renderTreeSoon();
   const el = $('#pendingPill'); if (!el) return;
   const n = pendingHeld.size, first = [...pendingHeld][0];
   el.hidden = !n;
   if (n && isPaused()) { el.textContent = first.ready ? `✓ The answer to “${clip(first.q.replace(/^what is inside /, ''), 50)}” is ready: press ▶, it comes in at the next sentence` : `⏳ Answering “${clip(first.q.replace(/^what is inside /, ''), 50)}” in the background · ▶ carries on with the lesson meanwhile`; return; }
   if (n) el.textContent = `⏳ ${/^what is inside /.test(first.q) ? 'Opening up ' + first.q.replace(/^what is inside /, '') : `Answering “${clip(first.q, 50)}”`}${n > 1 ? ` (+${n - 1})` : ''} … the lesson goes on meanwhile`;
 }
+// ---- the question tree (top of the chat): main question → side question → side question …, indented ----
+// Each question is a node under the answer it was asked inside: a side question (Enter while teaching or paused),
+// a double-click, or a question asked while an answer is set aside. A steer replaces the answer it steers, so it sits
+// at that answer's level. A plain new question starts a new tree. The rows show where the lesson is right now and
+// update as the inner answers finish and the teacher goes back out.
+const qtree = [];                 // every node (a turn), in the order asked
+let treeOpen = true; try { treeOpen = localStorage.getItem('wbt.treeOpen') !== '0'; } catch {}
+function addToTree(t, q, opts, askedIn) {
+  const drill = /^what is inside /.test(t.q);
+  t.asked = q; t.kind = opts.steer ? 'steer' : drill ? 'drill' : (opts.parallel || opts.side || opts.aside) ? 'side' : 'main';
+  const open = x => x && qtree.includes(x) && !x.dropped;
+  if (t.kind === 'steer') { t.parent = askedIn ? askedIn.parent || null : null; if (askedIn) askedIn.steered = true; }
+  else if (t.kind === 'side') t.parent = open(askedIn) ? askedIn : parked ? parked.turn : null;
+  else if (t.kind === 'drill') t.parent = open(askedIn) ? askedIn : null;   // opening up a drawing of the answer on the board
+  else t.parent = parked && open(parked.turn) ? parked.turn : null;          // a set-aside answer is still waiting: under it
+  if (t.kind === 'side' && !t.parent) t.kind = 'main';
+  if (t.kind === 'main' && t.parent) t.kind = 'side';     // asked while an answer waits to be gone back to
+  t.level = t.parent ? (t.parent.level || 0) + 1 : 0;
+  t.askedAt = Date.now();
+  qtree.push(t);
+  dlog('tree:', t.kind, lab(t), 'under', lab(t.parent), '· level', t.level);
+  renderTreeSoon();
+}
+function resetTree() { qtree.length = 0; renderTreeSoon(); }
+// what is happening to a question right now
+function nodeState(t) {
+  if (t.dropped) return { k: 'stopped', icon: '✕', text: 'not opened' };
+  if (pendingHeld.has(t)) return t.ready ? { k: 'ready', icon: '●', text: isPaused() ? 'ready · press ▶' : 'ready · comes in next' } : { k: 'bg', icon: '⏳', text: 'answering on the side' };
+  if (forks.some(f => f.turn === t)) return { k: 'waiting', icon: '⏸', text: t === (parked && parked.turn) ? 'waits · goes back here next' : 'waits' };
+  if (t === liveTurn) {
+    if (t.steered) return { k: 'steered', icon: '↪', text: 'steered' };
+    if (isPaused()) return { k: 'live', icon: '⏸', text: 'paused here' };
+    if (liveWorking() || streamingLive()) return { k: 'live', icon: '▶', text: t.thinking ? 'thinking' : 'answering now' };
+  }
+  if (t.steered) return { k: 'steered', icon: '↪', text: 'steered' };
+  if (t.msg && t.msg.interrupted || (t.abort && t.abort.signal.aborted && !t.streamDone)) return { k: 'stopped', icon: '■', text: 'stopped' };
+  if (!t.streamDone) return { k: 'bg', icon: '⏳', text: 'answering' };
+  return { k: 'done', icon: '✓', text: 'answered' };
+}
+const rootOf = t => { while (t && t.parent) t = t.parent; return t; };
+let treeRaf = 0, treeHtml = '', treeTick = null;
+function renderTreeSoon() { if (!treeRaf) treeRaf = requestAnimationFrame(() => { treeRaf = 0; renderTree(); }); }
+function renderTree() {
+  const el = $('#qtree'); if (!el) return;
+  // the tree of where the lesson is now (the live answer, else the newest question)
+  const here = liveTurn && qtree.includes(liveTurn) ? liveTurn : qtree[qtree.length - 1];
+  const root = rootOf(here);
+  if (!root) { el.hidden = true; treeHtml = ''; clearInterval(treeTick); treeTick = null; return; }
+  const rows = [], walk = (t, d) => { rows.push([t, d]); qtree.filter(c => c.parent === t).forEach(c => walk(c, d + 1)); };
+  walk(root, 0);
+  const path = new Set(); for (let x = here; x; x = x.parent) path.add(x);
+  const older = qtree.filter(t => !t.parent && t !== root).length;
+  const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const label = t => t.kind === 'drill' ? 'Open up ' + t.q.replace(/^what is inside /, '') : t.asked || t.q;
+  const states = rows.map(([t]) => nodeState(t));
+  const active = states.filter(s => s.k !== 'done' && s.k !== 'stopped' && s.k !== 'steered').length;
+  const html = `<button class="qtHead" type="button" aria-expanded="${treeOpen}" title="${treeOpen ? 'Hide' : 'Show'} the questions">` +
+    `<span>Questions${rows.length > 1 ? ` · depth ${Math.max(...rows.map(r => r[1]))}` : ''}</span><span class="qtCaret">${treeOpen ? '▾' : '▸'}</span></button>` +
+    (treeOpen ? `<ol class="qtList">${rows.map(([t, d], i) => {
+      const s = states[i], tag = d === 0 ? 'main' : t.kind === 'drill' ? 'double-click' : t.kind === 'steer' ? 'steer' : 'side ' + d;
+      return `<li class="qt ${s.k}${t === here ? ' here' : ''}${path.has(t) ? ' path' : ''}" style="--d:${d}" data-k="${esc(t.key)}" title="${esc(label(t))}\n${esc(s.text)}">` +
+        `<span class="qtIcon">${s.icon}</span><span class="qtText"><span class="qtTag">${tag}</span>${esc(clip(label(t), 70))}</span>` +
+        `<span class="qtState">${t === here && s.k === 'live' ? 'you are here · ' : ''}${esc(s.text)}</span></li>`;
+    }).join('')}</ol>${older ? `<div class="qtOlder">${older} earlier question${older > 1 ? 's' : ''} in this chat</div>` : ''}` : '');
+  el.hidden = false;
+  el.classList.toggle('busy', active > 0);
+  if (html !== treeHtml) { el.innerHTML = html; treeHtml = html; }
+  // states also change without an event (thinking → answering, a stream ending): look again while something is open
+  if (active && !treeTick) treeTick = setInterval(renderTreeSoon, 600);
+  if (!active && treeTick) { clearInterval(treeTick); treeTick = null; }
+}
+$('#qtree').addEventListener('click', e => {
+  if (e.target.closest('.qtHead')) { treeOpen = !treeOpen; try { localStorage.setItem('wbt.treeOpen', treeOpen ? '1' : '0'); } catch {} renderTree(); return; }
+  const li = e.target.closest('.qt'); if (!li) return;
+  const t = qtree.find(x => x.key === li.dataset.k);
+  const b = t && (t.el && t.el.isConnected ? t.el : t.heldUser && t.heldUser.el.isConnected ? t.heldUser.el : null);
+  if (b) { b.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); }
+});
+
 // "how attention works" from "Explain how attention works, with an example." (the parent's own question)
 function shortTopic(q) {
   let s = String(q || '').replace(/\s+/g, ' ').trim().replace(/^(please |can you |could you )?(explain|tell me about|teach me|describe|show( me)?|what is|what are|how does|how do)\b\s*/i, m => /^(how|what)/i.test(m.trim()) ? m : '');
@@ -2085,12 +2169,22 @@ function ask(q, mode = 'fork') {
   const paused = isPaused() && !scrub;
   const teaching = !scrub && (streamingLive() || queueRunning);
   dlog('user: asks', JSON.stringify(clip(q, 60)), '· key:', mode, '· state:', paused ? 'paused' : teaching ? 'teaching' : scrub ? 'looking back' : 'idle', '· live:', lab(liveTurn));
+  // looking back at an earlier step while an answer is set aside: go back to the live board and pick that answer up
+  // where it was (still paused if it was paused before looking back), then treat the message as if it was typed there
+  // (Enter: answered on the side while that answer carries on, or on ▶; ⌘/Ctrl+Enter: steers it)
+  if (scrub && parked && forkLeft(parked) && !streamingLive()) {
+    const wasPaused = !!parked.wasPaused;
+    dlog('user: asked while looking back: back to the live board,', wasPaused ? 'paused in' : 'carrying on with', lab(parked.turn));
+    exitScrub(true); continueParked(); if (wasPaused) setPaused(true);
+    if (mode === 'steer') { if (isPaused()) setPaused(false); return send(q, { steer: true }); }
+    return send(q, { parallel: true, aside: true, topic: q, intro: `You asked: “${clip(q, 90)}”.` });
+  }
   if ((teaching || paused) && mode === 'steer') { if (paused) setPaused(false); return send(q, { steer: true }); }
   if ((teaching || paused) && liveTurn) return send(q, { parallel: true, aside: true, topic: q, intro: `You asked: “${clip(q, 90)}”.` });
   if (paused) return send(q, { side: true });
   return send(q);
 }
-$('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(true, 'clear chat'); chat = []; renderChat(); saveSoon(); };
+$('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(true, 'clear chat'); chat = []; renderChat(); resetTree(); saveSoon(); };
 $('#selAsk').onclick = () => input.focus();
 $('#selErase').onclick = () => { if (!scrub) learnerErase([...selection]); };
 function learnerErase(ids) { recordEdit({ cmd: 'erase', ids: ids.slice() }); eraseIds(ids, { gen }, true); }
@@ -2515,7 +2609,7 @@ async function readLinksFirst(q, ub, status, signal) {
 // if so it searches (Tavily, or DuckDuckGo) while the thinking line says so, and a note under the learner's message
 // says what was searched. Returns true when the answer should get the results. Best effort: failures just skip it.
 async function searchFirst(messages, model, ub, status, signal) {
-  if (settings.webSearch === false) return false;
+  // always on in the app (the server's WEB_SEARCH=off still turns it off)
   const slim = messages.filter(m => m.role !== 'system').slice(-12).map(m => ({ role: m.role, content: Array.isArray(m.content) ? m.content.filter(p => p && p.type === 'text') : m.content }));
   const post = step => fetch('/api/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal, body: JSON.stringify({ model, session: lesson.session, messages: slim, step }) }).then(r => r.ok ? r.json() : null);
   try {
@@ -2563,6 +2657,7 @@ async function sendQ(q, opts, opened) {
   const am = { role: 'assistant', text: '', drew: [], meta: '' };
   if (!held) chat.push(am);
   const turn = { msg: am, q: opts.topic || q, from: held ? null : askedIn, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36) };
+  addToTree(turn, q, opts, askedIn);
   const body = turn.el.querySelector('.body'); body.classList.add('thinking');
   // asked in the background: its lines are held (and its bubbles kept out of the chat) until it takes over
   if (held) {
@@ -2891,7 +2986,6 @@ $('#modelSearch').onkeydown = e => {
   }
 };
 $('#tidyChk').onchange = e => { settings.tidy = e.target.checked; saveSettings(); };
-$('#searchChk').onchange = e => { settings.webSearch = e.target.checked; saveSettings(); };
 $('#copyLogBtn').onclick = async () => {
   const info = [`Whiteboard Teacher debug log`, `browser: ${navigator.userAgent}`, `isolated: ${self.crossOriginIsolated}, cores: ${navigator.hardwareConcurrency}, webgpu: ${!!navigator.gpu}`,
     `model: ${settings.model} · ${currentEffort()} · voice: ${JSON.stringify(voiceCfg())} · voice status: ${JSON.stringify(Voice.status())} (${Voice.device() || '-'})`,
@@ -2899,7 +2993,8 @@ $('#copyLogBtn').onclick = async () => {
     `session: ${lesson ? `${lesson.session} “${lesson.topic}”` : '-'} · chat messages: ${chat.length} · board objects: ${objs.size} · steps: ${steps.length}`,
     `state: ${isPaused() ? 'paused' : 'not paused'}${scrub ? ', looking back' : ''}${steering ? ', steering' : ''} · live answer: ${lab(liveTurn)} · fork stack (bottom > top): ${forkStack()}`,
     `background answers: ${pendingHeld.size ? [...pendingHeld].map(t => `${lab(t)} ${t.ready ? 'ready' : 'writing'}${t.waitResume ? ', waits for ▶' : ''}`).join(' | ') : 'none'}`,
-    `settings: web search ${settings.webSearch === false ? 'off' : 'on'}, tidy ${settings.tidy === false ? 'off' : 'on'} · page loaded ${new Date(performance.timeOrigin).toISOString()} · now ${new Date().toISOString()}`, '', ...debugLog].join('\n');
+    `question tree: ${qtree.length ? qtree.map(t => `${'  '.repeat(t.level || 0)}${lab(t)} [${t.kind}] ${nodeState(t).text}`).join(' | ') : 'empty'}`,
+    `settings: tidy ${settings.tidy === false ? 'off' : 'on'} · page loaded ${new Date(performance.timeOrigin).toISOString()} · now ${new Date().toISOString()}`, '', ...debugLog].join('\n');
   try { await navigator.clipboard.writeText(info); $('#copyLogBtn').textContent = 'Copied ✓'; }
   catch { const w = window.open('', '_blank'); if (w) { w.document.body.innerText = info; } }
   setTimeout(() => { $('#copyLogBtn').textContent = 'Copy debug log'; }, 2000);
@@ -2954,7 +3049,7 @@ let topicIsNew = false;
 // New session: starts at once with a default name; the first question names it (see nameSession).
 async function newSession() {
   if (lesson && !untouched()) { saveNow(); await saveToServer(); }
-  stopAll(); if (scrub) exitScrub(); resetBoard(); chat = []; steps = []; updateTimeline();
+  stopAll(); if (scrub) exitScrub(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline();
   lesson = { topic: 'New session', autoName: true, plan: null, session: 'wbt-' + uuid() };
   sessionCreatedAt = new Date().toISOString();
   camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
@@ -3154,7 +3249,6 @@ function mcpSetup() {
   const had = await loadAll();
   updateEmpty();
   $('#tidyChk').checked = settings.tidy !== false;
-  $('#searchChk').checked = settings.webSearch !== false;
   applyVoice(); updateTimeline();
   renderTitle(); renderChat(); applyCamera();
   if (MCP_MODE) mcpSetup(); else await loadModels();
