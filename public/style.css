@@ -27,6 +27,7 @@ button { font: inherit; cursor: pointer; }
 /* ---------- layout ---------- */
 #main { flex: 1 1 auto; display: flex; min-height: 0; }
 #boardWrap { position: relative; flex: 1 1 auto; min-width: 0; background: #fff; overflow: hidden; }
+#boardWrap:focus { outline: none; }
 #board { width: 100%; height: 100%; display: block; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
 #board.panning { cursor: grabbing; }
 #board.overObj { cursor: pointer; }

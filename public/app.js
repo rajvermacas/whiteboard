@@ -40,7 +40,7 @@ const objs = new Map();        // id -> {cmd, g, bb, off:[dx,dy]}
 let camera = { x: -60, y: -60, scale: 1 };
 let chat = [];                 // [{role:'user'|'assistant'|'error'|'system', text, about?, drew?, meta?}]
 const selection = new Set();
-let settings = { model: null, efforts: {}, voice: { mode: 'kokoro', voice: 'af_bella', speed: 1, engine: 'server' } };
+let settings = { model: null, efforts: {}, voice: { mode: 'kokoro', voice: 'af_bella', speed: 0.85, engine: 'server' } };
 let models = [];
 let gen = 0;                   // animation generation: bump to finish every running tween at once
 let streaming = false, queueRunning = false, replaying = false;
@@ -1280,6 +1280,10 @@ document.addEventListener('keydown', e => {
   // Delete erases the selected drawing; with the chat box focused and empty only Delete does, so Backspace keeps editing text
   const inChat = document.activeElement === input;
   if ((!typing || (inChat && e.key === 'Delete' && !input.value)) && (e.key === 'Delete' || e.key === 'Backspace') && selection.size && !scrub) { e.preventDefault(); learnerErase([...selection]); }
+  // Space on the board (not in the chat box or a field) is the timeline's ▶/⏸
+  if (e.key === ' ' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && document.activeElement && document.activeElement.closest('#boardWrap') && !document.activeElement.closest('button') && !$('#timeline').hidden) {
+    e.preventDefault(); dlog('user: space on the board → timeline', $('#tlPlay').textContent); $('#tlPlay').click(); return;
+  }
   if (!typing && !e.metaKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && navSteps().length) { e.preventDefault(); stepBy(e.key === 'ArrowLeft' ? -1 : 1); }
 });
 
@@ -1639,7 +1643,9 @@ async function resumeSession(id) {
 }
 async function loadAll() {
   try { Object.assign(settings, JSON.parse(localStorage.getItem(LS_SET) || '{}')); } catch {}
-  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'kokoro', voice: 'af_bella', speed: 1, engine: 'server' };
+  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'kokoro', voice: 'af_bella', speed: 0.85, engine: 'server' };
+  // default speaking speed is 0.85× (v1): move the old 1× default over once; a speed picked later is kept
+  if (!settings.speedV1) { if (!settings.voice.speed || settings.voice.speed === 1) settings.voice.speed = 0.85; settings.speedV1 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
   // narration is on by default (v4): switch it on once for everyone (Kokoro, Bella); 🔊 / ⚙ turn it off and that is kept
   if (!settings.voiceV4) { settings.voice = { ...settings.voice, mode: 'kokoro', voice: settings.voice.voice || 'af_bella' }; settings.voiceV3 = settings.voiceV4 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
   if (!settings.efforts || typeof settings.efforts !== 'object') settings.efforts = {};
@@ -1698,7 +1704,20 @@ $('#sessNew').onclick = () => { sessDlg.close(); newSession(); };
 // chat UI
 // ======================================================================
 const msgBox = $('#messages'), input = $('#input'), sendBtn = $('#sendBtn');
-function scrollChat() { msgBox.scrollTop = msgBox.scrollHeight; }
+// The chat follows the newest text only while the learner is at the bottom. Scrolling up (wheel, scrollbar, keys, touch)
+// stops the follow so the typing can't yank the view back every frame; scrolling back to the bottom, or sending a
+// message, turns it on again.
+let chatFollow = true, chatSetTop = -1;
+function scrollChat(force) {
+  if (force) chatFollow = true;
+  if (!chatFollow) return;
+  msgBox.scrollTop = msgBox.scrollHeight; chatSetTop = msgBox.scrollTop;
+}
+msgBox.addEventListener('scroll', () => {
+  if (msgBox.scrollTop === chatSetTop) return;   // our own scroll
+  chatFollow = msgBox.scrollHeight - msgBox.scrollTop - msgBox.clientHeight < 8;
+}, { passive: true });
+msgBox.addEventListener('wheel', e => { if (e.deltaY < 0) chatFollow = false; }, { passive: true });
 function bubble(m) {
   const d = document.createElement('div');
   d.className = 'msg ' + m.role;
@@ -1706,7 +1725,7 @@ function bubble(m) {
   if (m.role === 'user' && ((m.about && m.about.length) || m.sketch)) { const a = document.createElement('span'); a.className = 'about'; a.textContent = [m.about && m.about.length ? 'about ' + m.about.join(', ') : '', m.sketch ? 'with your sketch' : ''].filter(Boolean).join(' · '); d.appendChild(a); }
   if (m.role === 'user' && m.steer) { const a = document.createElement('span'); a.className = 'steer'; a.textContent = '↪ sent while the teacher was answering'; d.appendChild(a); }
   if (m.role === 'assistant') { const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = m.meta || ''; d.appendChild(meta); }
-  msgBox.appendChild(d); scrollChat();
+  msgBox.appendChild(d); scrollChat(m.role === 'user');
   return d;
 }
 function renderChat() {
@@ -2027,8 +2046,17 @@ function scheduleAutoBack() {
     if (r) { r.releasing = false; releaseHeld(r, true); } else if (parked) continueParked();
   }, 900);
 }
-// Clicking the board puts the cursor in the chat box, so the next keys type a question. Buttons, sliders and fields keep their own focus.
-$('#boardWrap').addEventListener('click', e => { if (!e.target.closest('button,input,select,textarea,a,label')) input.focus({ preventScroll: true }); });
+// Clicking a drawing puts the cursor in the chat box, so the next keys type a question about it. Clicking an empty part of
+// the board moves the focus to the board itself (Space then plays/pauses the lesson). Buttons, sliders and fields keep their own focus.
+// (decided at pointerdown: the board captures the pointer, so the click event's target is always the board)
+$('#boardWrap').tabIndex = -1;
+let downOnDrawing = false;
+$('#boardWrap').addEventListener('pointerdown', e => { downOnDrawing = !!e.target.closest('#layerObjects'); }, { capture: true });
+$('#boardWrap').addEventListener('click', e => {
+  if (e.target.closest('button,input,select,textarea,a,label')) return;
+  if (downOnDrawing) input.focus({ preventScroll: true });
+  else $('#boardWrap').focus({ preventScroll: true });
+});
 // While the teacher is teaching: Enter (or Send) asks on the side (a fork: answered in parallel, the lesson goes on and
 // comes back after it); ⌘/Ctrl+Enter (or ↪ Steer) steers the lesson (it stops after its sentence and takes the message in).
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -2884,7 +2912,7 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // narration settings
 // ======================================================================
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
-function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_bella', speed: v.speed || 1, engine: 'server', lastMode: 'kokoro' }; }
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_bella', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro' }; }
 function applyVoice() {
   const v = voiceCfg();
   Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });

@@ -84,6 +84,8 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
 | Erase | Delete/Backspace, or **Erase** in the "Selected" line |
 | Ask about it | select, then use the chips or type ("What is X?", "Change X to another example", Hinglish…) |
 | Steps | timeline bar under the board · ← → keys · ▶ replays · **Live** returns |
+| Keyboard focus | click an empty part of the board to put the keys on the board (then **Space** plays/pauses, ← → step) · click a drawing to type a question about it in the chat box |
+| Play / pause | **Space** with the board focused, same as the timeline's ▶/⏸ |
 | Draw yourself | **✏️ Draw** → sketch → **Check my drawing** → ask (optional) → Send |
 | Erase your sketch | **✏️ Draw** → **🧽 Rubber** → drag over your strokes (only your own sketches are erased) |
 | Pause | **⏸** next to Send freezes the voice, pen and typing; **▶** resumes exactly there. Ask something while paused: the teacher answers it, then **▶ Continue** goes back to where the lesson was |
