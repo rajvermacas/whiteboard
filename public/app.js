@@ -18,6 +18,8 @@ window.wbtLog = (area, ...a) => {
   if (/error|fail|stall|timeout|skip/i.test(line)) console.warn(line); else console.debug(line);
 };
 const dlog = (...a) => window.wbtLog('app', ...a);
+// a short name for an answer in the log: #id “its question”
+const lab = t => t ? `#${String(t.key || '').slice(-4)} “${String(t.q || '').replace(/\s+/g, ' ').slice(0, 40)}”` : '-';
 window.addEventListener('error', e => dlog('page error', e.message, (e.filename || '').split('/').pop() + ':' + e.lineno));
 window.addEventListener('unhandledrejection', e => dlog('unhandled rejection', String(e.reason && e.reason.stack || e.reason).slice(0, 300)));
 const NS = 'http://www.w3.org/2000/svg';
@@ -1245,12 +1247,13 @@ svg.addEventListener('dblclick', e => e.preventDefault());
 const drillQuestion = n => `Open up “${n}”: show exactly what is inside it, with real shapes and numbers (the actual vectors, matrices, tables or data structures) and the computation it does, step by step, right next to it.`;
 function drillInto(id) {
   if (scrub) return;
+  dlog('user: double-click', JSON.stringify(nameOf(id)), '· state:', isPaused() ? 'paused' : liveBusy() ? 'teaching' : 'idle', '· live:', lab(liveTurn));
   setSelection([id]);
   const q = drillQuestion(nameOf(id));
   const name = nameOf(id), topic = `what is inside “${name}”`;
   // the lesson is running: ask in the background and keep teaching; switch over once the answer is actually coming
-  if (liveBusy() && !isPaused()) send(q, { parallel: true, topic, pulse: pulseObj(id), intro: `Since you double-clicked “${name}”, here is what is inside it.` });
-  else if (isPaused()) send(q, { side: true, topic });
+  // (also while paused: it is answered in the background and takes over once the lesson is playing again)
+  if ((liveBusy() || (isPaused() && liveTurn))) send(q, { parallel: true, topic, pulse: pulseObj(id), intro: `Since you double-clicked “${name}”, here is what is inside it.` });
   else send(q, { topic });
 }
 // instant feedback that a double-click was taken: a pulsing ring around the drawing until its answer takes over
@@ -1319,8 +1322,8 @@ async function replay() {
 async function showAttach(focus) {
   const ids = [...inkSinceAsk].filter(id => objs.has(id));
   const box = $('#attach');
-  if (!ids.length || penMode) { box.hidden = true; input.placeholder = 'Ask the teacher…'; return; }
-  box.hidden = false; input.placeholder = 'Ask about your drawing (optional)…';
+  if (!ids.length || penMode) { box.hidden = true; input.placeholder = 'Ask about…'; return; }
+  box.hidden = false; input.placeholder = 'Ask about your drawing…';
   try { const reg = inkRegion(ids); if (reg) $('#attachImg').src = await boardImage(reg); } catch (e) { dlog('thumbnail failed', String(e)); }
   if (focus) input.focus();
 }
@@ -1772,7 +1775,8 @@ async function writeSuggestions(kind, names, key) {
       { role: 'system', content: 'You write the suggested questions shown as buttons under a whiteboard lesson for a technical learner. Reply with only a JSON array of 3 questions, each at most 8 words, specific to this board (name its actual things), not generic ("tell me more"), and different from each other. Write them in the language of the learner\'s last message (English if there is none).' },
       { role: 'user', content: `${ctx}\n\n${ask}` }], ac.signal);
     const m = out.match(/\[[\s\S]*\]/); const list = m ? JSON.parse(m[0]) : [];
-    const qs = (Array.isArray(list) ? list : []).map(x => clip(String(x || '').trim(), 70)).filter(Boolean).slice(0, 4);
+    const asText = x => typeof x === 'string' ? x : x && typeof x === 'object' ? (x.question || x.text || x.q || x.label || Object.values(x).find(v => typeof v === 'string') || '') : '';
+    const qs = (Array.isArray(list) ? list : []).map(x => clip(asText(x).trim(), 70)).filter(Boolean).slice(0, 4);
     suggestCache.set(key, qs);
     dlog('suggested', kind, JSON.stringify(qs));
   } catch (e) { if (ac.signal.aborted) { suggestCache.delete(key); return; } suggestCache.set(key, []); dlog('suggestions failed', String(e)); }
@@ -1814,10 +1818,10 @@ function updateSendBtn() {
   const pb = $('#pauseBtn');
   if (scrub) {
     // a scrubbed lesson: this button stops its playback, the same as the timeline's ⏸
-    pb.hidden = !scrub.playing; pb.textContent = '⏸'; pb.classList.remove('on'); pb.title = 'Stop the playback';
+    pb.hidden = !scrub.playing; pb.textContent = '⏸'; pb.classList.remove('on'); tip(pb, 'Stop the playback');
   } else {
     pb.hidden = !working && !p; pb.textContent = p ? '▶' : '⏸'; pb.classList.toggle('on', p);
-    pb.title = p ? 'Resume the lesson' : 'Pause the lesson (you can ask something while paused)';
+    tip(pb, p ? 'Play' : 'Pause');
   }
   scheduleAutoBack();
   renderResumeBar();
@@ -1825,15 +1829,19 @@ function updateSendBtn() {
   // while the teacher works you can still send: the message steers the answer (Stop is its own button)
   $('#stopBtn').hidden = !working;
   const teaching = working && !p && !scrub;
-  $('#steerBtn').hidden = !teaching;
-  $('#steerBtn').title = `Steer the lesson (${STEER_KEY}): the teacher finishes its sentence, drops the rest of this answer and takes your message in`;
-  sendBtn.title = teaching ? 'Ask on the side (↵): answered in parallel, the lesson goes on, then comes back to where it was' : '';
-  input.placeholder = p ? 'Ask about it while paused… (▶ to resume)' : teaching ? `↵ ask on the side · ${STEER_KEY} steer the lesson` : (inkSinceAsk.size && !penMode ? input.placeholder : 'Ask the teacher…');
+  $('#steerBtn').hidden = !(teaching || (p && !scrub));
+  renderPendingPill();
+  tip($('#steerBtn'), `Steer (${STEER_KEY})`);
+  tip(sendBtn, teaching || (p && !scrub) ? 'Send as a side question (↵)' : 'Send (↵)');
+  if (!(inkSinceAsk.size && !penMode)) input.placeholder = 'Ask about…';
 }
-$('#stopBtn').onclick = () => stopAll();
-$('#pauseBtn').onclick = () => { if (scrub) { if (scrub.playing) stopPlayback(); return; } setPaused(!isPaused()); };
-$('#resumeGo').onclick = () => continueParked();
-$('#resumeX').onclick = () => dropParked();
+$('#stopBtn').onclick = () => { dlog('user: ■ stop'); stopAll(true, 'stop button'); };
+// icon buttons: the label shows on hover (and is what screen readers read)
+function tip(el, text) { if (el.dataset.tip !== text) { el.dataset.tip = text; el.setAttribute('aria-label', text); el.removeAttribute('title'); } }
+tip($('#stopBtn'), 'Stop');
+$('#pauseBtn').onclick = () => { dlog('user:', scrub ? 'stop playback' : isPaused() ? '▶ play' : '⏸ pause'); if (scrub) { if (scrub.playing) stopPlayback(); return; } setPaused(!isPaused()); };
+$('#resumeGo').onclick = () => { dlog('user: ▶ continue set-aside answer'); continueParked(); };
+$('#resumeX').onclick = () => { dlog('user: ✕ drop set-aside answer', lab(parked && parked.turn)); dropParked(); };
 
 function setPaused(on) {
   if (on && pausedAt == null) { pausedAt = performance.now(); Voice.pause(); dlog('paused'); }
@@ -1851,18 +1859,19 @@ let liveTurn = null;
 function parkLive(why = 'look') {   // why: 'question' (a side question) or 'look' (looking back)
   const t = liveTurn;
   const busy = t && !forks.some(f => f.turn === t) && (!t.streamDone || queue.length || queueBusy || Voice.speaking());
-  if (!busy) { if (streamingLive() || queueRunning) stopAll(false); setPaused(false); return; }
+  if (!busy) { if (streamingLive() || queueRunning) stopAll(false, 'set aside: nothing left'); setPaused(false); return; }
   t.parkedQ = queue.splice(0);
   const cut = lastSay && lastSay.turn === t && (queueBusy || Voice.speaking() || (t.parkedQ.length && t.parkedQ[0].say == null));
   if (cut) t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? Voice.prepare(lastSay.say) : null });
   if (currentItem && currentItem.cmd && currentItem.turn === t) currentItem.keep = true;
   forks.push({ turn: t, why, abort: t.abort, say: lastSay && lastSay.turn === t ? lastSay.say : '' }); parked = forks[forks.length - 1];
   if (abortCtl === t.abort) abortCtl = null;          // Stop during the side answer must not cut the set-aside stream
-  dlog('set aside the paused answer:', t.parkedQ.length, 'lines', t.streamDone ? '' : '(still streaming)', '· forks:', forks.length);
+  dlog('set aside', lab(t), '(' + why + '):', t.parkedQ.length, 'lines', t.streamDone ? '' : '(still streaming)', '· stack:', forkStack());
   gen++; Voice.stop(); narrationDone = Promise.resolve(); finishTyping(); hideIcon(pen); hideIcon(eraser);
   setPaused(false);
   renderResumeBar();
 }
+const forkStack = () => forks.length ? forks.map(f => lab(f.turn)).join(' > ') : 'empty';
 const forkLeft = f => (f.turn.parkedQ && f.turn.parkedQ.length) || !f.turn.streamDone;
 function popFork() { const f = forks.pop(); parked = forks[forks.length - 1] || null; return f; }
 function continueParked() {
@@ -1877,8 +1886,8 @@ function continueParked() {
   liveTurn = t;                                      // pausing it again and asking forks it again
   if (!t.streamDone) abortCtl = t.abort;
   t.el = bubble({ role: 'assistant', text: '', meta: '' });
-  const lab = document.createElement('span'); lab.className = 'cont'; lab.textContent = `↩ back to where we left off${p.say ? `: “${p.say.slice(0, 60)}${p.say.length > 60 ? '…' : ''}”` : ''}`; t.el.insertBefore(lab, t.el.firstChild);
-  dlog('continuing a set-aside answer:', items.length, 'lines · forks left:', forks.length);
+  const contEl = document.createElement('span'); contEl.className = 'cont'; contEl.textContent = `↩ back to where we left off${p.say ? `: “${p.say.slice(0, 60)}${p.say.length > 60 ? '…' : ''}”` : ''}`; t.el.insertBefore(contEl, t.el.firstChild);
+  dlog('back to', lab(t), 'from', lab(side), ':', items.length, 'lines · stack:', forkStack());
   Voice.unlock();
   // back from a side question: say so out loud, show it on the board, and look at where that answer was drawing
   // (any side answer counts: a question asked while paused, a double-click, or a question asked while looking back)
@@ -1906,8 +1915,14 @@ function continueParked() {
 // The lesson keeps going until the answer really starts arriving. Then, at the end of the current sentence, the
 // lesson is set aside like a question asked while paused, the answer is shown and explained, and the teacher goes back.
 function takeSwitch() { const f = switchReq; switchReq = null; if (f) f(); }
+// A background answer waits while a sibling plays: a side answer asked from the same answer it was asked in, which is
+// set aside meanwhile. Siblings play one after another; only a question asked inside the playing answer forks it.
+const siblingPlaying = t => !!(t.askedIn && liveTurn && liveTurn !== t.askedIn && forks.some(f => f.turn === t.askedIn));
 function requestRelease(t) {
   if (t.releasing || !t.held) return;
+  if (!t.ready) { t.ready = true; t.readyAt = Date.now(); renderPendingPill(); }   // its answer is arriving
+  if (siblingPlaying(t)) { if (!t.loggedWait) { t.loggedWait = true; dlog('ready, waits for a sibling to finish:', lab(t), '· playing', lab(liveTurn)); } return; }   // picked up when the sibling is done (scheduleAutoBack)
+  dlog('ready, takes over at the next sentence:', lab(t));
   t.releasing = true;
   // voice its first lines now, so they are ready when the current sentence ends
   if (Voice.enabled()) {
@@ -1917,29 +1932,40 @@ function requestRelease(t) {
   const go = () => releaseHeld(t);
   // nothing is being said or drawn right now: take over at once; otherwise at the next sentence boundary
   if (!queueRunning) { go(); return; }
-  const prev = switchReq; switchReq = prev ? () => { prev(); go(); } : go;
+  // one handover per sentence boundary: after an earlier one takes over, this one is looked at again (it may now
+  // have to wait for that sibling)
+  const prev = switchReq; switchReq = prev ? () => { prev(); t.releasing = false; requestRelease(t); } : go;
   setTimeout(() => { if (t.held && switchReq) { dlog('no sentence boundary in time: switching anyway'); takeSwitch(); } }, 12000);
 }
-function releaseHeld(t) {
+function releaseHeld(t, idle = false) {
   if (!t.held) return;
+  if (!idle && siblingPlaying(t)) { t.releasing = false; return; }   // a sibling took over first: wait for it
   if (scrub) { t.releasing = false; setTimeout(() => requestRelease(t), 500); return; }   // looking back: wait until live again
+  // paused: the answer is ready but waits; ▶ carries on with the current topic, and it takes over at the next sentence
+  if (isPaused()) {
+    t.releasing = false;
+    if (!t.waitResume) { dlog('ready while paused, waits for ▶:', lab(t)); t.waitResume = true; t.ready = true; renderPendingPill(); pauseWaiters.push(() => { t.waitResume = false; if (t.held) requestRelease(t); }); }
+    return;
+  }
   parkLive('question');                   // the running answer is set aside (if it is still going) and continues afterwards
   pendingHeld.delete(t); renderPendingPill();
   chat.push(t.heldUser.msg, t.msg);
   const ub = t.heldUser.el; ub.classList.remove('pending'); t.heldUser.wait.remove(); if (t.pulse) { t.pulse.remove(); t.pulse = null; }
   if (!ub.isConnected) msgBox.appendChild(ub);
   ub.after(t.el); scrollChat();
-  t.from = liveTurn; liveTurn = t; t.run.gen = gen;     // from: the answer it was asked inside (for the way back)
+  // from: the answer it was asked inside (for the way back); after a sibling, that is still the answer it was asked in
+  t.from = t.askedIn && forks.some(f => f.turn === t.askedIn) ? t.askedIn : liveTurn; liveTurn = t; t.run.gen = gen;
   if (!t.streamDone) { abortCtl = t.abort; activeStreams++; t.counted = true; streaming = true; }
   const items = t.held; t.held = null;
   if (t.intro) items.unshift({ say: t.intro, turn: t, run: t.run, voice: Voice.enabled() ? t.introVoice || Voice.prepare(t.intro) : null });
-  dlog('a background answer takes over:', items.length, 'lines');
+  dlog('takes over:', lab(t), items.length, 'lines', '· asked in', lab(t.askedIn), '· stack:', forkStack());
   Voice.unlock();
   items.forEach(enqueue);
   saveSoon(); updateSendBtn();
 }
 function dropHeld(t) {
   if (!pendingHeld.has(t)) return;
+  dlog('background answer dropped:', lab(t));
   pendingHeld.delete(t); t.held = null; renderPendingPill(); updateSendBtn();
   if (t.pulse) { t.pulse.remove(); t.pulse = null; }
   if (t.heldUser) { t.heldUser.el.classList.remove('pending'); t.heldUser.wait.textContent = '✕ not opened (stopped or failed)'; }
@@ -1948,6 +1974,7 @@ function renderPendingPill() {
   const el = $('#pendingPill'); if (!el) return;
   const n = pendingHeld.size, first = [...pendingHeld][0];
   el.hidden = !n;
+  if (n && isPaused()) { el.textContent = first.ready ? `✓ The answer to “${clip(first.q.replace(/^what is inside /, ''), 50)}” is ready: press ▶, it comes in at the next sentence` : `⏳ Answering “${clip(first.q.replace(/^what is inside /, ''), 50)}” in the background · ▶ carries on with the lesson meanwhile`; return; }
   if (n) el.textContent = `⏳ ${/^what is inside /.test(first.q) ? 'Opening up ' + first.q.replace(/^what is inside /, '') : `Answering “${clip(first.q, 50)}”`}${n > 1 ? ` (+${n - 1})` : ''} … the lesson goes on meanwhile`;
 }
 // "how attention works" from "Explain how attention works, with an example." (the parent's own question)
@@ -1986,10 +2013,19 @@ function renderResumeBar() {
 // Once the side answer is done (and nothing is paused or being looked back at), go back to where it forked.
 let autoBack = null, sendsPending = 0;
 function scheduleAutoBack() {
-  const idle = () => parked && !scrub && !isPaused() && !sendsPending && !pendingHeld.size && !liveWorking() && !steering;
-  if (!idle()) { if (autoBack) { clearTimeout(autoBack); autoBack = null; } return; }
+  // nothing playing and an answer set aside: a background answer that is ready goes first (one at a time, in the
+  // order they became ready); otherwise go back. Answers still being written do not hold the lesson up: it goes back
+  // and they come in at a sentence boundary once they are ready.
+  const idle = () => !scrub && !isPaused() && !sendsPending && !liveWorking() && !steering;
+  const nextReady = () => [...pendingHeld].filter(t => t.ready && t.held && t.held.length && !t.waitResume).sort((a, b) => a.readyAt - b.readyAt)[0];
+  if (!idle() || !(parked || nextReady())) { if (autoBack) { clearTimeout(autoBack); autoBack = null; } return; }
   if (autoBack) return;
-  autoBack = setTimeout(() => { autoBack = null; if (idle()) continueParked(); else renderResumeBar(); }, 900);
+  autoBack = setTimeout(() => {
+    autoBack = null;
+    if (!idle()) { renderResumeBar(); return; }
+    const r = nextReady();
+    if (r) { r.releasing = false; releaseHeld(r, true); } else if (parked) continueParked();
+  }, 900);
 }
 // Clicking the board puts the cursor in the chat box, so the next keys type a question. Buttons, sliders and fields keep their own focus.
 $('#boardWrap').addEventListener('click', e => { if (!e.target.closest('button,input,select,textarea,a,label')) input.focus({ preventScroll: true }); });
@@ -2015,14 +2051,18 @@ $('#composer').addEventListener('submit', e => {
 });
 // one place that decides how a question goes in: while paused it is a side question (answered now, then back);
 // while teaching it forks in the background (default) or steers (⌘/Ctrl+Enter); otherwise it is a new question
+// Paused works the same as teaching: Enter forks in the background (the lesson stays paused; ▶ carries on with
+// the current topic and the answer takes over once it is ready), ⌘/Ctrl+Enter resumes and steers.
 function ask(q, mode = 'fork') {
-  if (isPaused() && !scrub) return send(q, { side: true });
+  const paused = isPaused() && !scrub;
   const teaching = !scrub && (streamingLive() || queueRunning);
-  if (teaching && mode === 'steer') return send(q, { steer: true });
-  if (teaching && liveTurn) return send(q, { parallel: true, aside: true, topic: q, intro: `You asked: “${clip(q, 90)}”.` });
+  dlog('user: asks', JSON.stringify(clip(q, 60)), '· key:', mode, '· state:', paused ? 'paused' : teaching ? 'teaching' : scrub ? 'looking back' : 'idle', '· live:', lab(liveTurn));
+  if ((teaching || paused) && mode === 'steer') { if (paused) setPaused(false); return send(q, { steer: true }); }
+  if ((teaching || paused) && liveTurn) return send(q, { parallel: true, aside: true, topic: q, intro: `You asked: “${clip(q, 90)}”.` });
+  if (paused) return send(q, { side: true });
   return send(q);
 }
-$('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(); chat = []; renderChat(); saveSoon(); };
+$('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(true, 'clear chat'); chat = []; renderChat(); saveSoon(); };
 $('#selAsk').onclick = () => input.focus();
 $('#selErase').onclick = () => { if (!scrub) learnerErase([...selection]); };
 function learnerErase(ids) { recordEdit({ cmd: 'erase', ids: ids.slice() }); eraseIds(ids, { gen }, true); }
@@ -2053,8 +2093,8 @@ function finishTyping() {
   typers.clear(); updateSendBtn();
 }
 
-function stopAll(dropPark = true) {
-  if (queue.length || streaming) dlog('stopAll with', queue.length, 'queued, streaming=' + streaming, (new Error().stack || '').split('\n').slice(2, 5).map(l => l.trim().replace(/^at /, '')).join(' < '));
+function stopAll(dropPark = true, why = '') {
+  if (queue.length || streaming || forks.length || pendingHeld.size) dlog('stopAll' + (why ? ` (${why})` : ''), queue.length, 'queued, streaming=' + streaming, dropPark && forks.length ? `· drops stack: ${forkStack()}` : '', pendingHeld.size ? `· drops ${pendingHeld.size} background` : '', why ? '' : (new Error().stack || '').split('\n').slice(1, 4).map(l => l.trim().replace(/^at /, '')).join(' < '));
   gen++;
   queue.length = 0;
   Voice.stop(); narrationDone = Promise.resolve();
@@ -2073,7 +2113,9 @@ function stopAll(dropPark = true) {
 // ======================================================================
 let queueBusy = false;       // a board command is being drawn right now
 // sleep that only counts unpaused time, so a long pause never makes the queue give up and skip ahead
-function psleep(ms) { return new Promise(res => { let left = ms, last = performance.now(); const id = setInterval(() => { const now = performance.now(); if (!isPaused()) left -= now - last; last = now; if (left <= 0) { clearInterval(id); res(); } }, 100); }); }
+// wait for p, at most ms of playing time (the timer is cleared either way)
+function within(p, ms) { const g = psleep(ms); return Promise.race([p, g]).finally(() => g.cancel()); }
+function psleep(ms) { let id; const p = new Promise(res => { let left = ms, last = performance.now(); id = setInterval(() => { const now = performance.now(); if (!isPaused()) left -= now - last; last = now; if (left <= 0) { clearInterval(id); res(); } }, 100); }); p.cancel = () => clearInterval(id); return p; }
 let currentItem = null, lastSay = null;
 function enqueue(item) {
   if (item.turn && item.turn.held) { item.turn.held.push(item); requestRelease(item.turn); return; }   // asked in the background: wait to take over
@@ -2086,7 +2128,7 @@ async function runQueue() {
   while (queue.length) {
     await whilePaused();
     // a background answer is ready: let the current sentence finish, then hand over before the next one starts
-    if (switchReq && queue[0] && queue[0].say != null) { await Promise.race([narrationDone, psleep(8000)]); takeSwitch(); continue; }
+    if (switchReq && queue[0] && queue[0].say != null) { await within(narrationDone, 8000); takeSwitch(); continue; }
     const it = queue.shift(); if (!it) continue;
     if (it.say != null && Voice.enabled()) Voice.prefetch(queue.filter(q => q.say != null && q.voice).slice(0, 2).map(q => q.voice));
     currentItem = it;
@@ -2098,10 +2140,12 @@ async function runQueue() {
       if (it.voice && Voice.enabled()) {
         // one narrated sentence at a time: wait until the previous one (and the drawing after it) is done
         const w0 = Date.now();
-        await Promise.race([narrationDone, psleep(45000)]);
+        await within(narrationDone, 45000);
         if (Date.now() - w0 > 44000 && !isPaused()) dlog('narration wait timed out; continuing');
         if (it.run && it.run.gen !== gen) continue;
-        const r = await Promise.race([Voice.play(it.voice), psleep(100000).then(() => { dlog('voice.play timed out'); return { duration: 0, done: Promise.resolve() }; })]);
+        const guard = psleep(100000);
+        const r = await Promise.race([Voice.play(it.voice), guard.then(() => { dlog('voice.play timed out'); return { duration: 0, done: Promise.resolve() }; })]);
+        guard.cancel();
         if (it.run && it.run.gen !== gen) continue;
         dlog('say', r.duration ? r.duration.toFixed(1) + 's' : 'no audio', JSON.stringify(it.say.slice(0, 50)));
         beginPace(r.duration || it.say.length / SPEAK_CPS);
@@ -2129,7 +2173,7 @@ async function runQueue() {
     }
   }
   // let the last sentence finish; more lines may stream in meanwhile, so check again before going idle
-  await Promise.race([narrationDone, psleep(45000)]);
+  await within(narrationDone, 45000);
   if (switchReq) takeSwitch();
   if (!queue.length) break;
   }
@@ -2412,7 +2456,7 @@ async function softStop() {
   if (k >= 0) { dlog('steer: dropped', queue.length - k, 'queued lines'); if (queue[k].turn) queue[k].turn.msg.interrupted = true; queue.splice(k); }
   const t0 = Date.now();
   while ((streaming || queueRunning) && Date.now() - t0 < 25000) await sleep(80);
-  if (streamingLive() || queueRunning) stopAll(false);
+  if (streamingLive() || queueRunning) stopAll(false, 'steer: sentence did not end');
   steering = false;
 }
 async function send(q, opts = {}) {
@@ -2473,7 +2517,7 @@ async function sendQ(q, opts, opened) {
     const pendingEl = bubble(um); pendingEl.classList.add('pending');
     await softStop();
     pendingEl.remove();
-  } else if (streamingLive() || queueRunning || replaying || scrub) stopAll(false);
+  } else if (streamingLive() || queueRunning || replaying || scrub) stopAll(false, 'new question replaces the answer');
   if (scrub) exitScrub();
   Voice.unlock();
   $('#modelPop').hidden = true;
@@ -2481,7 +2525,7 @@ async function sendQ(q, opts, opened) {
   const inkIds = [...inkSinceAsk].filter(id => objs.has(id));
   let image = null;
   if (inkIds.length) { try { const reg = inkRegion(inkIds); if (reg) image = await boardImage(reg); } catch (e) { console.warn('sketch image failed', e); } }
-  inkSinceAsk.clear(); $('#attach').hidden = true; input.placeholder = 'Ask the teacher…';
+  inkSinceAsk.clear(); $('#attach').hidden = true; input.placeholder = 'Ask about…';
   const messages = buildMessages(q, selIds, inkIds, image, !!opts.steer, !!opts.aside);
   const userMsg = { role: 'user', text: q, about: selIds.map(nameOf), sketch: inkIds.length ? inkIds : undefined, steer: opts.steer || undefined };
   const held = !!opts.parallel;
@@ -2497,7 +2541,7 @@ async function sendQ(q, opts, opened) {
     // the question shows at once, marked as waiting; the answer's bubble appears when it takes over
     turn.el.remove(); ub.classList.add('pending');
     const w = document.createElement('span'); w.className = 'wait'; w.textContent = opts.aside ? '⏳ Answering on the side… the lesson goes on until it is ready' : '⏳ Opening it up… the lesson goes on until it is ready'; ub.appendChild(w);
-    turn.held = []; turn.heldUser = { msg: userMsg, el: ub, wait: w }; turn.intro = opts.intro; turn.pulse = opts.pulse || null;
+    turn.held = []; turn.heldUser = { msg: userMsg, el: ub, wait: w }; turn.intro = opts.intro; turn.pulse = opts.pulse || null; turn.askedIn = askedIn;
     pendingHeld.add(turn); renderPendingPill();
   }
   renderChips(); saveSoon();
@@ -2682,7 +2726,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   const reader = res.body.getReader(), dec = new TextDecoder();
   let sse = '', bytes = 0;
   const t0 = Date.now();
-  dlog('stream start', model, effort || 'auto');
+  dlog('stream start', lab(turn), model, effort || 'auto', search ? '· with web search' : '', fix ? '· tidy' : '');
   for (;;) {
     // no bytes for 120 s means the model stalled (reasoning models still stream while thinking)
     let stallTimer;
@@ -2692,7 +2736,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     catch (e) { try { reader.cancel().catch(() => {}); } catch {} if (e.code === 'stalled') dlog('stream stalled after', bytes, 'bytes'); throw e; }
     finally { clearTimeout(stallTimer); }
     const { done, value } = chunk;
-    if (done) { dlog('stream end', bytes, 'bytes in', ((Date.now() - t0) / 1000).toFixed(1) + 's', 'finish', finish || '-'); break; }
+    if (done) { dlog('stream end', lab(turn), bytes, 'bytes in', ((Date.now() - t0) / 1000).toFixed(1) + 's', 'finish', finish || '-'); break; }
     bytes += value.length;
     sse += dec.decode(value, { stream: true });
     let nl;
@@ -2823,7 +2867,11 @@ $('#searchChk').onchange = e => { settings.webSearch = e.target.checked; saveSet
 $('#copyLogBtn').onclick = async () => {
   const info = [`Whiteboard Teacher debug log`, `browser: ${navigator.userAgent}`, `isolated: ${self.crossOriginIsolated}, cores: ${navigator.hardwareConcurrency}, webgpu: ${!!navigator.gpu}`,
     `model: ${settings.model} · ${currentEffort()} · voice: ${JSON.stringify(voiceCfg())} · voice status: ${JSON.stringify(Voice.status())} (${Voice.device() || '-'})`,
-    `queue: ${queue.length} waiting, running=${queueRunning}, streaming=${streaming}, speaking=${Voice.speaking()}, audio: ${Voice.audioState()}, last voice used: ${Voice.source() || '-'}`, '', ...debugLog].join('\n');
+    `queue: ${queue.length} waiting, running=${queueRunning}, streaming=${streaming}, speaking=${Voice.speaking()}, audio: ${Voice.audioState()}, last voice used: ${Voice.source() || '-'}`,
+    `session: ${lesson ? `${lesson.session} “${lesson.topic}”` : '-'} · chat messages: ${chat.length} · board objects: ${objs.size} · steps: ${steps.length}`,
+    `state: ${isPaused() ? 'paused' : 'not paused'}${scrub ? ', looking back' : ''}${steering ? ', steering' : ''} · live answer: ${lab(liveTurn)} · fork stack (bottom > top): ${forkStack()}`,
+    `background answers: ${pendingHeld.size ? [...pendingHeld].map(t => `${lab(t)} ${t.ready ? 'ready' : 'writing'}${t.waitResume ? ', waits for ▶' : ''}`).join(' | ') : 'none'}`,
+    `settings: web search ${settings.webSearch === false ? 'off' : 'on'}, tidy ${settings.tidy === false ? 'off' : 'on'} · page loaded ${new Date(performance.timeOrigin).toISOString()} · now ${new Date().toISOString()}`, '', ...debugLog].join('\n');
   try { await navigator.clipboard.writeText(info); $('#copyLogBtn').textContent = 'Copied ✓'; }
   catch { const w = window.open('', '_blank'); if (w) { w.document.body.innerText = info; } }
   setTimeout(() => { $('#copyLogBtn').textContent = 'Copy debug log'; }, 2000);
@@ -2927,6 +2975,8 @@ $('#topicForm').addEventListener('submit', async e => {
 });
 function renderTitle() {
   const t = $('#titleText'); t.textContent = lesson ? lesson.topic : 'Whiteboard Teacher';
+  if (lesson && lesson.session !== renderTitle.last) { renderTitle.last = lesson.session; dlog('session', lesson.session, JSON.stringify(lesson.topic)); }
+  $('#topicBtn').title = lesson ? `${lesson.session}\n(click to rename or start a new session)` : 'Start a session';
   document.title = lesson ? `${lesson.topic} — Whiteboard Teacher` : 'Whiteboard Teacher';
 }
 

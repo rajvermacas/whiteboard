@@ -126,11 +126,11 @@
         <button id="attachX" type="button" title="Don't send the drawing">✕</button>
       </div>
       <form id="composer">
-        <textarea id="input" rows="1" placeholder="Ask the teacher…"></textarea>
-        <button id="pauseBtn" type="button" hidden title="Pause the lesson (you can ask something while paused)">⏸</button>
-        <button id="stopBtn" type="button" hidden title="Stop the teacher">Stop</button>
-        <button id="steerBtn" type="button" hidden>↪ Steer</button>
-        <button id="sendBtn" type="submit">Send</button>
+        <textarea id="input" rows="1" placeholder="Ask about…"></textarea>
+        <button id="pauseBtn" class="ib" type="button" hidden data-tip="Pause" aria-label="Pause">⏸</button>
+        <button id="stopBtn" class="ib" type="button" hidden data-tip="Stop" aria-label="Stop">■</button>
+        <button id="steerBtn" class="ib" type="button" hidden data-tip="Steer" aria-label="Steer">↪</button>
+        <button id="sendBtn" class="ib" type="submit" data-tip="Send (↵)" aria-label="Send">➤</button>
       </form>
     </aside>
   </main>
