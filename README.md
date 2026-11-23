@@ -40,6 +40,7 @@ The app sizes its limits to the depth the teacher chose (how much it may draw, a
 | `arrow`, `box`, `circle`, `line`, `highlight` | connections, components, pointing at things |
 | `graph`, `tree`, `network` | flowcharts and state machines, hierarchies, neural-network layers |
 | `bars`, `numberline`, `timeline`, `vector`, `matrix`, `plot`, `table` | amounts, positions, history, numbers, functions |
+| `vector` `"orient":"row"`, `matrix` `highlightRows` / `highlightCols` / `highlightCells` | a token's 1×N row lying across (a label that says 1×N does the same), and tinting the row, column or cell a sentence is about, so what is said and what is drawn have the same shape |
 | `math`, `code` | typeset LaTeX (KaTeX), syntax-highlighted code |
 | `update`, `move`, `erase`, `clear` | change the board step by step |
 

@@ -43,8 +43,25 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
     case 'write': c.text = clipLines(raw.text ?? raw.label, 2, 42) || '…'; c.size = num(raw.size, 28, 12, 90); c.align = raw.align === 'center' || raw.align === 'middle' ? 'center' : 'start'; c.font = raw.font === 'math' ? 'math' : 'hand'; c.color = col(raw.color, '#1f2328'); break;
     case 'box': c.w = raw.w != null ? num(raw.w, 0, 20, 3000) : null; c.h = raw.h != null ? num(raw.h, 0, 20, 3000) : null; c.label = label; c.sub = clip(raw.sub, 34) || null; c.fill = raw.fill ?? null; c.size = raw.size != null ? num(raw.size, 26, 14, 60) : null; break;
     case 'circle': c.r = raw.r != null ? num(raw.r, 50, 6, 1500) : null; c.rx = raw.rx != null ? num(raw.rx, 50, 6, 1500) : null; c.ry = raw.ry != null ? num(raw.ry, 50, 6, 1500) : null; c.label = label; c.fill = raw.fill ?? null; c.size = raw.size != null ? num(raw.size, 26, 14, 60) : null; break;
-    case 'vector': c.values = (Array.isArray(raw.values) ? raw.values : [raw.values ?? '']).slice(0, 16); c.label = label; c.highlight = (Array.isArray(raw.highlight) ? raw.highlight : raw.highlight != null ? [raw.highlight] : []).slice(0, 16).map(v => num(v, -1)); break;
-    case 'matrix': c.values = (Array.isArray(raw.values) ? raw.values : [[raw.values ?? '']]).slice(0, 10); c.rowLabels = Array.isArray(raw.rowLabels) ? raw.rowLabels.slice(0, 10) : null; c.colLabels = Array.isArray(raw.colLabels) ? raw.colLabels.slice(0, 10) : null; c.label = label; break;
+    case 'vector': {
+      c.values = (Array.isArray(raw.values) ? raw.values : [raw.values ?? '']).slice(0, 16); c.label = label; c.highlight = (Array.isArray(raw.highlight) ? raw.highlight : raw.highlight != null ? [raw.highlight] : []).slice(0, 16).map(v => num(v, -1));
+      // a row vector (one token's row, 1×N) lies across; a column vector stands up. Not given: a label that says 1×N
+      // (more than one value) means a row, otherwise a column, as before
+      const o = String(raw.orient || raw.orientation || '').toLowerCase();
+      c.orient = /^(row|horizontal|h)$/.test(o) ? 'row' : /^(col|column|vertical|v)$/.test(o) ? 'column'
+        : (c.values.length > 1 && /(^|[^\d.])1\s*[×x*]\s*\d+/.test(String(label || ''))) ? 'row' : 'column';
+      break;
+    }
+    case 'matrix': {
+      c.values = (Array.isArray(raw.values) ? raw.values : [[raw.values ?? '']]).slice(0, 10); c.rowLabels = Array.isArray(raw.rowLabels) ? raw.rowLabels.slice(0, 10) : null; c.colLabels = Array.isArray(raw.colLabels) ? raw.colLabels.slice(0, 10) : null; c.label = label;
+      // the part of the matrix a sentence is about: whole rows, whole columns or single cells (0-based), tinted
+      const h = raw.highlight && typeof raw.highlight === 'object' && !Array.isArray(raw.highlight) ? raw.highlight : {};
+      const ints = v => (Array.isArray(v) ? v : v != null ? [v] : []).slice(0, 10).map(x => Math.round(num(x, -1, -1, 99))).filter(x => x >= 0);
+      c.highlightRows = ints(raw.highlightRows ?? h.rows); c.highlightCols = ints(raw.highlightCols ?? h.cols);
+      c.highlightCells = (Array.isArray(raw.highlightCells ?? h.cells) ? (raw.highlightCells ?? h.cells) : []).slice(0, 20)
+        .filter(p => Array.isArray(p) && p.length >= 2).map(p => [Math.round(num(p[0], -1, -1, 99)), Math.round(num(p[1], -1, -1, 99))]).filter(p => p[0] >= 0 && p[1] >= 0);
+      break;
+    }
     case 'bars': c.values = (Array.isArray(raw.values) ? raw.values : [0]).slice(0, 14); c.labels = Array.isArray(raw.labels) ? raw.labels.slice(0, 14) : null; c.w = raw.w != null ? num(raw.w, 240, 60, 2000) : null; c.h = raw.h != null ? num(raw.h, 150, 40, 1200) : null; c.label = label; break;
     case 'plot': c.w = raw.w != null ? num(raw.w, 280, 60, 2000) : null; c.h = raw.h != null ? num(raw.h, 170, 40, 1200) : null; c.fn = str(raw.fn, 20) || null; c.points = Array.isArray(raw.points) ? raw.points.slice(0, 200).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]) : null; c.marks = Array.isArray(raw.marks) ? raw.marks.slice(0, 10) : null; c.domain = Array.isArray(raw.domain) ? raw.domain.slice(0, 2) : null; c.label = label; break;
     case 'line': c.points = (Array.isArray(raw.points) ? raw.points : []).slice(0, 120).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]); if (c.points.length < 2) return null; c.smooth = !!raw.smooth; c.width = num(raw.width, 3, 1, 14); c.dash = !!raw.dash; c.color = col(raw.color, '#1f2328'); break;

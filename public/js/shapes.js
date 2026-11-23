@@ -104,6 +104,15 @@ const builders = {
   vector(c, g, parts, r) {
     const vals = c.values.map(v => str(v, 14)), size = 22;
     const cw = Math.max(58, ...vals.map(v => measureW(g, v, size) + 24)), ch = 40, n = vals.length;
+    if (c.orient === 'row') {   // 1×N: the cells side by side
+      if (c.label) addText(g, parts, c.x + (cw * n) / 2, c.y - 14, c.label, { size: 24, color: c.color, anchor: 'middle', weight: 700 });
+      (c.highlight || []).forEach(i => { if (i >= 0 && i < n) addFill(g, parts, `M${c.x + i * cw} ${c.y} h${cw} v${ch} h${-cw} Z`, c.color, 0.22); });
+      let d = roughRect(c.x, c.y, cw * n, ch, r);
+      for (let i = 1; i < n; i++) d += ' ' + roughSeg(c.x + i * cw, c.y, c.x + i * cw, c.y + ch, r, 0.6);
+      addStroke(g, parts, d, c.color, { width: 2.5 });
+      vals.forEach((v, i) => addText(g, parts, c.x + i * cw + cw / 2, c.y + ch / 2 + 8, v, { size, color: '#1f2328', anchor: 'middle' }));
+      return;
+    }
     if (c.label) addText(g, parts, c.x + cw / 2, c.y - 14, c.label, { size: 24, color: c.color, anchor: 'middle', weight: 700 });
     (c.highlight || []).forEach(i => { if (i >= 0 && i < n) addFill(g, parts, `M${c.x} ${c.y + i * ch} h${cw} v${ch} h${-cw} Z`, c.color, 0.22); });
     let d = roughRect(c.x, c.y, cw, ch * n, r);
@@ -119,6 +128,10 @@ const builders = {
     const rlw = rl.length ? Math.max(...rl.map(v => measureW(g, v, 20))) + 14 : 0;
     const x0 = c.x + rlw, y0 = c.y + (cl.length ? 30 : 0);
     if (c.label) addText(g, parts, x0 + (cw * nc) / 2, c.y - 14, c.label, { size: 24, color: c.color, anchor: 'middle', weight: 700 });
+    const tint = (x, y, w, h) => addFill(g, parts, `M${x} ${y} h${w} v${h} h${-w} Z`, c.color, 0.2);
+    (c.highlightRows || []).forEach(i => { if (i < nr) tint(x0, y0 + i * ch, cw * nc, ch); });
+    (c.highlightCols || []).forEach(j => { if (j < nc) tint(x0 + j * cw, y0, cw, ch * nr); });
+    (c.highlightCells || []).forEach(([i, j]) => { if (i < nr && j < nc) { tint(x0 + j * cw, y0 + i * ch, cw, ch); addStroke(g, parts, roughRect(x0 + j * cw + 3, y0 + i * ch + 3, cw - 6, ch - 6, r), c.color, { width: 2.2 }); } });
     let d = roughRect(x0, y0, cw * nc, ch * nr, r);
     for (let i = 1; i < nr; i++) d += ' ' + roughSeg(x0, y0 + i * ch, x0 + cw * nc, y0 + i * ch, r, 0.5);
     for (let j = 1; j < nc; j++) d += ' ' + roughSeg(x0 + j * cw, y0, x0 + j * cw, y0 + ch * nr, r, 0.5);
