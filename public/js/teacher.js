@@ -360,7 +360,12 @@ async function softStop() {
   if (k >= 0) { dlog('steer: dropped', queue.length - k, 'queued lines'); if (queue[k].turn) queue[k].turn.msg.interrupted = true; queue.splice(k); }
   const t0 = Date.now();
   while ((streaming || queueRunning) && Date.now() - t0 < 25000) await sleep(80);
-  if (streamingLive() || queueRunning) stopAll(false, 'steer: sentence did not end');
+  if (streamingLive() || queueRunning) {
+    dlog('steer: the sentence did not end, cutting just this answer short');
+    gen++; queue.length = 0; Voice.stop(); narrationDone = Promise.resolve(); if (abortCtl) { abortCtl.abort(); abortCtl = null; }
+    finishTyping(); hideIcon(pen); hideIcon(eraser);
+    for (let i = 0; i < 40 && queueRunning; i++) await sleep(50);
+  }
   steering = false;
 }
 async function send(q, opts = {}) {
@@ -447,6 +452,11 @@ async function sendQ(q, opts, opened) {
   if (!held) chat.push(am);
   const turn = { msg: am, q: opts.topic || q, from: held ? null : askedIn, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36), tab: tabId, ask: q, aside: !!opts.aside, intro: opts.intro || null, got: [] };
   am.key = turn.key;   // links the chat message to its answer (a reload finds it again)
+  // its place in the order (order.js): a question belongs to the answer that was playing when it was asked; a steer
+  // takes the place of the answer it steers (and the questions waiting inside that one move to it)
+  turn.seq = ++askSeq;
+  if (opts.steer && askedIn) { turn.parentTurn = askedIn.parentTurn || null; reparentQuestions(askedIn, turn); }
+  else turn.parentTurn = held ? askedIn || null : null;
   addToTree(turn, q, opts, askedIn);
   const body = turn.el.querySelector('.body'); body.classList.add('thinking');
   // asked in the background: its lines are held (and its bubbles kept out of the chat) until it takes over

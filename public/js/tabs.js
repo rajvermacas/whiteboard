@@ -86,9 +86,11 @@ async function switchTab(id, why = 'user') {
   switchTabNow(id, why);
   // back on the tab of the answer that was set aside by leaving it: carry on there
   if (tabAway && parked && parked.turn.tab === id && !liveWorking()) {
-    const wasPaused = !!parked.wasPaused;
-    dlog('tab: back on the set-aside answer\'s tab: carrying on');
-    tabAway = false; continueParked(); if (wasPaused) setPaused(true);
+    const wasPaused = !!parked.wasPaused, step = nextStep();
+    tabAway = false;
+    // carry on there only if that is what comes next; questions still waiting deeper go first (scheduleAutoBack)
+    if (step && step.resume) { dlog('tab: back on the set-aside answer\'s tab: carrying on'); continueParked(); if (wasPaused) setPaused(true); }
+    else { dlog('tab: back on the set-aside answer\'s tab: questions inside come first'); updateSendBtn(); }
   }
 }
 function showTabPops() { for (const p of pops) { p.el.style.display = (p.tab || TAB_MAIN) === activeTab ? '' : 'none'; if (p.tab === activeTab) placePop(p); } }

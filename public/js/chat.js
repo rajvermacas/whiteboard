@@ -185,7 +185,7 @@ let liveTurn = null;
 function parkLive(why = 'look') {   // why: 'question' (a side question) or 'look' (looking back)
   const t = liveTurn, wasPaused = isPaused();
   const busy = t && !forks.some(f => f.turn === t) && (!t.streamDone || queue.length || queueBusy || Voice.speaking());
-  if (!busy) { if (streamingLive() || queueRunning) stopAll(false, 'set aside: nothing left'); setPaused(false); return; }
+  if (!busy) { if (streamingLive() || queueRunning) stopAll(false, 'set aside: nothing left', true); setPaused(false); return; }   // keeps the answers waiting to come in
   t.parkedQ = queue.splice(0);
   const cut = lastSay && lastSay.turn === t && (queueBusy || Voice.speaking() || (t.parkedQ.length && t.parkedQ[0].say == null));
   if (cut) t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? Voice.prepare(lastSay.say) : null });
@@ -202,7 +202,7 @@ const forkLeft = f => (f.turn.parkedQ && f.turn.parkedQ.length) || !f.turn.strea
 function popFork() { const f = forks.pop(); parked = forks[forks.length - 1] || null; return f; }
 function continueParked() {
   if (!parked || streamingLive() || queueRunning) return;
-  tabAway = false;
+  tabAway = false; waitingFor = null;
   // a set-aside answer with nothing left (it finished in the background): close it and go one level further back
   while (parked && !forkLeft(parked)) { popFork().turn.parkedQ = null; }
   const p = parked; if (!p) { updateSendBtn(); return; }
@@ -237,19 +237,18 @@ function continueParked() {
     }
   }
   items.forEach(enqueue);
-  updateSendBtn();
+  updateSendBtn(); kickHeads();   // back on this tab: its next question, if ready, comes in at a sentence
 }
 // ---- answers asked in the background (double-click while the teacher is teaching) ----
 // The lesson keeps going until the answer really starts arriving. Then, at the end of the current sentence, the
 // lesson is set aside like a question asked while paused, the answer is shown and explained, and the teacher goes back.
 function takeSwitch() { const f = switchReq; switchReq = null; if (f) f(); }
-// A background answer waits while a sibling plays: a side answer asked from the same answer it was asked in, which is
-// set aside meanwhile. Siblings play one after another; only a question asked inside the playing answer forks it.
-const siblingPlaying = t => !!(t.askedIn && liveTurn && liveTurn !== t.askedIn && forks.some(f => f.turn === t.askedIn));
 function requestRelease(t) {
   if (t.releasing || !t.held) return;
   if (!t.ready) { t.ready = true; t.readyAt = Date.now(); renderPendingPill(); }   // its answer is arriving
-  if (siblingPlaying(t)) { if (!t.loggedWait) { t.loggedWait = true; dlog('ready, waits for a sibling to finish:', lab(t), '· playing', lab(liveTurn)); } return; }   // picked up when the sibling is done (scheduleAutoBack)
+  // only the question at the front of the queue of the tab the teacher is in takes over (order.js); the others wait
+  // their turn and are picked up when they reach it (kickHeads / scheduleAutoBack)
+  if (!mayTakeOver(t)) { if (!t.loggedWait) { t.loggedWait = true; dlog('ready, waits its turn:', lab(t), '· asked in', lab(t.parentTurn), '· teacher in', lab(currentNode()), '· next there', lab(headOf(t.parentTurn || null))); } return; }
   dlog('ready, takes over at the next sentence:', lab(t));
   t.releasing = true;
   // voice its first lines now, so they are ready when the current sentence ends
@@ -267,7 +266,7 @@ function requestRelease(t) {
 }
 function releaseHeld(t, idle = false) {
   if (!t.held) return;
-  if (!idle && siblingPlaying(t)) { t.releasing = false; return; }   // a sibling took over first: wait for it
+  if (!idle && !mayTakeOver(t)) { t.releasing = false; return; }   // no longer its turn (the teacher moved on): wait
   if (scrub || (tabAway && parked)) { t.releasing = false; setTimeout(() => requestRelease(t), 500); return; }   // looking back / at another tab: wait until live again
   // paused: the answer is ready but waits; ▶ carries on with the current topic, and it takes over at the next sentence
   if (isPaused()) {
@@ -277,7 +276,7 @@ function releaseHeld(t, idle = false) {
   }
   parkLive('question');                   // the running answer is set aside (if it is still going) and continues afterwards
   if (!t.held) return;                    // setting it aside woke a waiter that already took this answer over (or dropped it)
-  pendingHeld.delete(t); renderPendingPill();
+  pendingHeld.delete(t); if (waitingFor === t) waitingFor = null; renderPendingPill();
   chat.push(t.heldUser.msg, t.msg);
   const ub = t.heldUser.el; ub.classList.remove('pending'); t.heldUser.wait.remove(); if (t.pulse) { t.pulse.remove(); t.pulse = null; }
   if (!ub.isConnected) msgBox.appendChild(ub);
@@ -290,20 +289,21 @@ function releaseHeld(t, idle = false) {
   dlog('takes over:', lab(t), items.length, 'lines', '· asked in', lab(t.askedIn), '· stack:', forkStack());
   Voice.unlock();
   items.forEach(enqueue);
-  saveSoon(); updateSendBtn();
+  saveSoon(); updateSendBtn(); kickHeads();
 }
 function dropHeld(t) {
   if (!pendingHeld.has(t)) return;
-  dlog('background answer dropped:', lab(t)); t.dropped = true;
-  pendingHeld.delete(t); t.held = null; renderPendingPill(); updateSendBtn();
+  dlog('background answer dropped:', lab(t)); t.dropped = true; if (waitingFor === t) waitingFor = null;
+  pendingHeld.delete(t); t.held = null; renderPendingPill(); updateSendBtn(); kickHeads();   // the next in its queue may go now
   if (t.pulse) { t.pulse.remove(); t.pulse = null; }
   if (t.heldUser) { t.heldUser.el.classList.remove('pending'); t.heldUser.wait.textContent = '✕ not opened (stopped or failed)'; }
 }
 function renderPendingPill() {
   renderTreeSoon();
   const el = $('#pendingPill'); if (!el) return;
-  const n = pendingHeld.size, first = [...pendingHeld][0];
+  const n = pendingHeld.size, first = (waitingFor && pendingHeld.has(waitingFor)) ? waitingFor : headOf(currentNode()) || [...pendingHeld][0];
   el.hidden = !n;
+  if (n && waitingFor === first && !isPaused()) { el.textContent = `⏳ Waiting for the answer to “${clip(first.q.replace(/^what is inside /, ''), 50)}” (it is next)${n > 1 ? ` · then ${n - 1} more` : ''}`; return; }
   if (n && isPaused()) { el.textContent = first.ready ? `✓ The answer to “${clip(first.q.replace(/^what is inside /, ''), 50)}” is ready: press ▶, it comes in at the next sentence` : `⏳ Answering “${clip(first.q.replace(/^what is inside /, ''), 50)}” in the background · ▶ carries on with the lesson meanwhile`; return; }
   if (n) el.textContent = `⏳ ${/^what is inside /.test(first.q) ? 'Opening up ' + first.q.replace(/^what is inside /, '') : `Answering “${clip(first.q, 50)}”`}${n > 1 ? ` (+${n - 1})` : ''} … the lesson goes on meanwhile`;
 }
@@ -407,6 +407,7 @@ function showBackBanner(topic, at, closed = []) {
 function dropParked(all = false) {
   while (parked) {
     const p = popFork();
+    reparentQuestions(p.turn, p.turn.parentTurn);   // questions asked inside it now wait in the answer it was asked in
     if (p.abort && !p.turn.streamDone) p.abort.abort();
     p.turn.parkedQ = null; p.turn.msg.interrupted = true;
     if (!all) break;
@@ -418,23 +419,29 @@ function renderResumeBar() {
   const bar = $('#resumeBar'); if (!bar) return;
   const show = !!parked && !streamingLive() && !queueRunning && forkLeft(parked);
   bar.hidden = !show;
+  if (show && waitingFor && pendingHeld.has(waitingFor)) { $('#resumeText').textContent = `⏳ Waiting for “${clip(waitingFor.q.replace(/^what is inside /, ''), 40)}” first · ▶ Continue goes back now to “${parked.say || 'the previous answer'}”`; return; }
   if (show) $('#resumeText').textContent = `${autoBack ? '↩ Going back to' : '⏸ Paused at'}: “${parked.say || 'the previous answer'}”${forks.length > 1 ? ` (+${forks.length - 1} more)` : ''}`;
 }
 // Once the side answer is done (and nothing is paused or being looked back at), go back to where it forked.
-let autoBack = null, sendsPending = 0;
+let autoBack = null, sendsPending = 0, waitingFor = null;   // waitingFor: the question the teacher waits on this tab for
 function scheduleAutoBack() {
   // nothing playing and an answer set aside: a background answer that is ready goes first (one at a time, in the
   // order they became ready); otherwise go back. Answers still being written do not hold the lesson up: it goes back
   // and they come in at a sentence boundary once they are ready.
+  // (order.js decides: the front question of this tab if ready, else this tab's current topic, else wait here; up a
+  // level only when the tab has nothing left)
   const idle = () => !scrub && !(tabAway && parked) && !isPaused() && !sendsPending && !liveWorking() && !steering;
-  const nextReady = () => [...pendingHeld].filter(t => t.ready && t.held && t.held.length && !t.waitResume).sort((a, b) => a.readyAt - b.readyAt)[0];
-  if (!idle() || !(parked || nextReady())) { if (autoBack) { clearTimeout(autoBack); autoBack = null; } return; }
+  const step = idle() ? nextStep() : null;
+  if (!step || step.wait) { if (autoBack) { clearTimeout(autoBack); autoBack = null; } if (step && step.wait && waitingFor !== step.wait) { waitingFor = step.wait; dlog('waits on', tabTitle(tabOfTurnSafe(currentNode())) || 'Main', 'for', lab(step.wait)); renderPendingPill(); renderResumeBar(); } return; }
+  if (waitingFor) { waitingFor = null; renderPendingPill(); }
   if (autoBack) return;
   autoBack = setTimeout(() => {
     autoBack = null;
     if (!idle()) { renderResumeBar(); return; }
-    const r = nextReady();
-    if (r) { r.releasing = false; releaseHeld(r, true); } else if (parked) continueParked();
+    const s = nextStep(); if (!s) return;
+    if (s.release) { s.release.releasing = false; releaseHeld(s.release, true); }
+    else if (s.resume) continueParked();
+    else scheduleAutoBack();
   }, 900);
 }
 // Clicking a drawing puts the cursor in the chat box, so the next keys type a question about it. Clicking an empty part of
@@ -537,7 +544,7 @@ function finishTyping() {
   typers.clear(); updateSendBtn();
 }
 
-function stopAll(dropPark = true, why = '') {
+function stopAll(dropPark = true, why = '', keepHeld = false) {
   if (queue.length || streaming || forks.length || pendingHeld.size) dlog('stopAll' + (why ? ` (${why})` : ''), queue.length, 'queued, streaming=' + streaming, dropPark && forks.length ? `· drops stack: ${forkStack()}` : '', pendingHeld.size ? `· drops ${pendingHeld.size} background` : '', why ? '' : (new Error().stack || '').split('\n').slice(1, 4).map(l => l.trim().replace(/^at /, '')).join(' < '));
   gen++;
   queue.length = 0;
@@ -546,7 +553,7 @@ function stopAll(dropPark = true, why = '') {
   if (abortCtl) { abortCtl.abort(); abortCtl = null; }
   if (isPaused()) setPaused(false);
   if (dropPark) dropParked(true);
-  switchReq = null; [...pendingHeld].forEach(t => { t.abort.abort(); dropHeld(t); });
+  if (!keepHeld) { switchReq = null; [...pendingHeld].forEach(t => { t.abort.abort(); dropHeld(t); }); waitingFor = null; }
   finishTyping();
   hideIcon(pen); hideIcon(eraser);
   updateSendBtn();

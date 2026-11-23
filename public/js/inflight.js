@@ -19,7 +19,7 @@ function lastLines(lines, max) {
 }
 function turnOut(t) {
   return { key: t.key, q: t.q, ask: clip(t.ask || t.q, 2000), tab: t.tab || TAB_MAIN, intro: t.intro || null, aside: !!t.aside, streamDone: !!(t.streamDone || t.answered),
-    got: t.streamDone || t.answered ? [] : lastLines(t.got, 12000), text: String(t.text || '').slice(-6000), drew: [...(t.drew || [])].slice(-200), depth: t.depth || null };
+    parent: t.parentTurn ? t.parentTurn.key : null, seq: t.seq || 0, got: t.streamDone || t.answered ? [] : lastLines(t.got, 12000), text: String(t.text || '').slice(-6000), drew: [...(t.drew || [])].slice(-200), depth: t.depth || null };
 }
 function inflightSnapshot() {
   if (!lesson || MCP_MODE) return null;
@@ -64,7 +64,7 @@ function turnIn(s, msg) {
   if (msg && s.text && s.text.trim().length > String(msg.text || '').length) msg.text = s.text.trim();
   return { msg: msg || { role: 'assistant', text: '', drew: [], meta: '', key: s.key }, q: s.q, ask: s.ask || s.q, tab: tabs.has(s.tab) ? s.tab : TAB_MAIN,
     intro: s.intro || null, aside: !!s.aside, text: s.text || '', drew: new Set(s.drew || []), el: null, thinking: false, cmds: 0,
-    key: s.key || 't' + Date.now().toString(36), run: { gen }, streamDone: true, got: Array.isArray(s.got) ? s.got.slice() : [], depth: s.depth || null, restored: true };
+    key: s.key || 't' + Date.now().toString(36), run: { gen }, streamDone: true, parentKey: s.parent || null, seq: (askSeq = Math.max(askSeq, s.seq || 0), s.seq || 0), got: Array.isArray(s.got) ? s.got.slice() : [], depth: s.depth || null, restored: true };
 }
 const itemsIn = (t, list) => (Array.isArray(list) ? list : []).map(x => !x ? null
   : x.say != null ? { say: String(x.say), repeat: !!x.repeat, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(String(x.say)) : null }
@@ -104,9 +104,12 @@ async function restoreInflight() {
       t.heldUser = { msg: h.user, el: ub, wait: w }; t.el = bubble(t.msg); t.el.remove();
       pendingHeld.add(t);
       try { addToTree(t, t.ask, { aside: true }, null); } catch {}
-      if (t.held.length) requestRelease(t);
       if (!t.streamDone) resume.push(t);
     }
+    // the questions' places in the order: each under the answer it was asked in (if that came back too)
+    const byKey = new Map([...forks.map(f => f.turn), ...pendingHeld].map(t => [t.key, t]));
+    for (const t of byKey.values()) t.parentTurn = (t.parentKey && byKey.get(t.parentKey)) || null;
+    for (const t of pendingHeld) if (t.held && t.held.length) requestRelease(t);   // now that each knows its place
     renderPendingPill();
     for (const s of d.pops || []) restorePop(s);
     showTabPops();
