@@ -34,11 +34,13 @@ const PICTURE = new Set(['sequence', 'box', 'circle', 'vector', 'matrix', 'bars'
 const TYPES = new Set(['sequence', 'icon', 'tokens', 'frame', 'brace', 'schedule', 'math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table', 'ink', 'write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'line', 'arrow', 'highlight', 'update', 'move', 'erase', 'clear', 'wait']);
 const ALIASES = { animate: 'update', sequencediagram: 'sequence', messages: 'sequence', protocol: 'sequence', symbol: 'icon', pictogram: 'icon', row: 'tokens', chips: 'tokens', group: 'frame', container: 'frame', bracket: 'brace', gantt: 'schedule', latex: 'math', equation: 'math', formula: 'math', nn: 'network', neuralnet: 'network', flowchart: 'graph', diagram: 'graph', 'number_line': 'numberline', numline: 'numberline', grid: 'table', text: 'write', label: 'write', rect: 'box', rectangle: 'box', ellipse: 'circle', path: 'line', chart: 'bars', circle_highlight: 'highlight', delete: 'erase', remove: 'erase', wipe: 'clear' };
 
-const svg = $('#board'), layerObj = $('#layerObjects'), layerOv = $('#layerOverlay'), defs = svg.querySelector('defs'), grid = $('#grid');
+const svg = $('#board'), layerOv = $('#layerOverlay'), defs = svg.querySelector('defs'), grid = $('#grid');
+// the board on screen: tabs.js swaps these (and camera, steps) when another tab is shown
+let layerObj = $('#layerObjects');
 const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let lesson = null;             // {topic, audience, example, notes, source, plan, session}
-const objs = new Map();        // id -> {cmd, g, bb, off:[dx,dy]}
+let objs = new Map();          // id -> {cmd, g, bb, off:[dx,dy]} (of the tab on screen)
 let camera = { x: -60, y: -60, scale: 1 };
 let chat = [];                 // [{role:'user'|'assistant'|'error'|'system', text, about?, drew?, meta?}]
 const selection = new Set();

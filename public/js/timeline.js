@@ -67,7 +67,7 @@ async function boardImage(region) {
   const scale = clamp(1024 / Math.max(b.width, b.height), 0.25, 3);
   const W = Math.round(b.width * scale), H = Math.round(b.height * scale);
   const clone = svg.cloneNode(true);
-  clone.querySelector('#layerOverlay')?.remove(); clone.querySelector('#grid')?.remove();
+  clone.querySelector('#layerOverlay')?.remove(); clone.querySelector('#grid')?.remove(); clone.querySelectorAll('[data-off]').forEach(g => g.remove());   // other tabs
   clone.querySelectorAll('foreignObject').forEach(fo => { // KaTeX html would taint the canvas: swap for its source text
     const t = document.createElementNS(NS, 'text'); t.setAttribute('x', fo.getAttribute('x')); t.setAttribute('y', +fo.getAttribute('y') + (+fo.getAttribute('height')) * 0.72);
     t.setAttribute('font-size', 24); t.setAttribute('class', 'math'); t.textContent = fo.textContent.slice(0, 120); fo.replaceWith(t);
@@ -283,8 +283,9 @@ $('#tlRange').addEventListener('input', e => {
 const LS_CURRENT = 'wbt.current.v1';
 let saveTimer = null, serverTimer = null, sessionCreatedAt = null, dirty = false;
 function snapshot() {
-  const liveObjs = scrub ? scrub.live.objs : [...objs.values()].map(o => o.cmd);
-  return { lesson, camera: scrub ? scrub.live.camera : camera, createdAt: sessionCreatedAt, chat: chat.slice(-300), objs: liveObjs, steps };
+  // the main board stays in objs / camera / steps (older sessions open as just that); other tabs go in tabs
+  const t = tabsSnapshot();
+  return { lesson, camera: t.main.camera, createdAt: sessionCreatedAt, chat: chat.slice(-300), objs: t.main.objs, steps: t.main.steps, tabs: t.tabs, activeTab: t.activeTab };
 }
 function saveSoon() {
   if (!lesson) return;
@@ -320,7 +321,7 @@ function resetBoard() {
 }
 function applySession(d) {
   closeAllPops();
-  stopAll(); scrub = null; resetBoard(); resetTree();
+  stopAll(); scrub = null; document.body.classList.remove('scrubbing'); resetTabs(); resetBoard(); resetTree();
   steps = Array.isArray(d.steps) ? d.steps : (d.objs && d.objs.length ? [{ say: '', by: 'teacher', cmds: d.objs.map(c => ({ ...c, _placed: true })), t: 'base' }] : []);
   lesson = d.lesson; sessionCreatedAt = d.createdAt || new Date().toISOString();
   chat = Array.isArray(d.chat) ? d.chat : [];
@@ -331,6 +332,7 @@ function applySession(d) {
   }
   if (d.camera && Number.isFinite(d.camera.scale)) { camera = { x: num(d.camera.x, 0), y: num(d.camera.y, 0), scale: clamp(d.camera.scale, 0.05, 12) }; applyCamera(); }
   else fit(false);
+  restoreTabs(d.tabs, d.activeTab);
   renderTitle(); renderChat(); updateEmpty(); updateTimeline();
   saveNow();
 }
@@ -408,7 +410,7 @@ async function openSessions() {
       if (!confirm(`Delete “${it.topic}”? This cannot be undone.`)) return;
       try { await fetch('/api/sessions/' + encodeURIComponent(it.id), { method: 'DELETE' }); } catch {}
       try { localStorage.removeItem('wbt.s.' + it.id); } catch {}
-      if (lesson && it.id === lesson.session) { stopAll(); resetBoard(); lesson = null; chat = []; try { localStorage.removeItem(LS_CURRENT); } catch {} renderTitle(); renderChat(); }
+      if (lesson && it.id === lesson.session) { stopAll(); resetTabs(); resetBoard(); lesson = null; chat = []; try { localStorage.removeItem(LS_CURRENT); } catch {} renderTitle(); renderChat(); }
       openSessions();
     };
     li.append(info, open, del); ul.appendChild(li);

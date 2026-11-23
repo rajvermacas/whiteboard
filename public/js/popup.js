@@ -39,7 +39,7 @@ document.addEventListener('pointerdown', e => {
 }, true);
 
 function openAskPop(ids) {
-  const key = [...ids].sort().join(',');
+  const key = activeTab + ':' + [...ids].sort().join(',');   // ids are per tab
   const had = pops.find(p => p.key === key);
   if (had) { expandPop(had); return; }
   const names = ids.map(nameOf);
@@ -47,7 +47,7 @@ function openAskPop(ids) {
   el.innerHTML = `<div class="apHead"><button type="button" class="apTitle"></button><button type="button" class="apMin" title="Minimise (Esc)" aria-label="Minimise">–</button><button type="button" class="apX" title="Close" aria-label="Close">✕</button></div>
 <div class="apLog" aria-live="polite" hidden></div>
 <form class="apForm"><textarea rows="1" placeholder="Ask a quick question…" aria-label="Your question"></textarea><button type="submit" class="apSend" title="Ask (↵)" aria-label="Ask">➤</button></form>`;
-  const p = { el, key, ids, names, thread: [], abort: null, at: [0, 0], min: false, unread: false };
+  const p = { el, key, ids, names, thread: [], abort: null, at: [0, 0], min: false, unread: false, tab: activeTab };
   const title = el.querySelector('.apTitle');
   title.textContent = ids.length > 1 ? `💬 ${ids.length} drawings: ${names.map(n => `“${n}”`).join(', ')}` : `💬 “${names[0]}”`;
   title.title = 'Ask about ' + names.join(', ');
@@ -181,7 +181,7 @@ function handToTeacher(p, item, h, ad, ids) {
   const qd = document.createElement('div'); qd.className = 'apHandQ'; qd.textContent = '“' + h.q + '”'; ad.appendChild(qd);
   if (viaOpencode) { dlog('ask popup: hand-off not sent (opencode mode)', JSON.stringify(clip(h.q, 120))); return; }
   dlog('ask popup: handed to the teacher', JSON.stringify(clip(h.q, 120)), '· route', r.how, r.waitsForPlay ? '(waits for ▶)' : '', '· about', ids.join(','));
-  ask(h.q, 'fork', { ids, via: 'popup' });
+  ask(h.q, 'fork', { ids, via: 'popup', newTab: { tab: p.tab, obj: ids[0] } });
 }
 
 async function askQuick(p, q) {

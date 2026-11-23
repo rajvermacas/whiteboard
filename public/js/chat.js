@@ -25,6 +25,11 @@ function bubble(m) {
   if (m.role === 'user' && ((m.about && m.about.length) || m.sketch)) { const a = document.createElement('span'); a.className = 'about'; a.textContent = [m.about && m.about.length ? 'about ' + m.about.join(', ') : '', m.sketch ? 'with your sketch' : ''].filter(Boolean).join(' · '); d.appendChild(a); }
   if (m.role === 'user' && m.via === 'popup') { const a = document.createElement('span'); a.className = 'steer'; a.textContent = '💬 sent from an Ask whiteboard popup'; d.appendChild(a); }
   if (m.role === 'user' && m.steer) { const a = document.createElement('span'); a.className = 'steer'; a.textContent = '↪ sent while the teacher was answering'; d.appendChild(a); }
+  if (m.tab && m.tab !== TAB_MAIN && (m.role === 'user' || m.role === 'assistant')) {
+    const a = document.createElement('button'); a.type = 'button'; a.className = 'tabTag';
+    a.textContent = '↗ ' + (tabTitle(m.tab) || m.tabTitle || 'tab'); a.title = tabs.has(m.tab) ? 'Show this tab' : 'This tab was closed';
+    a.disabled = !tabs.has(m.tab); a.onclick = () => switchTab(m.tab); d.appendChild(a);
+  }
   if (m.role === 'assistant') { const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = m.meta || ''; d.appendChild(meta); }
   msgBox.appendChild(d); scrollChat(m.role === 'user');
   return d;
@@ -197,16 +202,18 @@ const forkLeft = f => (f.turn.parkedQ && f.turn.parkedQ.length) || !f.turn.strea
 function popFork() { const f = forks.pop(); parked = forks[forks.length - 1] || null; return f; }
 function continueParked() {
   if (!parked || streamingLive() || queueRunning) return;
+  tabAway = false;
   // a set-aside answer with nothing left (it finished in the background): close it and go one level further back
   while (parked && !forkLeft(parked)) { popFork().turn.parkedQ = null; }
   const p = parked; if (!p) { updateSendBtn(); return; }
   popFork();
   const t = p.turn, items = t.parkedQ || []; t.parkedQ = null;
+  if (t.tab && t.tab !== activeTab && tabs.has(t.tab)) switchTabNow(t.tab, 'follow');   // back to the board that answer was drawing on
   t.run.gen = gen;                                   // its remaining lines animate again
   const side = liveTurn && liveTurn !== t ? liveTurn : null;   // the side answer that just finished
   liveTurn = t;                                      // pausing it again and asking forks it again
   if (!t.streamDone) abortCtl = t.abort;
-  t.el = bubble({ role: 'assistant', text: '', meta: '' });
+  t.el = bubble({ role: 'assistant', text: '', meta: '', tab: t.tab, tabTitle: tabTitle(t.tab) });
   const contEl = document.createElement('span'); contEl.className = 'cont'; contEl.textContent = `↩ back to where we left off${p.say ? `: “${p.say.slice(0, 60)}${p.say.length > 60 ? '…' : ''}”` : ''}`; t.el.insertBefore(contEl, t.el.firstChild);
   dlog('back to', lab(t), 'from', lab(side), ':', items.length, 'lines · stack:', forkStack());
   Voice.unlock();
@@ -261,7 +268,7 @@ function requestRelease(t) {
 function releaseHeld(t, idle = false) {
   if (!t.held) return;
   if (!idle && siblingPlaying(t)) { t.releasing = false; return; }   // a sibling took over first: wait for it
-  if (scrub) { t.releasing = false; setTimeout(() => requestRelease(t), 500); return; }   // looking back: wait until live again
+  if (scrub || (tabAway && parked)) { t.releasing = false; setTimeout(() => requestRelease(t), 500); return; }   // looking back / at another tab: wait until live again
   // paused: the answer is ready but waits; ▶ carries on with the current topic, and it takes over at the next sentence
   if (isPaused()) {
     t.releasing = false;
@@ -269,6 +276,7 @@ function releaseHeld(t, idle = false) {
     return;
   }
   parkLive('question');                   // the running answer is set aside (if it is still going) and continues afterwards
+  if (!t.held) return;                    // setting it aside woke a waiter that already took this answer over (or dropped it)
   pendingHeld.delete(t); renderPendingPill();
   chat.push(t.heldUser.msg, t.msg);
   const ub = t.heldUser.el; ub.classList.remove('pending'); t.heldUser.wait.remove(); if (t.pulse) { t.pulse.remove(); t.pulse = null; }
@@ -403,6 +411,7 @@ function dropParked(all = false) {
     p.turn.parkedQ = null; p.turn.msg.interrupted = true;
     if (!all) break;
   }
+  if (!parked) tabAway = false;
   updateSendBtn();
 }
 function renderResumeBar() {
@@ -417,7 +426,7 @@ function scheduleAutoBack() {
   // nothing playing and an answer set aside: a background answer that is ready goes first (one at a time, in the
   // order they became ready); otherwise go back. Answers still being written do not hold the lesson up: it goes back
   // and they come in at a sentence boundary once they are ready.
-  const idle = () => !scrub && !isPaused() && !sendsPending && !liveWorking() && !steering;
+  const idle = () => !scrub && !(tabAway && parked) && !isPaused() && !sendsPending && !liveWorking() && !steering;
   const nextReady = () => [...pendingHeld].filter(t => t.ready && t.held && t.held.length && !t.waitResume).sort((a, b) => a.readyAt - b.readyAt)[0];
   if (!idle() || !(parked || nextReady())) { if (autoBack) { clearTimeout(autoBack); autoBack = null; } return; }
   if (autoBack) return;
@@ -433,7 +442,7 @@ function scheduleAutoBack() {
 // (decided at pointerdown: the board captures the pointer, so the click event's target is always the board)
 $('#boardWrap').tabIndex = -1;
 let downOnDrawing = false;
-$('#boardWrap').addEventListener('pointerdown', e => { downOnDrawing = !!e.target.closest('#layerObjects'); }, { capture: true });
+$('#boardWrap').addEventListener('pointerdown', e => { downOnDrawing = !!e.target.closest('.objLayer'); }, { capture: true });
 $('#boardWrap').addEventListener('click', e => {
   if (e.target.closest('button,input,select,textarea,a,label,.askPop,#ctxMenu')) return;
   if (downOnDrawing) input.focus({ preventScroll: true });

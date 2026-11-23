@@ -149,7 +149,7 @@ let topicIsNew = false;
 async function newSession() {
   closeAllPops();
   if (lesson && !untouched()) { saveNow(); await saveToServer(); }
-  stopAll(); if (scrub) exitScrub(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline();
+  stopAll(); if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline();
   lesson = { topic: 'New session', autoName: true, plan: null, session: 'wbt-' + uuid() };
   sessionCreatedAt = new Date().toISOString();
   camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
@@ -241,6 +241,7 @@ const MCP_METHODS = {
     if (!lesson) await newSession();
     const parts = Array.isArray(p.steps) ? p.steps : [{ say: p.say, commands: p.commands }];
     const run = { gen }, turn = mcpTurnNow(), errors = [], touched = [];
+    const onTab = activeTab; turn.tab = onTab;   // this call draws on the tab on screen now (the view follows it)
     let n = 0;
     for (const st of parts.slice(0, 40)) {
       if (!st || typeof st !== 'object') continue;
@@ -258,6 +259,7 @@ const MCP_METHODS = {
     const t0 = Date.now(), maxWait = num(p.wait_seconds, 20, 0, 110) * 1000;
     while (runBusy(run) && run.gen === gen && Date.now() - t0 < maxWait) await sleep(120);
     const done = !runBusy(run);
+    return withTab(onTab, () => {   // the board this call drew on, even if the learner switched tabs meanwhile
     const drawn = [];
     for (const c of touched) {
       if (c.cmd === 'erase' || c.cmd === 'clear' || c.cmd === 'wait') continue;
@@ -271,6 +273,7 @@ const MCP_METHODS = {
       free: freeSpace(),
       note: done ? undefined : 'Still drawing (the board paces the pen to the captions). Later calls queue up after it.',
     };
+    });
   },
   async get_board() {
     const ink = [...objs.values()].filter(o => o.cmd.cmd === 'ink').map(o => o.cmd.id);

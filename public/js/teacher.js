@@ -22,6 +22,12 @@ async function runQueue() {
     // a background answer is ready: let the current sentence finish, then hand over before the next one starts
     if (switchReq && queue[0] && queue[0].say != null) { await within(narrationDone, 8000); takeSwitch(); continue; }
     const it = queue.shift(); if (!it) continue;
+    // the view follows the answer; an answer whose tab was closed is dropped (never drawn on another board), and
+    // tidy-up fixes for a tab that is no longer on screen are left out
+    if (it.turn && it.turn.tab && it.turn.tab !== activeTab) {
+      if (!tabs.has(it.turn.tab) || it.fix) { dlog('dropped a line for a tab not on screen', it.fix ? '(tidy fix)' : '(tab closed)'); continue; }
+      switchTabNow(it.turn.tab, 'follow');   // between items: nothing is animating
+    }
     if (it.say != null && Voice.enabled()) Voice.prefetch(queue.filter(q => q.say != null && q.voice).slice(0, 2).map(q => q.voice));
     currentItem = it;
     try {
@@ -55,6 +61,7 @@ async function runQueue() {
     const nextSay = queue.findIndex(x => x.say != null);
     setPaceShare(1 + (nextSay < 0 ? queue.length : nextSay));
     await execCommand(it.cmd, run, true);
+    renderBadges();
     paceShare = null; queueBusy = false;
     if (run.gen === gen || it.keep) recordCmd(it.turn, it.cmd);   // keep: finished instantly when its answer was set aside
     if (before) it.turn.drew.add(before);
@@ -266,6 +273,8 @@ async function waitForBoard(run, signal) {
 async function tidyPass({ question, answer, model, run, turn, signal }) {
   await waitForBoard(run, signal);
   if (run.gen !== gen || signal.aborted) return;
+  const offTab = () => turn.tab && turn.tab !== activeTab;
+  if (offTab()) { dlog('tidy: skipped, its tab is not on screen'); return; }
   const ids = [...turn.drew].filter(id => objs.has(id) && objs.get(id).cmd.cmd !== 'ink');
   if (!ids.length) return;
   const issues = layoutIssues(ids);
@@ -277,6 +286,7 @@ async function tidyPass({ question, answer, model, run, turn, signal }) {
   const region = regionAround(ids, 120);
   let image = null;
   if (vm && region) { try { image = await boardImage(region); } catch (e) { dlog('tidy: picture failed', String(e)); } }
+  if (offTab()) { status.remove(); dlog('tidy: skipped, the view moved to another tab'); return; }
   const r = n => Math.round(n);
   const text = boardNow() + `REVIEW YOUR BOARD. ${image ? `The attached picture shows what you just drew (board area x ${r(region.x)}..${r(region.x + region.width)}, y ${r(region.y)}..${r(region.y + region.height)}). Look at it the way the learner sees it.` : 'You cannot see a picture this time: use the checks below and the object list.'}
 Objects you drew in this answer: ${ids.join(', ')}.
@@ -404,6 +414,7 @@ async function searchFirst(messages, model, ub, status, signal) {
 async function sendQ(q, opts, opened) {
   if (!lesson) newSession();
   const askedIn = liveTurn;                 // the answer this question was asked inside (named on the way back)
+  if (!opts.parallel) tabAway = false;     // asked while looking at another tab: afterwards the set-aside answer is gone back to
   if (opts.parallel) { /* the lesson keeps going; see releaseHeld */ }
   else if (opts.side) parkLive('question');
   else if (opts.steer && (streamingLive() || queueRunning) && !scrub) {
@@ -416,20 +427,25 @@ async function sendQ(q, opts, opened) {
   Voice.unlock();
   $('#modelPop').hidden = true;
   // opts.ids: the drawings a popup hand-off is about (used instead of the selection; a pending sketch is left alone)
-  const selIds = (opts.ids || [...selection]).filter(id => objs.has(id));
-  const inkIds = opts.ids ? [] : [...inkSinceAsk].filter(id => objs.has(id));
+  // a double-click or a popup's "draw it" opens the drawing in its own tab (or the tab it already has)
+  const into = tabTarget(opts.newTab, opts.ids);
+  const own = !!(opts.ids || opts.newTab);
+  const selIds = into ? [] : (opts.ids || [...selection]).filter(id => objs.has(id));
+  const inkIds = own ? [] : [...inkSinceAsk].filter(id => objs.has(id));
+  const tabId = into ? into.tab : activeTab;
   let image = null;
   if (inkIds.length) { try { const reg = inkRegion(inkIds); if (reg) image = await boardImage(reg); } catch (e) { console.warn('sketch image failed', e); } }
-  if (!opts.ids) { inkSinceAsk.clear(); $('#attach').hidden = true; input.placeholder = 'Ask about…'; }
-  const messages = buildMessages(q, selIds, inkIds, image, !!opts.steer, !!opts.aside);
-  const userMsg = { role: 'user', text: q, about: selIds.map(nameOf), sketch: inkIds.length ? inkIds : undefined, steer: opts.steer || undefined, via: opts.via || undefined };
+  if (!own) { inkSinceAsk.clear(); $('#attach').hidden = true; input.placeholder = 'Ask about…'; }
+  const messages = withTab(tabId, () => buildMessages(into ? into.note + q : q, selIds, inkIds, image, !!opts.steer, !!opts.aside));
+  const tabTag = tabId !== TAB_MAIN ? { tab: tabId, tabTitle: tabTitle(tabId) } : {};
+  const userMsg = { role: 'user', text: q, about: into ? into.about : selIds.map(nameOf), ...tabTag, sketch: inkIds.length ? inkIds : undefined, steer: opts.steer || undefined, via: opts.via || undefined };
   const held = !!opts.parallel;
   if (!held) chat.push(userMsg);
   const ub = bubble(userMsg);
   if (image) { const im = document.createElement('img'); im.src = image; im.className = 'thumb'; im.alt = 'your sketch'; ub.appendChild(im); }
-  const am = { role: 'assistant', text: '', drew: [], meta: '' };
+  const am = { role: 'assistant', text: '', drew: [], meta: '', ...tabTag };
   if (!held) chat.push(am);
-  const turn = { msg: am, q: opts.topic || q, from: held ? null : askedIn, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36) };
+  const turn = { msg: am, q: opts.topic || q, from: held ? null : askedIn, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36), tab: tabId };
   addToTree(turn, q, opts, askedIn);
   const body = turn.el.querySelector('.body'); body.classList.add('thinking');
   // asked in the background: its lines are held (and its bubbles kept out of the chat) until it takes over
@@ -493,7 +509,7 @@ async function sendQ(q, opts, opened) {
       if (turn.thinking) { body.textContent = '✎ Drawing…'; }
       const follow = messages.concat(
         { role: 'assistant', content: r1.content.slice(0, 6000) || '(no answer)' },
-        { role: 'user', content: boardNow() + 'That was too wordy for a whiteboard. Now SHOW it: add 10-25 drawing commands (icons, tokens, boxes, arrows, frames, braces, schedule, graph…) laid out with "near" next to what is already on the board. Labels of 1-4 words, no write sentences, at most one short say line. Do not repeat what you already said.' });
+        { role: 'user', content: withTab(turn.tab, () => boardNow()) + 'That was too wordy for a whiteboard. Now SHOW it: add 10-25 drawing commands (icons, tokens, boxes, arrows, frames, braces, schedule, graph…) laid out with "near" next to what is already on the board. Labels of 1-4 words, no write sentences, at most one short say line. Do not repeat what you already said.' });
       const r2 = await streamAnswer(follow, opts);
       modelApplied = r2.model || modelApplied;
       answer += '\n' + r2.content;
@@ -591,9 +607,10 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
             const c = normalize(it);
             if (!c || c.cmd === 'clear' || c.cmd === 'wait' || c.cmd === 'write' || fixes >= FIX_MAX) { dlog('tidy: skipped', JSON.stringify(it).slice(0, 120)); continue; }
             const touches = c.cmd === 'erase' ? c.ids : ['move', 'update'].includes(c.cmd) ? [c.id] : [];
-            if (touches.some(id => objs.get(id) && objs.get(id).cmd.cmd === 'ink')) { dlog('tidy: left the learner\'s ink alone', c.id); continue; }
-            if (c.cmd === 'erase') c.ids = c.ids.filter(id => !objs.get(id) || objs.get(id).cmd.cmd !== 'ink');
-            fixes++; turn.fixes = (turn.fixes || 0) + 1; enqueue({ cmd: c, run, turn }); continue;
+            const isInk = id => withTab(turn.tab || activeTab, () => !!(objs.get(id) && objs.get(id).cmd.cmd === 'ink'));   // the answer's own board
+            if (touches.some(isInk)) { dlog('tidy: left the learner\'s ink alone', c.id); continue; }
+            if (c.cmd === 'erase') c.ids = c.ids.filter(id => !isInk(id));
+            fixes++; turn.fixes = (turn.fixes || 0) + 1; enqueue({ cmd: c, run, turn, fix: true }); continue;
           }
           if (turn.cmds >= limitsOf(turn).cmds) { dlog('over the per-answer command limit, skipped', it.cmd); continue; }
           const c = normalize(it); if (!c) { dlog('unknown or invalid command skipped', JSON.stringify(it).slice(0, 160)); continue; }

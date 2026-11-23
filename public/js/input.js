@@ -91,6 +91,13 @@ svg.addEventListener('pointermove', e => {
     gesture.last = [bdx, bdy]; drawSelection();
   }
 });
+// the board on screen is about to change (another tab): drop whatever the pointer is doing, so it can never apply
+// to the other board; a drag in progress snaps back on its own board, an unfinished stroke is discarded
+function cancelGesture() {
+  if (gesture && gesture.mode === 'drag' && gesture.dragIds) gesture.dragIds.forEach(id => { if (objs.has(id)) { setOffset(id, 0, 0); rebuildDependents(id); } });
+  inkPreview.setAttribute('d', ''); svg.classList.remove('panning', 'dragging');
+  gesture = null; lastTap = null; pointers.clear();
+}
 function endPointer(e) {
   if (!pointers.has(e.pointerId)) return;
   pointers.delete(e.pointerId);
@@ -148,7 +155,7 @@ let lastTap = null;
 svg.addEventListener('dblclick', e => e.preventDefault());
 // Open a drawing up: its exact internal structure (real shapes, numbers, the computation inside it), built next to it.
 // While the teacher is answering this forks the answer, like a question asked while paused; it continues afterwards.
-const drillQuestion = n => `Open up “${n}”: show exactly what is inside it, with real shapes and numbers (the actual vectors, matrices, tables or data structures) and the computation it does, step by step, right next to it.`;
+const drillQuestion = n => `Open up “${n}”: show exactly what is inside it, with real shapes and numbers (the actual vectors, matrices, tables or data structures) and the computation it does, step by step${MCP_MODE ? ', right next to it' : ''}.`;
 function drillInto(id) {
   if (scrub) return;
   dlog('user: double-click', JSON.stringify(nameOf(id)), '· state:', isPaused() ? 'paused' : liveBusy() ? 'teaching' : 'idle', '· live:', lab(liveTurn));
@@ -157,14 +164,14 @@ function drillInto(id) {
   const name = nameOf(id), topic = `what is inside “${name}”`;
   // the lesson is running: ask in the background and keep teaching; switch over once the answer is actually coming
   // (also while paused: it is answered in the background and takes over once the lesson is playing again)
-  if ((liveBusy() || (isPaused() && liveTurn))) send(q, { parallel: true, topic, pulse: pulseObj(id), intro: `Since you double-clicked “${name}”, here is what is inside it.` });
-  else send(q, { topic });
+  if ((liveBusy() || (isPaused() && liveTurn))) send(q, { parallel: true, topic, pulse: pulseObj(id), intro: `Since you double-clicked “${name}”, here is what is inside it.`, newTab: { tab: activeTab, obj: id } });
+  else send(q, { topic, newTab: { tab: activeTab, obj: id } });
 }
 // instant feedback that a double-click was taken: a pulsing ring around the drawing until its answer takes over
 function pulseObj(id) {
   const o = objs.get(id); if (!o) return null;
   const b = bbOf(o), p = 12 / camera.scale;
-  return el('rect', { class: 'drillPulse', x: b.x - p, y: b.y - p, width: b.width + 2 * p, height: b.height + 2 * p, rx: 8 / camera.scale, fill: 'none', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }, layerOv);
+  return el('rect', { 'data-tab': activeTab, class: 'drillPulse', x: b.x - p, y: b.y - p, width: b.width + 2 * p, height: b.height + 2 * p, rx: 8 / camera.scale, fill: 'none', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }, layerOv);
 }
 function zoomTap(px, py, out) {
   lastUserCamera = Date.now();
