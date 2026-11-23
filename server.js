@@ -391,7 +391,7 @@ const SESS_DIR = path.join(__dirname, 'sessions');
 const validId = id => /^[\w-]{1,80}$/.test(id);
 function listSessions() {
   let files = [];
-  try { files = fs.readdirSync(SESS_DIR).filter(f => f.endsWith('.json')); } catch { return []; }
+  try { files = fs.readdirSync(SESS_DIR).filter(f => f.endsWith('.json') && !f.endsWith('.inflight.json')); } catch { return []; }
   const out = [];
   for (const f of files) {
     try {
@@ -403,8 +403,38 @@ function listSessions() {
   }
   return out.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
+// The lesson in progress (what the teacher was about to say and draw, side answers waiting, answers set aside, open
+// popups), so a reload carries on where it was: sessions/<id>.inflight.json, next to the session. Small and saved
+// often (and with sendBeacon as the page closes); a save older than the one on disk is ignored, so a late save from a
+// page that was just reloaded never overwrites the new page's. {"empty":true} (or DELETE) removes it.
+async function handleInflight(req, res, id) {
+  const file = path.join(SESS_DIR, id + '.inflight.json');
+  const storedAt = () => { try { return JSON.parse(fs.readFileSync(file, 'utf8')).at || 0; } catch { return 0; } };
+  if (req.method === 'GET') {
+    fs.readFile(file, 'utf8', (err, txt) => err ? sendJSON(res, 404, { error: { code: 'not_found' } }) : (res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }), res.end(txt)));
+    return;
+  }
+  if (req.method === 'PUT' || req.method === 'POST') {
+    let d; try { d = JSON.parse(await readBody(req, 2_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request' } }); }
+    if (!d || typeof d !== 'object' || !Number.isFinite(d.at)) return sendJSON(res, 400, { error: { code: 'invalid_request' } });
+    if (d.at < storedAt()) return sendJSON(res, 200, { ok: true, stale: true });
+    if (d.empty) { try { fs.unlinkSync(file); } catch {} return sendJSON(res, 200, { ok: true, removed: true }); }
+    fs.mkdirSync(SESS_DIR, { recursive: true });
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(d));
+    fs.renameSync(tmp, file);
+    return sendJSON(res, 200, { ok: true });
+  }
+  if (req.method === 'DELETE') { try { fs.unlinkSync(file); } catch {} return sendJSON(res, 200, { ok: true }); }
+  return sendJSON(res, 405, { error: { code: 'method' } });
+}
 async function handleSessions(req, res, url) {
-  const id = decodeURIComponent(url.pathname.slice('/api/sessions/'.length));
+  let id = decodeURIComponent(url.pathname.slice('/api/sessions/'.length));
+  if (id.endsWith('/inflight')) {
+    id = id.slice(0, -'/inflight'.length);
+    if (!validId(id)) return sendJSON(res, 400, { error: { code: 'invalid_id' } });
+    return handleInflight(req, res, id);
+  }
   if (!id) {
     if (req.method === 'GET') return sendJSON(res, 200, { sessions: listSessions() });
     return sendJSON(res, 405, { error: { code: 'method' } });
@@ -427,7 +457,7 @@ async function handleSessions(req, res, url) {
     fs.renameSync(tmp, file);
     return sendJSON(res, 200, { ok: true, updatedAt: doc.updatedAt });
   }
-  if (req.method === 'DELETE') { try { fs.unlinkSync(file); } catch {} return sendJSON(res, 200, { ok: true }); }
+  if (req.method === 'DELETE') { try { fs.unlinkSync(file); } catch {} try { fs.unlinkSync(path.join(SESS_DIR, id + '.inflight.json')); } catch {} return sendJSON(res, 200, { ok: true }); }
   return sendJSON(res, 405, { error: { code: 'method' } });
 }
 

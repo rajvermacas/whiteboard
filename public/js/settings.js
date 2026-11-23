@@ -147,9 +147,10 @@ const dlg = $('#topicDlg');
 let topicIsNew = false;
 // New session: starts at once with a default name; the first question names it (see nameSession).
 async function newSession() {
+  if (lesson) inflightDrop(lesson.session);
   closeAllPops();
   if (lesson && !untouched()) { saveNow(); await saveToServer(); }
-  stopAll(); if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline();
+  stopAll(); liveTurn = null; if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline();
   lesson = { topic: 'New session', autoName: true, plan: null, session: 'wbt-' + uuid() };
   sessionCreatedAt = new Date().toISOString();
   camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
@@ -356,6 +357,7 @@ function mcpSetup() {
   renderTitle(); renderChat(); applyCamera();
   if (MCP_MODE) mcpSetup(); else await loadModels();
   if (!had) newSession();
+  await restoreInflight();   // a reload in the middle of the lesson: carry on where it was (paused until ▶)
   // test hook (used by the automated check only)
   window.__wbt = { objs, camera: () => camera, execCommand: (raw, animate = true) => { const c = normalize(raw); return c && execCommand(c, { gen }, animate); }, selection, stopAll, send, lesson: () => lesson, steps: () => steps, scrub: () => scrub, showStep, stepBy, exitScrub };
 })();

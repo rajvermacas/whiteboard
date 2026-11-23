@@ -37,6 +37,8 @@ const ALIASES = { animate: 'update', sequencediagram: 'sequence', messages: 'seq
 const svg = $('#board'), layerOv = $('#layerOverlay'), defs = svg.querySelector('defs'), grid = $('#grid');
 // the board on screen: tabs.js swaps these (and camera, steps) when another tab is shown
 let layerObj = $('#layerObjects');
+// ↗ badges are drawn by tabs.js, which loads later: camera moves during page load call this before it exists
+const badgesSoon = () => { if (window.renderBadges) window.renderBadges(); };
 const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let lesson = null;             // {topic, audience, example, notes, source, plan, session}

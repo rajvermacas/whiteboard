@@ -283,6 +283,8 @@ $('#tlRange').addEventListener('input', e => {
 const LS_CURRENT = 'wbt.current.v1';
 let saveTimer = null, serverTimer = null, sessionCreatedAt = null, dirty = false;
 function snapshot() {
+  // an answer still playing (or set aside) has its words so far in its chat message, so a reload shows them
+  for (const x of [liveTurn, ...forks.map(f => f.turn)]) if (x && x.msg && x.text && chat.includes(x.msg)) { x.msg.text = x.text.trim(); x.msg.drew = [...x.drew].slice(0, 80); }
   // the main board stays in objs / camera / steps (older sessions open as just that); other tabs go in tabs
   const t = tabsSnapshot();
   return { lesson, camera: t.main.camera, createdAt: sessionCreatedAt, chat: chat.slice(-300), objs: t.main.objs, steps: t.main.steps, tabs: t.tabs, activeTab: t.activeTab };
@@ -320,8 +322,9 @@ function resetBoard() {
   objs.clear(); selection.clear(); updateEmpty(); drawSelection(); updateSelectionUI();
 }
 function applySession(d) {
+  if (lesson && d.lesson && lesson.session !== d.lesson.session) inflightDrop(lesson.session);   // leaving it: nothing in progress any more
   closeAllPops();
-  stopAll(); scrub = null; document.body.classList.remove('scrubbing'); resetTabs(); resetBoard(); resetTree();
+  stopAll(); liveTurn = null; scrub = null; document.body.classList.remove('scrubbing'); resetTabs(); resetBoard(); resetTree();
   steps = Array.isArray(d.steps) ? d.steps : (d.objs && d.objs.length ? [{ say: '', by: 'teacher', cmds: d.objs.map(c => ({ ...c, _placed: true })), t: 'base' }] : []);
   lesson = d.lesson; sessionCreatedAt = d.createdAt || new Date().toISOString();
   chat = Array.isArray(d.chat) ? d.chat : [];

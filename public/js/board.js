@@ -188,7 +188,7 @@ function applyCamera() {
   svg.setAttribute('viewBox', `${camera.x} ${camera.y} ${vw} ${vh}`);
   grid.setAttribute('x', camera.x - 64); grid.setAttribute('y', camera.y - 64); grid.setAttribute('width', vw + 128); grid.setAttribute('height', vh + 128);
   $('#zoomPct').textContent = Math.round(camera.scale / defaultScale() * 100) + '%';
-  drawSelection(); if (pops.length) placePops(); renderBadges();
+  drawSelection(); if (pops.length) placePops(); badgesSoon();
   saveSoon();
 }
 function viewRect() { const { W, H } = viewSize(); return { x: camera.x, y: camera.y, width: W / camera.scale, height: H / camera.scale }; }
@@ -311,7 +311,7 @@ async function drawObject(c, run, animate) {
 }
 function removeNow(id, withDeps = true) {
   const o = objs.get(id); if (!o) return;
-  o.g.remove(); objs.delete(id); selection.delete(id); renderBadges();
+  o.g.remove(); objs.delete(id); selection.delete(id); badgesSoon();
   if (withDeps) for (const k of hardDependentsOf(id)) removeNow(k, true);
 }
 async function eraseIds(ids, run, animate) {
@@ -367,7 +367,7 @@ function commitMove(id, dx, dy) {
 }
 function setOffset(id, dx, dy) {
   const o = objs.get(id); if (!o) return;
-  o.off = [dx, dy]; o.g.setAttribute('transform', `translate(${f1(dx)} ${f1(dy)})`); renderBadges();
+  o.off = [dx, dy]; o.g.setAttribute('transform', `translate(${f1(dx)} ${f1(dy)})`); badgesSoon();
 }
 async function moveCmd(c, run, animate) {
   const o = objs.get(c.id); if (!o) return;

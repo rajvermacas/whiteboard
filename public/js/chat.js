@@ -518,7 +518,7 @@ function typeInto(turn, text, cps) {
   turn.text += add;
   turn.pendingType = (turn.pendingType || '') + add;
   turn.cps = cps ? clamp(cps, 8, 120) : 60;   // with narration, type at the speaking rate
-  if (turn.typing) return;
+  if (turn.typing || !turn.el) return;         // no bubble (an answer carried over a reload that was never continued)
   turn.typing = true; typers.add(turn); updateSendBtn();
   const body = turn.el.querySelector('.body');
   if (turn.thinking) { body.textContent = ''; body.classList.remove('thinking'); turn.thinking = false; renderTeaching(); }

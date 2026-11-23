@@ -61,7 +61,7 @@ async function runQueue() {
     const nextSay = queue.findIndex(x => x.say != null);
     setPaceShare(1 + (nextSay < 0 ? queue.length : nextSay));
     await execCommand(it.cmd, run, true);
-    renderBadges();
+    badgesSoon();
     paceShare = null; queueBusy = false;
     if (run.gen === gen || it.keep) recordCmd(it.turn, it.cmd);   // keep: finished instantly when its answer was set aside
     if (before) it.turn.drew.add(before);
@@ -445,7 +445,8 @@ async function sendQ(q, opts, opened) {
   if (image) { const im = document.createElement('img'); im.src = image; im.className = 'thumb'; im.alt = 'your sketch'; ub.appendChild(im); }
   const am = { role: 'assistant', text: '', drew: [], meta: '', ...tabTag };
   if (!held) chat.push(am);
-  const turn = { msg: am, q: opts.topic || q, from: held ? null : askedIn, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36), tab: tabId };
+  const turn = { msg: am, q: opts.topic || q, from: held ? null : askedIn, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36), tab: tabId, ask: q, aside: !!opts.aside, intro: opts.intro || null, got: [] };
+  am.key = turn.key;   // links the chat message to its answer (a reload finds it again)
   addToTree(turn, q, opts, askedIn);
   const body = turn.el.querySelector('.body'); body.classList.add('thinking');
   // asked in the background: its lines are held (and its bubbles kept out of the chat) until it takes over
@@ -514,6 +515,7 @@ async function sendQ(q, opts, opened) {
       modelApplied = r2.model || modelApplied;
       answer += '\n' + r2.content;
     }
+    turn.answered = true;   // every line of the answer is in (the tidy-up below only adjusts the board)
     // look at what was drawn and fix what is unclear (best effort; never fails the answer)
     if (settings.tidy !== false && !myAbort.signal.aborted && run.gen === gen)
       await tidyPass({ question: q, answer, model, run, turn, signal: myAbort.signal });
@@ -575,6 +577,8 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     const m = t.match(/^\{\s*"say"\s*:\s*"(.*)"\s*\}?$/s); if (m) return { say: m[1].replace(/\\"/g, '"').replace(/\\n/g, ' ') }; // a say line with a bad escape
     return undefined;
   };
+  // the answer's lines so far: after a reload, a cut-off answer is continued from them
+  const keepLine = l => { if (fix || !turn || !turn.got) return; turn.got.push(l); if (turn.got.length > INFLIGHT_LINES) turn.got.splice(0, turn.got.length - INFLIGHT_LINES); };
   const handleLine = rawLine => {
     let line = rawLine.trim();
     if (!line || /^```/.test(line)) return;
@@ -591,6 +595,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         dlog('dropped unparsable line', line.slice(0, 160)); jsonBuf = null; return;
       }
       jsonBuf = null;
+      keepLine(line);
       const items = Array.isArray(obj) ? obj : [obj];
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
@@ -623,6 +628,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       jsonBuf = null;
       if (fix) return;
       const t = trimSay(line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200));
+      keepLine(JSON.stringify({ say: t }));
       enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
     }
   };

@@ -61,6 +61,8 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
 
 **Talk while it teaches.** You can send a message while an answer is still being drawn, for example "simpler please" or "wait, why 4×?". The teacher finishes the sentence it is on (voice and pen), drops the rest of that answer, and responds to you, knowing it was interrupted and where. **Stop** is a separate button.
 
+**Reload-proof.** Reloading the page (or the browser closing it) in the middle of a lesson loses nothing that had already arrived. The lesson in progress is saved on the server next to the session (`sessions/<id>.inflight.json`) a few times a second and as the page closes: the sentences and drawings the teacher was about to play, side answers waiting to come in, answers set aside, and open Ask whiteboard popups with their threads (the open tab and every tab's camera are saved with the session). After the reload the lesson comes back **paused** with a note in the chat; ▶ (or Continue) plays the saved lines exactly as they would have played, and only an answer that was still arriving asks the model for the rest of it. The file is removed once nothing is in progress, on ■ Stop, clearing the chat, a new session or deleting the session.
+
 **Replay** plays the whole lesson. Your own moves, erases and sketches are recorded too, so replays match the board.
 
 **✏️ Draw back.** Press **Draw** and sketch (4 colours, undo), then press **Check my drawing**. The sketch is attached to your next message, with a thumbnail above the input. Type a question about it, or just press Send. The teacher works out from the picture what you drew, so you never have to describe it. It says what it sees, answers or checks it, and draws the corrected version next to your sketch. ✕ removes the attachment. If the selected model can't see images, DeepSeek V4.1 Flash checks the sketch for that question.
@@ -240,10 +242,12 @@ public/js/            the front end, as plain scripts loaded in order (they shar
   timeline.js         toolbar, steps & timeline, sessions
   chat.js             chat UI, suggestions, question tree, side questions and going back
   teacher.js          the queue, the prompt, sending a question, streaming the answer
+  tabs.js             tabs: a board per opened-up drawing, ↗ badges, the tab bar, saving tabs
+  inflight.js         the lesson in progress, saved on the server so a reload carries on
   settings.js         model picker, narration, topic dialog, opencode mode, boot
 public/icons.js       hand-drawn icon library
 public/voice.js       narration engine (Kokoro on the local server only)
-sessions/             auto-saved lessons (created on first use, git-ignored)
+sessions/             auto-saved lessons, plus <id>.inflight.json while a lesson is in progress (git-ignored)
 ```
 
 ## Troubleshooting
