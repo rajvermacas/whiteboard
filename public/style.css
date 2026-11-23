@@ -304,3 +304,8 @@ foreignObject .katex { font-size: 1em; }
 .askPop.min.busy .apTitle::after { content: ' …'; }
 .askPop.min.unread { border-color: #1d6fb8; background: #eef5fc; }
 .askPop.min.unread .apTitle::after { content: ' ●'; color: #1d6fb8; }
+/* the popup handed the question to the teacher (it is drawn in the lesson, on the side) */
+.askPop .apA.handoff { background: #f3f7fb; border: 1px solid #c9ddef; border-radius: 8px; padding: 8px 10px; }
+.askPop .apHandHead { font-weight: 600; color: #14507f; }
+.askPop .apHandNote { margin-top: 4px; }
+.askPop .apHandQ { margin-top: 4px; color: #6b7280; font-size: 12.5px; font-style: italic; }

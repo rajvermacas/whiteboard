@@ -1,0 +1,1 @@
+Always ensure that any file is within 1000 lines of code. If not, then refactor.

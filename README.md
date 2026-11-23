@@ -84,7 +84,7 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
 | Erase | Delete/Backspace, or **Erase** in the "Selected" line |
 | Ask about it | select, then use the chips or type ("What is X?", "Change X to another example", Hinglish…) |
 | Steps | timeline bar under the board · ← → keys · ▶ replays · **Live** returns |
-| Quick question about a drawing | **right-click** it (Ctrl+click on a Mac) → **Ask whiteboard**: a small popup next to it answers briefly, using the drawing, what it connects to, what is near it and what the teacher said while drawing it. Ask follow-ups in the same popup. Right-click one of several selected drawings to ask about them all. It only talks: nothing is drawn, spoken, added to the chat or saved, and the lesson carries on. Answers render as Markdown. Clicking elsewhere (or Esc, or –) folds it into a small pill by its drawings that moves with the board (a ● means an answer arrived); click the pill to open it again. Only ✕ closes it. Several can be open at once. Uses the model and reasoning picked in ⚙. Enter asks, Shift+Enter new line |
+| Quick question about a drawing | **right-click** it (Ctrl+click on a Mac) → **Ask whiteboard**: a small popup next to it answers briefly, using the drawing, what it connects to, what is near it and what the teacher said while drawing it. Ask follow-ups in the same popup. Right-click one of several selected drawings to ask about them all. It only talks: nothing is drawn, spoken, added to the chat or saved, and the lesson carries on. Ask it to **draw it** or **explain it with a diagram** and it hands the question to the teacher instead, with those drawings attached: while the teacher teaches it becomes a side question (answered in parallel, it comes in after the current sentence with "You asked: …", then the lesson goes on); when paused it comes in on ▶; when idle it is drawn straight away. The popup says which happened. Answers render as Markdown. Clicking elsewhere (or Esc, or –) folds it into a small pill by its drawings that moves with the board (a ● means an answer arrived); click the pill to open it again. Only ✕ closes it. Several can be open at once. Uses the model and reasoning picked in ⚙. Enter asks, Shift+Enter new line |
 | Where am I? | the **Questions** panel (top of the chat) shows the main question and every side question / double-click under the answer it was asked in, indented: ▶ answering now (*you are here*), ⏸ waits to be gone back to, ⏳ answering on the side, ● ready, ✓ answered. It updates as inner answers finish and the teacher goes back out. Click a row to find it in the chat; click the header to fold it |
 | Keyboard focus | click an empty part of the board to put the keys on the board (then **Space** plays/pauses, ← → step) · click a drawing to type a question about it in the chat box |
 | Play / pause | **Space** with the board focused, same as the timeline's ▶/⏸ |
@@ -230,7 +230,16 @@ launch.cjs            finds or starts the board server (used by mcp.js and the p
 opencode-plugin/      opencode Desktop plugin: the Whiteboard side tab (gui.cjs) and board-server start (server.js)
 public/index.html     layout
 public/style.css      styles
-public/app.js         board engine, pen, drawing tools, layout, timeline, chat, prompt, sessions
+public/js/            the front end, as plain scripts loaded in order (they share one scope; each stays under 1,000 lines):
+  base.js             constants, shared state, utils, hand-drawn geometry
+  shapes.js           how each drawing is built (boxes, icons, tokens, graphs, maths…)
+  board.js            command normalisation, animation, camera, board operations, selection
+  input.js            pointer, wheel and keyboard on the board
+  popup.js            right-click → Ask whiteboard popups and their hand-off to the teacher
+  timeline.js         toolbar, steps & timeline, sessions
+  chat.js             chat UI, suggestions, question tree, side questions and going back
+  teacher.js          the queue, the prompt, sending a question, streaming the answer
+  settings.js         model picker, narration, topic dialog, opencode mode, boot
 public/icons.js       hand-drawn icon library
 public/voice.js       narration engine (Kokoro on the local server only)
 sessions/             auto-saved lessons (created on first use, git-ignored)
