@@ -427,4 +427,4 @@ async function openSessions() {
 }
 $('#sessionsBtn').onclick = openSessions;
 $('#sessClose').onclick = () => { sessDlg.close(); if (!lesson) newSession(); };
-$('#sessNew').onclick = () => { sessDlg.close(); newSession(); };
+$('#sessNew').onclick = async () => { sessDlg.close(); await newSession(); input.focus(); };

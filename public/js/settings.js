@@ -112,7 +112,6 @@ $('#modelSearch').onkeydown = e => {
     else { $('#modelPop').hidden = true; focusBoard(); }
   }
 };
-$('#tidyChk').onchange = e => { settings.tidy = e.target.checked; saveSettings(); };
 $('#copyLogBtn').onclick = async () => {
   const info = [`Whiteboard Teacher debug log`, `browser: ${navigator.userAgent}`, `isolated: ${self.crossOriginIsolated}, cores: ${navigator.hardwareConcurrency}, webgpu: ${!!navigator.gpu}`,
     `model: ${settings.model} · ${currentEffort()} · voice: ${JSON.stringify(voiceCfg())} · voice status: ${JSON.stringify(Voice.status())} (${Voice.device() || '-'})`,
@@ -121,7 +120,7 @@ $('#copyLogBtn').onclick = async () => {
     `state: ${isPaused() ? 'paused' : 'not paused'}${scrub ? ', looking back' : ''}${steering ? ', steering' : ''} · live answer: ${lab(liveTurn)} · fork stack (bottom > top): ${forkStack()}`,
     `background answers: ${pendingHeld.size ? [...pendingHeld].map(t => `${lab(t)} ${t.ready ? 'ready' : 'writing'}${t.waitResume ? ', waits for ▶' : ''}`).join(' | ') : 'none'}`,
     `question tree: ${qtree.length ? qtree.map(t => `${'  '.repeat(t.level || 0)}${lab(t)} [${t.kind}] ${nodeState(t).text}`).join(' | ') : 'empty'}`,
-    `settings: tidy ${settings.tidy === false ? 'off' : 'on'} · page loaded ${new Date(performance.timeOrigin).toISOString()} · now ${new Date().toISOString()}`, '', ...debugLog].join('\n');
+    `page loaded ${new Date(performance.timeOrigin).toISOString()} · now ${new Date().toISOString()}`, '', ...debugLog].join('\n');
   try { await navigator.clipboard.writeText(info); $('#copyLogBtn').textContent = 'Copied ✓'; }
   catch { const w = window.open('', '_blank'); if (w) { w.document.body.innerText = info; } }
   setTimeout(() => { $('#copyLogBtn').textContent = 'Copy debug log'; }, 2000);
@@ -216,7 +215,8 @@ async function newSession() {
   camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
   renderTitle(); renderChat(); focusBoard();
 }
-$('#newBtn').onclick = () => newSession();
+// Started by the user (button or N): put the cursor in the chat box, ready for the first question.
+$('#newBtn').onclick = async () => { await newSession(); input.focus(); };
 // Ask the selected model, in parallel with the answer, for a short title from the first question.
 async function nameSession(q, model) {
   const L = lesson; if (!L || !L.autoName || L.naming) return;
@@ -393,7 +393,6 @@ function mcpSetup() {
   document.body.classList.add('mcpMode');
   if (EMBED) document.body.classList.add('embed');
   $('#modelPick').hidden = true;
-  $('#tidyChk').closest('label').hidden = true;
   $('#emptyHint').textContent = 'Ask in opencode → its answer is drawn here';
   $('#attach span').textContent = 'Your drawing is ready. In opencode, ask "check my drawing".';
   $('#penCheck').textContent = 'Done: check it in opencode';
@@ -411,7 +410,6 @@ function mcpSetup() {
   applyCamera();
   const had = await loadAll();
   updateEmpty();
-  $('#tidyChk').checked = settings.tidy !== false;
   applyVoice(); updateTimeline();
   renderTitle(); renderChat(); applyCamera();
   if (MCP_MODE) mcpSetup(); else await loadModels();
