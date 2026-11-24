@@ -472,7 +472,7 @@ function scheduleAutoBack() {
     else scheduleAutoBack();
   }, 900);
 }
-// The board is the default focus: the keys (Space or S ▶/⏸, ←/→ or A/D steps, F full screen, N new session, R rename, Delete) go to it. The chat box gets the
+// The board is the default focus: the keys (Space or S ▶/⏸, ←/→ or A/D steps, F full screen, N new session, R rename, T fit, Delete) go to it. The chat box gets the
 // focus only when the learner clicks into it. Clicking the board (a drawing or empty space) keeps the focus on the board;
 // buttons, sliders and fields keep their own focus.
 $('#boardWrap').tabIndex = -1;

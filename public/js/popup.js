@@ -317,7 +317,7 @@ async function streamText(model, effort, session, messages, signal, onDelta) {
 
 document.addEventListener('keydown', e => {
   // the shortcuts work everywhere except where text is typed (the chat box, the popup, the model search, dialogs' fields);
-  // a focused button, checkbox or slider does not count, so clicking ⛶ or ✏️ Draw leaves Space, A/S/D, F, N, R and the arrows working
+  // a focused button, checkbox or slider does not count, so clicking ⛶ or ✏️ Draw leaves Space, A/S/D, F, N, R, T and the arrows working
   const ae = document.activeElement, tag = ae && ae.tagName;
   const typing = !!ae && (tag === 'TEXTAREA' || tag === 'SELECT' || ae.isContentEditable || (tag === 'INPUT' && !/^(button|checkbox|radio|range|color|file|submit|reset)$/.test(ae.type)) || !!ae.closest('dialog[open]'));
   if (e.key === 'Escape' && !ctxMenu.hidden) { e.preventDefault(); hideCtxMenu(); return; }
@@ -347,6 +347,8 @@ document.addEventListener('keydown', e => {
   if (k === 'n' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); dlog('user: N → new session'); $('#newBtn').click(); return; }
   // R renames this session (the same as clicking its title)
   if (k === 'r' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && lesson) { e.preventDefault(); dlog('user: R → rename session'); $('#topicBtn').click(); return; }
+  // T zooms to fit everything on the board, the same as ⤢ Fit
+  if (k === 't' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); dlog('user: T → fit'); $('#fitBtn').click(); return; }
   // ← / A go back a step, → / D go forward one
   const back = k === 'ArrowLeft' || k === 'a', fwd = k === 'ArrowRight' || k === 'd';
   if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && (back || fwd) && navSteps().length) { e.preventDefault(); stepBy(back ? -1 : 1); }
