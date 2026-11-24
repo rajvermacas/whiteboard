@@ -319,7 +319,7 @@ async function streamText(model, effort, session, messages, signal, onDelta) {
 const KEYS = [
   ['Lesson', [['Play / pause', ['Space'], ['S']], ['Previous step', ['←'], ['A']], ['Next step', ['→'], ['D']]]],
   ['Board', [['Zoom to fit everything', ['T']], ['Full screen', ['F']], ['Erase the selected drawing', ['Delete']], ['Clear the selection', ['Esc']]]],
-  ['Session', [['New session', ['N']], ['Rename this session', ['R']], ['Jump to the chat box', ['Tab']], ['Back to the board from chat', ['Esc']]]],
+  ['Session', [['New session', ['N']], ['Open sessions', ['O']], ['Rename this session', ['R']], ['Jump to the chat box', ['Tab']], ['Back to the board from chat', ['Esc']]]],
   ['Mouse', [['Pan', ['Scroll']], ['Zoom', [/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl', 'Scroll']], ['Explain what is inside a drawing', ['Double-click']], ['Ask about a drawing, or the whole board', ['Right-click']]]],
   ['Help', [['Show these shortcuts', ['?']]]],
 ];
@@ -337,7 +337,7 @@ $('#keysDlg').addEventListener('close', () => focusBoard());
 
 document.addEventListener('keydown', e => {
   // the shortcuts work everywhere except where text is typed (the chat box, the popup, the model search, dialogs' fields);
-  // a focused button, checkbox or slider does not count, so clicking ⛶ or ✏️ Draw leaves Space, A/S/D, F, N, R, T and the arrows working
+  // a focused button, checkbox or slider does not count, so clicking ⛶ or ✏️ Draw leaves Space, A/S/D, F, N, O, R, T and the arrows working
   const ae = document.activeElement, tag = ae && ae.tagName;
   const typing = !!ae && (tag === 'TEXTAREA' || tag === 'SELECT' || ae.isContentEditable || (tag === 'INPUT' && !/^(button|checkbox|radio|range|color|file|submit|reset)$/.test(ae.type)) || !!ae.closest('dialog[open]'));
   if (e.key === 'Escape' && !ctxMenu.hidden) { e.preventDefault(); hideCtxMenu(); return; }
@@ -365,6 +365,8 @@ document.addEventListener('keydown', e => {
   }
   // N starts a new session, the same as ＋ New
   if (k === 'n' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); dlog('user: N → new session'); $('#newBtn').click(); return; }
+  // O opens the sessions list, the same as the Sessions button
+  if (k === 'o' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); dlog('user: O → open sessions'); $('#sessionsBtn').click(); return; }
   // R renames this session (the same as clicking its title)
   if (k === 'r' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && lesson) { e.preventDefault(); dlog('user: R → rename session'); $('#topicBtn').click(); return; }
   // T zooms to fit everything on the board, the same as ⤢ Fit
