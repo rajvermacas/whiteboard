@@ -43,7 +43,6 @@ button { font: inherit; cursor: pointer; }
   .tools .lbl { display: none; }
   .tools button { padding: 5px 7px; }
   #zoomPct { min-width: 46px; }
-  #chips { flex-wrap: nowrap; }
 }
 
 /* ---------- chat ---------- */
@@ -83,9 +82,14 @@ button { font: inherit; cursor: pointer; }
 #selText { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #selLine button { border: 1px solid #d0d5db; background: #fff; border-radius: 6px; padding: 2px 8px; font-size: 12px; }
 
-#chips { min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 12px; overflow-x: auto; flex: 0 0 auto; scrollbar-width: none; }
+/* suggestions: one row that scrolls sideways (wheel, trackpad or drag), never a stack; the edges fade where more is hidden */
+#chips { min-width: 0; display: flex; flex-wrap: nowrap; gap: 6px; padding: 6px 12px; overflow-x: auto; overflow-y: hidden; flex: 0 0 auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+#chips::-webkit-scrollbar { display: none; }
+#chips.moreR { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); }
+#chips.moreL { -webkit-mask-image: linear-gradient(to right, transparent, #000 36px); mask-image: linear-gradient(to right, transparent, #000 36px); }
+#chips.moreL.moreR { -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent); }
 #chips .chipWait { flex: 0 0 auto; color: #8a94a0; font-size: 12.5px; padding: 5px 4px; white-space: nowrap; animation: pendingPulse 1.4s ease-in-out infinite; }
-#chips button { flex: 0 0 auto; border: 1px solid #cfd8e3; background: #fff; color: #1d6fb8; border-radius: 999px; padding: 5px 11px; font-size: 12.5px; white-space: nowrap; }
+#chips button { flex: 0 0 auto; max-width: 85%; overflow: hidden; text-overflow: ellipsis; border: 1px solid #cfd8e3; background: #fff; color: #1d6fb8; border-radius: 999px; padding: 5px 11px; font-size: 12.5px; white-space: nowrap; }
 #chips button:hover { background: #eef5fc; }
 #chips button.primary { background: #1d6fb8; color: #fff; border-color: #1d6fb8; }
 
