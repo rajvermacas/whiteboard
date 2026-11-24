@@ -4,6 +4,8 @@
 // queue: say lines type while the commands after them draw
 // ======================================================================
 let queueBusy = false;       // a board command is being drawn right now
+const BEAT_WAIT_MS = 6000;   // the longest a spoken line waits for its drawing to stream in
+const BEAT_GAP_MS = 650;     // a breath after each line, so the learner can look at what was just drawn
 // sleep that only counts unpaused time, so a long pause never makes the queue give up and skip ahead
 // wait for p, at most ms of playing time (the timer is cleared either way)
 function within(p, ms) { const g = psleep(ms); return Promise.race([p, g]).finally(() => g.cancel()); }
@@ -23,9 +25,10 @@ function enqueue(item) {
 // Kokoro makes one line at a time: start voicing the next sentences waiting in the queue so each is ready when the
 // one before it ends (only two ahead, so a side question's answer never waits behind a long queue of lines). The line
 // about to play stays first (lines already voiced are skipped), so a sentence streaming in never jumps ahead of it.
-function prefetchAhead(current = lastSay && (!lastSay.run || lastSay.run.gen === gen) ? lastSay : null) {
+function prefetchAhead(current = lastSay && (!lastSay.run || lastSay.run.gen === gen) ? lastSay : null, waiting = null) {
   if (!Voice.enabled()) return;
   const next = queue.filter(q => q.say != null && q.voice).slice(0, 2).map(q => q.voice);
+  if (waiting && next.length < 2) next.push(waiting);   // a line whose drawing is still streaming in comes after them
   Voice.prefetch(current && current.voice ? [current.voice, ...next] : next);
 }
 async function runQueue() {
@@ -62,7 +65,7 @@ async function runQueue() {
         dlog('say', r.duration ? r.duration.toFixed(1) + 's' : 'no audio', JSON.stringify(it.say.slice(0, 50)));
         beginPace(r.duration || it.say.length / SPEAK_CPS);
         if (!it.repeat) typeInto(it.turn, it.say, r.duration ? it.say.length / r.duration : null);
-        narrationDone = r.done.then(() => sleep(250)); r.done.then(updateSendBtn);
+        narrationDone = r.done.then(() => sleep(BEAT_GAP_MS)); r.done.then(updateSendBtn);
         updateSendBtn();
       } else { beginPace(it.say.length / SPEAK_CPS); if (!it.repeat) typeInto(it.turn, it.say, SPEAK_CPS); }
       continue;
@@ -173,7 +176,7 @@ Colours (dark markers on white): blue #1d6fb8, amber #c48a00, green #2a8a3e, red
 
 HOW TO TEACH HERE: SHOW IT ON THE BOARD, EXPLAIN IT IN YOUR VOICE
 0. DECIDE THE DEPTH FIRST. Before anything else, work out what this learner actually needs from their question: its intent and meaning, what is already on the board, and what came before in the conversation. Never decide from the wording alone. Then start the answer with one hidden planning line (never shown):
-   {"plan":{"depth":"quick|explain|deep","why":"<what the learner needs, max 15 words>","pictures":"<the pictures and the tool for each>","parts":["<deep only: 3-6 short part names>"],"now":[1]}}
+   {"plan":{"depth":"quick|explain|deep","why":"<what the learner needs, max 15 words>","pictures":"<the pictures and the tool for each; one picture per beat>","parts":["<deep only: 3-6 short part names>"],"now":[1]}}
    - quick: ONLY when they need one fact, a name, a yes/no, or a small correction, and nothing about it is confusing them. 1-2 sentences and the smallest drawing that makes it clear. Never use quick for a "why" or "how", or for something they have not understood yet.
    - explain: they want to understand one idea that has a real reason behind it. Build one worked picture step by step and explain the reasoning behind each step.
    - deep: understanding needs several connected ideas (a mechanism with stages, a trade-off, a derivation, a system with moving parts), or the learner is still confused after an earlier explanation. Split it into 3-6 parts in "parts" and teach the first two or three now ("now" = their numbers, starting at 1), each under its own short heading in fresh space. Stop at a natural checkpoint; the rest is taught when the learner continues.
@@ -185,8 +188,20 @@ HOW TO TEACH HERE: SHOW IT ON THE BOARD, EXPLAIN IT IN YOUR VOICE
 1. Every idea becomes a picture. Ask "what does this look like?" and draw that: things → icons or boxes; sequences, tokens, slots, queues → tokens; what happens over time → schedule (or several snapshots side by side); cause and movement → arrows; parts of a whole → frame; sizes and counts → brace, bars; structure → graph, tree, network.
 2. Draw the concrete example itself (the actual tokens, requests, numbers, names), never a description of it.
 3. Board text is labels only: 1-4 words or a number. At most 3 write commands per answer (a heading and short captions); in deep, one heading per part plus 2 captions. The explaining happens in your voice, not in board text. No sentences, definitions, legends or bullet lists on the board.
-4. Spoken lines: each is one sentence (at most 22 words) that explains the drawing that follows it: what it is AND why it works that way. Do not just name what is drawn ("this is the matrix"); say what it means and why it matters ("each row mixes all four inputs, so every output sees the whole token"). As many lines as the understanding needs: 1-2 for quick, about 8-14 for explain, about 8-12 per part for deep. Do not describe what the drawing already shows plainly; add the reasoning it cannot show. Narrate what the pen is drawing right now: each sentence explains the commands that follow it, up to the next sentence. Never talk ahead about something drawn later, or back about something drawn earlier without updating or highlighting it. The drawing that goes with a sentence must show exactly what that sentence says: a shape the sentence names (1×2, 3×4) is the shape drawn and highlighted with it, not a bigger picture it is part of (to point at one row of a matrix, tint that row with highlightRows, or draw the row on its own); the next idea's drawing goes after its own sentence.
-5. Rhythm: say → 2-5 drawing commands → say → 2-5 drawing commands … The amount follows the depth: a few commands for quick, about 20-40 for explain, about 20-35 per part for deep. At least 85% of them pictures.
+4. BEATS: the answer is a chain of beats. A beat = one spoken line + the 2-4 board commands right after it. The line is ONE idea in one short sentence (10-18 words, never more than 20); a sentence with two ideas ("X, because Y, so Z") is two or three beats, each with its own drawing. While the line is spoken, its commands draw exactly what it says, so a learner with the sound off could still follow the lesson from the board alone. Every beat must put something NEW on the board that carries its idea: a picture, data, an arrow, or an update that changes data already drawn. A beat whose only command is a write, a highlight or nothing is not allowed; a heading always goes together with the first picture of its part. Before writing each line, ask: "what does the learner SEE change while I say this?" If the answer is nothing, draw it or cut the sentence.
+   Say what the drawing means and why, not what it is ("each row mixes all four inputs, so every output sees the whole token", not "this is the matrix"). Narrate what the pen is drawing right now: never talk ahead about something drawn later, or back about something drawn earlier without updating or highlighting it in the same beat (plus at least one new mark that shows the new point). A shape the sentence names (1×2, 3×4) is the shape drawn and highlighted with it, not a bigger picture it is part of (to point at one row of a matrix, tint that row with highlightRows, or draw the row on its own).
+   TURN EVERY CLAIM INTO A PICTURE (the claim is what the drawing shows, not a caption):
+   - "A is added to B" → draw A, B, a "+" circle between them and the result, with the numbers.
+   - "X rescales / normalises / squashes values" → bars (or a vector) before, an arrow, bars after: the change is visible.
+   - "without X, Y goes wrong" / "why not just ..." → the wrong version and the right one side by side, the bad part in red.
+   - "it is like a conveyor belt / a library / a filter" → draw the analogy with icons and arrows next to the real thing.
+   - "it grows / shrinks / is N times bigger / costs N ms" → bars, a brace with the number, or two sizes side by side.
+   - "it flows / passes / is sent / skips past" → the path as arrows (dashed for a shortcut) with a label on the arrow.
+   - "first ..., then ..., finally ..." → one box or icon per stage joined by arrows, each drawn in its own beat.
+   - a formula or rule → math with the symbols, then the same with the example's numbers plugged in.
+   - "in real models it is 4× / 12,288 / 96 layers" → a small brace or caption with that number beside the toy version.
+   - "each token / each row / one at a time" → tokens or matrix rows, highlight (or update) them one by one.
+5. Rhythm and amount: beat, beat, beat ... with 2-4 commands in every beat. The number of beats follows the depth: 1-3 beats for quick, about 12-18 for explain, about 10-15 per part for deep; that is about 30-55 commands for explain and 25-45 per part for deep. At least 85% of the commands are pictures (not write or highlight). Slow and complete beats the dense: a learner who sees each step drawn while it is said understands more than one who hears three ideas while one arrow appears.
 6. Layout: one clear diagram per idea, flowing left→right or top→bottom, laid out with near; keep 40+ units between things; put before/after or wrong/right side by side; frame what belongs together. Arrows join things that are next to each other; never draw an arrow across another drawing.
 7. Build on the board: keep earlier drawings, extend and update them (update is how a picture changes over time). Erase only a wrong or outdated picture, and say why. A new subject starts with a heading in free space.
 8. Objects of type ink are the learner's own pen sketches. When a picture of their sketch is attached, work out from the picture yourself what it shows (never ask them to describe it). Name what you see in one short spoken line, then answer their question about it; if they asked nothing specific, check it: highlight what is right and draw the corrected version next to their sketch. Never erase or move their ink.
@@ -196,27 +211,39 @@ HOW TO TEACH HERE: SHOW IT ON THE BOARD, EXPLAIN IT IN YOUR VOICE
 12. Language: reply in the language of the learner's latest message; that is English unless that message is in Hinglish or asks for Hinglish (then Hinglish in Latin script). Board labels and the "next" questions follow the same language. Say when numbers are only illustrative.
 13. FRESH FACTS: when the learner's message carries WEB SEARCH CONTEXT or LINK CONTEXT, ground names, versions, numbers, dates and claims in it and prefer it over your memory when they disagree; say once, briefly, that you looked it up ("I checked the web: ..."). Put the key facts on the board (a small "from the web" note with the source's site name is fine). If it does not cover the question, say what is known and do not invent details. Without such context, if the question depends on something recent that you are unsure of, say that your knowledge may be out of date.
 
-EXAMPLE of the balance wanted (a different topic; notice every spoken line gives a reason, not just a name):
-{"plan":{"depth":"explain","why":"wants to know why a cache makes programs faster","pictures":"CPU, cache, disk icons with hit/miss arrows and their times; cache slots as tokens; update them to show eviction"}}
-{"say":"The CPU can only work on data it has in hand, so where data lives decides the speed."}
+EXAMPLE of the balance wanted (a different topic; notice every beat is one short idea with 2-4 commands that draw exactly it):
+{"plan":{"depth":"explain","why":"wants to know why a cache makes programs faster","pictures":"CPU, cache, disk icons with hit/miss arrows and their times; time bars; cache slots as tokens; update them to show eviction"}}
+{"say":"The CPU can only work on data it holds, so where data lives decides the speed."}
 {"cmd":"write","id":"hc","x":0,"y":0,"text":"Caching","size":34}
 {"cmd":"icon","id":"cpu","name":"cpu","label":"CPU","near":{"of":"hc","side":"below","gap":50}}
-{"cmd":"icon","id":"disk","name":"database","label":"disk","sub":"10 ms","near":{"of":"cpu","side":"right","gap":420}}
-{"say":"Fetching from disk takes ten milliseconds: ten million CPU steps spent just waiting."}
+{"cmd":"icon","id":"disk","name":"database","label":"disk","near":{"of":"cpu","side":"right","gap":420}}
+{"say":"Fetching from disk takes ten milliseconds, and the CPU just waits."}
 {"cmd":"arrow","id":"slow","from":"cpu","to":"disk","label":"10 ms","dash":true,"color":"#d1382c"}
-{"say":"So we keep a small, fast memory right beside the CPU for data we just used."}
+{"cmd":"bars","id":"tm","values":[10000000,1],"labels":["disk","CPU step"],"label":"time (ns)","near":{"of":"disk","side":"below","gap":70}}
+{"say":"That one fetch costs as much time as ten million CPU steps."}
+{"cmd":"highlight","id":"hl0","target":"tm","style":"box","color":"#d1382c"}
+{"cmd":"brace","id":"br0","around":["tm"],"side":"below","label":"10,000,000×"}
+{"say":"So we keep a small, fast memory right beside the CPU."}
 {"cmd":"icon","id":"mem","name":"memory","label":"cache","sub":"1 ns","near":{"of":"cpu","side":"right","gap":160}}
-{"cmd":"arrow","id":"hit","from":"cpu","to":"mem","label":"hit","color":"#2a8a3e"}
-{"say":"This works because programs reuse the same data again and again within moments."}
+{"cmd":"arrow","id":"hit","from":"cpu","to":"mem","label":"hit · 1 ns","color":"#2a8a3e"}
+{"cmd":"frame","id":"fc","around":["cpu","mem"],"label":"on the chip"}
+{"say":"It holds only a few recent items, here three slots."}
 {"cmd":"tokens","id":"slots","items":["user:7","post:3",""],"label":"cache slots","near":{"of":"mem","side":"below","gap":70}}
 {"cmd":"brace","id":"cap","around":["slots"],"side":"below","label":"3 slots"}
-{"say":"A hit costs one nanosecond; only a miss pays the full trip to disk."}
+{"say":"Programs reuse the same data within moments, so most reads hit."}
+{"cmd":"update","id":"slots","items":["user:7","post:3",""],"highlight":[0]}
+{"cmd":"bars","id":"hr","values":[0.95,0.05],"labels":["hit","miss"],"label":"reads","near":{"of":"slots","side":"right","gap":80}}
+{"say":"Only a miss pays the full trip to disk, and brings the item back."}
 {"cmd":"erase","ids":["slow"]}
-{"cmd":"arrow","id":"miss","from":"mem","to":"disk","label":"miss","dash":true,"color":"#d1382c"}
-{"say":"The cache is tiny, so when it fills, the entry least likely to be reused must go."}
+{"cmd":"arrow","id":"miss","from":"mem","to":"disk","label":"miss · 10 ms","dash":true,"color":"#d1382c"}
+{"cmd":"update","id":"slots","items":["user:7","post:3","feed:1"],"highlight":[2]}
+{"say":"When it is full, the item unused the longest makes room."}
 {"cmd":"update","id":"slots","items":["post:3","feed:1","user:9"],"highlight":[2]}
+{"cmd":"write","id":"ev","text":"user:7 out","size":18,"color":"#d1382c","near":{"of":"slots","side":"below","gap":60}}
 {"cmd":"highlight","id":"hl","target":"slots","style":"box","color":"#e07800"}
-{"say":"So a cache is a bet on reuse: win it often, and slow storage feels fast."}
+{"say":"A cache is a bet on reuse: win it often, and slow storage feels fast."}
+{"cmd":"frame","id":"fall","around":["fc","disk","slots"],"label":"the bet"}
+{"cmd":"highlight","id":"hl2","target":"hr","style":"circle","color":"#2a8a3e"}
 {"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}`;
 }
 // The parts of the prompt that change between calls (board, outline, selection, session name) go at the start of the
@@ -618,6 +645,25 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     return undefined;
   };
   // the answer's lines so far: after a reload, a cut-off answer is continued from them
+  // a beat (a spoken line and the commands after it) is queued whole, once the next line starts or the reply ends, so
+  // the voice never runs ahead of a drawing that has not streamed in yet and the pen draws while its line is said;
+  // a slow stream waits at most BEAT_WAIT_MS before the line is said with what has arrived
+  let beat = null;
+  const flushBeat = () => {
+    if (!beat) return;
+    const b = beat; beat = null; clearTimeout(b.timer);
+    if (!b.cmds.some(x => PICTURE.has(x.cmd.cmd) && x.cmd.cmd !== 'highlight')) dlog('thin beat: a line with no new picture', JSON.stringify(b.say.say.slice(0, 60)));
+    enqueue(b.say); b.cmds.forEach(enqueue);
+  };
+  const put = item => {
+    if (fix) { enqueue(item); return; }
+    if (item.say != null) {
+      flushBeat();
+      beat = { say: item, cmds: [], timer: setTimeout(flushBeat, BEAT_WAIT_MS) };
+      prefetchAhead(undefined, item.voice);   // voice it while its drawing streams in
+    } else if (beat) beat.cmds.push(item);
+    else enqueue(item);
+  };
   const keepLine = l => { if (fix || !turn || !turn.got) return; turn.got.push(l); if (turn.got.length > INFLIGHT_LINES) turn.got.splice(0, turn.got.length - INFLIGHT_LINES); };
   const handleLine = rawLine => {
     let line = rawLine.trim();
@@ -645,7 +691,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
         if (it.say != null) {
           const t = trimSay(str(it.say, 1200)); if (t.length < String(it.say).trim().length) dlog('shortened a long spoken line');
-          if (!fix) enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
+          if (!fix) put({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
         }
         if (it.cmd || it.type || it.op) {
           if (fix) {
@@ -661,7 +707,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
           const c = normalize(it); if (!c) { dlog('unknown or invalid command skipped', JSON.stringify(it).slice(0, 160)); continue; }
           if (c.cmd === 'write' && (turn.writes = (turn.writes || 0) + 1) > limitsOf(turn).writes) { dlog('too much writing: skipped', c.text); continue; }
           if (PICTURE.has(c.cmd)) turn.pics = (turn.pics || 0) + 1;
-          turn.cmds++; enqueue({ cmd: c, run, turn });
+          turn.cmds++; put({ cmd: c, run, turn });
         }
       }
     } else {
@@ -670,7 +716,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       if (!sayable(line)) { dlog('dropped a stray line', JSON.stringify(line.slice(0, 40))); return; }   // e.g. the "}" of {"say":"…"\n}
       const t = trimSay(line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200));
       keepLine(JSON.stringify({ say: t }));
-      enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
+      put({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
     }
   };
 
@@ -686,6 +732,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   const reader = res.body.getReader(), dec = new TextDecoder();
   let sse = '', bytes = 0;
   const t0 = Date.now();
+  try {
   dlog('stream start', lab(turn), model, effort || 'auto', search ? '· with web search' : '', fix ? '· tidy' : '');
   for (;;) {
     // no bytes for 120 s means the model stalled (reasoning models still stream while thinking)
@@ -724,6 +771,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   }
   if (partial.trim()) handleLine(partial);
   if (jsonBuf) { const b = jsonBuf; jsonBuf = null; try { handleLine(b); } catch {} }
+  } finally { if (signal && signal.aborted) { if (beat) clearTimeout(beat.timer); beat = null; } else flushBeat(); }
   if (!content.trim()) {
     throw Object.assign(new Error(''), { code: reasoned && (finish === 'length' || !finish) ? 'thinking_budget' : 'empty' });
   }
