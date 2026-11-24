@@ -157,7 +157,8 @@ window.Voice = (() => {
     wantQ.splice(0, wantQ.length, ...mine, ...rest);
   }
 
-  async function play(h) {
+  // from: start this many seconds into the line (a sentence cut short by looking back carries on where it stopped)
+  async function play(h, from = 0) {
     const myEpoch = epoch;
     const none = { duration: 0, done: Promise.resolve(), cancelled: true };
     if (!h || !h.text || cfg.mode === 'off') return none;
@@ -187,12 +188,13 @@ window.Voice = (() => {
     let doneResolve; const done = new Promise(r => { doneResolve = r; });
     const finish = () => { if (current && current.src === src) { current = null; speakingNow = false; } doneResolve(); };
     src.onended = finish;
-    current = { src, stop: () => { try { src.stop(); } catch {} speakingNow = false; doneResolve(); } };
+    from = Math.min(Math.max(0, from || 0), Math.max(0, buf.duration - 0.05));
+    current = { src, h, c, t0: c.currentTime - from, stop: () => { try { src.stop(); } catch {} speakingNow = false; doneResolve(); } };
     speakingNow = true;
-    src.start();
+    src.start(0, from);
     lastSource = 'kokoro-server';
-    activeTimeout((buf.duration + 1.5) * 1000, finish);   // never wait forever for onended
-    return { duration: buf.duration, done };
+    activeTimeout((buf.duration - from + 1.5) * 1000, finish);   // never wait forever for onended
+    return { duration: buf.duration - from, done };
   }
 
   function pause() {
@@ -204,6 +206,8 @@ window.Voice = (() => {
     if (ctx && ctx.state !== 'closed') resumeCtx(ctx);
     resumeWaiters.splice(0).forEach(f => f());
   }
+  // how far into its line the voice is (the clock stands still while paused)
+  function position() { return current && current.h ? { h: current.h, at: current.c.currentTime - current.t0 } : null; }
   function stop() {
     epoch++;
     wantQ.length = 0;            // lines not started yet are voiced again when (if) they are played
@@ -230,7 +234,7 @@ window.Voice = (() => {
   }
 
   return {
-    configure, enabled, unlock, prepare, prefetch, play, stop, pause, resume, speakable, describe, preview,
+    configure, enabled, unlock, prepare, prefetch, play, stop, position, pause, resume, speakable, describe, preview,
     speaking: () => speakingNow,
     status: () => status,
     device: () => 'server',

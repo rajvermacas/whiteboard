@@ -59,7 +59,7 @@ async function runQueue() {
         if (Date.now() - w0 > 44000 && !isPaused()) dlog('narration wait timed out; continuing');
         if (it.run && it.run.gen !== gen) continue;
         const guard = psleep(100000);
-        const r = await Promise.race([Voice.play(it.voice), guard.then(() => { dlog('voice.play timed out'); return { duration: 0, done: Promise.resolve() }; })]);
+        const r = await Promise.race([Voice.play(it.voice, it.from || 0), guard.then(() => { dlog('voice.play timed out'); return { duration: 0, done: Promise.resolve() }; })]);
         guard.cancel();
         if (it.run && it.run.gen !== gen) continue;
         dlog('say', r.duration ? r.duration.toFixed(1) + 's' : 'no audio', JSON.stringify(it.say.slice(0, 50)));

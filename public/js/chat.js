@@ -215,7 +215,13 @@ function parkLive(why = 'look') {   // why: 'question' (a side question) or 'loo
   if (!busy) { if (streamingLive() || queueRunning) stopAll(false, 'set aside: nothing left', true); setPaused(false); return; }   // keeps the answers waiting to come in
   t.parkedQ = queue.splice(0);
   const cut = lastSay && lastSay.turn === t && (queueBusy || Voice.speaking() || (t.parkedQ.length && t.parkedQ[0].say == null));
-  if (cut) t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? Voice.prepare(lastSay.say) : null });
+  // the sentence that was cut short is said again. Set aside by a question, from its start (after "back to …");
+  // set aside by looking back, from where the voice stopped, and not at all if it had already been said in full
+  if (cut) {
+    const pos = Voice.position(), mine = pos && lastSay.voice && pos.h === lastSay.voice;
+    if (why === 'look' && lastSay.voice && !mine && !Voice.speaking() && queueBusy) dlog('set aside after its sentence was said: it is not said again');
+    else t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? (why === 'look' && mine ? lastSay.voice : Voice.prepare(lastSay.say)) : null, from: why === 'look' && mine ? Math.max(0, pos.at - 0.3) : 0 });
+  }
   if (currentItem && currentItem.cmd && currentItem.turn === t) currentItem.keep = true;
   forks.push({ turn: t, why, wasPaused, abort: t.abort, say: lastSay && lastSay.turn === t ? lastSay.say : '' }); parked = forks[forks.length - 1];
   if (abortCtl === t.abort) abortCtl = null;          // Stop during the side answer must not cut the set-aside stream
@@ -576,16 +582,22 @@ function typeInto(turn, text, cps) {
   const add = (turn.text ? '\n' : '') + text;
   turn.text += add;
   turn.pendingType = (turn.pendingType || '') + add;
-  turn.cps = cps ? clamp(cps, 8, 120) : 60;   // with narration, type at the speaking rate
+  // with narration the sentence is typed while it is said, ending when the voice does: the time left (not paused) is
+  // what the text still to type must fit in, so a late timer (a busy board) or text left from the sentence before
+  // speeds the typing up instead of leaving the chat behind the voice
+  turn.typeLeft = text.length / (cps ? clamp(cps, 8, 120) : 60);
   if (turn.typing || !turn.el) return;         // no bubble (an answer carried over a reload that was never continued)
   turn.typing = true; typers.add(turn); updateSendBtn();
   const body = turn.el.querySelector('.body');
   if (turn.thinking) { body.textContent = ''; body.classList.remove('thinking'); turn.thinking = false; renderTeaching(); }
-  let acc = 0;
+  let acc = 0, last = performance.now();
   const tick = () => {
     if (!turn.pendingType) { turn.typing = false; typers.delete(turn); updateSendBtn(); return; }
+    const now = performance.now(), dt = (now - last) / 1000; last = now;
     if (isPaused()) { turn.timer = setTimeout(tick, 100); return; }
-    acc += turn.cps * 0.033; const n = Math.floor(acc); acc -= n;
+    turn.typeLeft -= dt;
+    acc += turn.typeLeft > 0 ? turn.pendingType.length * Math.min(1, dt / (turn.typeLeft + dt)) : turn.pendingType.length;
+    const n = Math.floor(acc); acc -= n;
     body.textContent += turn.pendingType.slice(0, n); turn.pendingType = turn.pendingType.slice(n);
     scrollChat(); turn.timer = setTimeout(tick, 33);
   };

@@ -153,12 +153,12 @@
 </dialog>
 
 <dialog id="sessDlg">
-  <div class="sessWrap">
+  <div class="sessWrap" tabindex="-1">
     <div class="sessHead">
       <h2>Your lessons</h2>
       <button id="sessClose" title="Close">✕</button>
     </div>
-    <p class="note">Every lesson is saved automatically as you go, in the <code>sessions/</code> folder next to the app. Pick one to carry on where you left off.</p>
+    <p class="note">Every lesson is saved automatically as you go, in the <code>sessions/</code> folder next to the app. Pick one to carry on where you left off: <kbd>↑</kbd> <kbd>↓</kbd> to choose, <kbd>Space</kbd> to open, <kbd>Delete</kbd> to delete (<kbd>↵</kbd> confirms).</p>
     <button id="sessNew" class="primary">＋ New lesson</button>
     <ul id="sessList"></ul>
   </div>

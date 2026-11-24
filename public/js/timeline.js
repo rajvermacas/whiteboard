@@ -177,14 +177,28 @@ async function playFrom(i, fromReplay = false) {
   scrub.playing = true; updateTimeline();
   const nav = navSteps();
   let k = nav.indexOf(i); if (k < 0) k = 0;
+  if (cutStep(nav[k])) { backToCutStep(); return; }
   if (!fromReplay) await showStep(nav[k], true);
   while (playing() && k + 1 < nav.length) {
     k++;
+    if (cutStep(nav[k])) { backToCutStep(); return; }
     // apply 'you' steps between teacher steps instantly, then animate the next teacher step
     await showStep(nav[k], true);
   }
   if (playing()) { await psleep(600); if (playing() && k === nav.length - 1) exitScrub(true); }
   if (scrub && scrub.playId === id) { scrub.playing = false; updateTimeline(); }
+}
+// The step the set-aside answer was cut in (paused, or ‹ pressed, in the middle of it): the last step, of that answer,
+// with what is left of it waiting. Playing back up to it does not play it again: the live board already shows it as
+// far as it got, so the answer carries on from there (the voice from where it stopped), paused if it was.
+function cutStep(i) {
+  const nav = navSteps(), q = parked && parked.why === 'look' && parked.turn.parkedQ;
+  return !!(q && q.length && (q[0].repeat || q[0].say == null) && i === nav[nav.length - 1] && steps[i].t === parked.turn.key);
+}
+function backToCutStep() {
+  const stay = !!parked.wasPaused;
+  dlog('look back reached the step it was cut in: back to the live answer where it stopped', stay ? '(paused, as it was)' : '');
+  exitScrub(true); if (stay) setPaused(true); continueParked();
 }
 // stop playback where it is (the board stays on the current step)
 function stopPlayback() {
@@ -417,16 +431,35 @@ async function openSessions() {
     const open = document.createElement('button'); open.textContent = lesson && it.id === lesson.session ? 'Open' : 'Resume'; open.onclick = () => resumeSession(it.id);
     const del = document.createElement('button'); del.textContent = 'Delete'; del.title = 'Delete this lesson';
     del.onclick = async () => {
+      sessPick = Math.max(0, [...ul.children].indexOf(li) - 1);   // after deleting, the one above it is picked
       if (!confirm(`Delete “${it.topic}”? This cannot be undone.`)) return;
       try { await fetch('/api/sessions/' + encodeURIComponent(it.id), { method: 'DELETE' }); } catch {}
       try { localStorage.removeItem('wbt.s.' + it.id); } catch {}
       if (lesson && it.id === lesson.session) { stopAll(); resetTabs(); resetBoard(); lesson = null; chat = []; try { localStorage.removeItem(LS_CURRENT); } catch {} renderTitle(); renderChat(); }
       openSessions();
     };
-    li.append(info, open, del); ul.appendChild(li);
+    li.append(info, open, del); li.dataset.id = it.id; ul.appendChild(li);
   }
-  if (!sessDlg.open) sessDlg.showModal();
+  if (!sessDlg.open) { sessDlg.showModal(); sessPick = Math.max(0, list.findIndex(it => lesson && it.id === lesson.session)); }
+  pickSession(sessPick);
+  $('#sessDlg .sessWrap').focus({ preventScroll: true });   // no button holds the keys, so Space opens the picked lesson
 }
+// the keys in the list: ↑/↓ pick a lesson, Space (or ↵) opens it, Delete/Backspace deletes it (↵ confirms)
+let sessPick = 0;
+function pickSession(k) {
+  const lis = [...$('#sessList').children].filter(li => li.dataset.id); if (!lis.length) return;
+  sessPick = clamp(k, 0, lis.length - 1);
+  lis.forEach((li, j) => li.classList.toggle('picked', j === sessPick));
+  lis[sessPick].scrollIntoView({ block: 'nearest' });
+}
+sessDlg.addEventListener('keydown', e => {
+  const lis = [...$('#sessList').children].filter(li => li.dataset.id), li = lis[sessPick];
+  if (e.metaKey || e.ctrlKey || e.altKey || !lis.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); pickSession(sessPick + (e.key === 'ArrowDown' ? 1 : -1)); return; }
+  if (!li) return;
+  if (e.key === ' ' || (e.key === 'Enter' && !e.target.closest('button'))) { e.preventDefault(); dlog('user: sessions list', e.key === ' ' ? 'Space' : '↵', '→ open', li.dataset.id); li.querySelector('.info').click(); return; }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); dlog('user: sessions list', e.key, '→ delete?', li.dataset.id); li.querySelector('button:last-child').click(); }
+});
 $('#sessionsBtn').onclick = openSessions;
 $('#sessClose').onclick = () => { sessDlg.close(); if (!lesson) newSession(); };
 $('#sessNew').onclick = async () => { sessDlg.close(); await newSession(); input.focus(); };
