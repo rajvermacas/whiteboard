@@ -149,6 +149,21 @@ function renderTeaching(working = liveWorking(), paused = isPaused()) {
   const meta = host.querySelector('.meta');
   if (teachEl.parentNode !== host || teachEl.nextSibling !== meta) { host.insertBefore(teachEl, meta); scrollChat(); }
 }
+// the composer's buttons share one icon set: drawn at the same size and line weight, so no emoji or font glyph sticks out
+const COMPOSER_ICONS = {
+  clip: '<path d="M20.5 11.2l-8.3 8.3a5 5 0 0 1-7.1-7.1l8.3-8.3a3.3 3.3 0 0 1 4.7 4.7l-8.3 8.3a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6"/>',
+  pause: '<rect x="6.5" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" stroke="none"/><rect x="13.9" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" stroke="none"/>',
+  play: '<path d="M8 5.5v13a.8.8 0 0 0 1.2.7l10.4-6.5a.8.8 0 0 0 0-1.4L9.2 4.8A.8.8 0 0 0 8 5.5z" fill="currentColor" stroke="none"/>',
+  stop: '<rect x="5.5" y="5.5" width="13" height="13" rx="2.4" fill="currentColor" stroke="none"/>',
+  steer: '<path d="M5 5v5.5a4 4 0 0 0 4 4h10"/><path d="M15 10.5l4 4-4 4"/>',
+  send: '<path d="M4.5 11.3L19.4 4.6a.6.6 0 0 1 .8.8l-6.7 14.9a.6.6 0 0 1-1.1-.1l-1.8-5.8-5.8-1.8a.6.6 0 0 1-.1-1.1z" fill="currentColor"/>',
+};
+function setIcon(btn, name) {
+  if (btn.dataset.icon === name) return;
+  btn.dataset.icon = name;
+  btn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${COMPOSER_ICONS[name]}</svg>`;
+}
+[['imgBtn', 'clip'], ['pauseBtn', 'pause'], ['stopBtn', 'stop'], ['steerBtn', 'steer'], ['sendBtn', 'send']].forEach(([id, n]) => setIcon($('#' + id), n));
 function updateSendBtn() {
   renderTreeSoon();
   const working = liveWorking(), p = isPaused();
@@ -156,9 +171,9 @@ function updateSendBtn() {
   const pb = $('#pauseBtn');
   if (scrub) {
     // a scrubbed lesson: this button pauses / resumes its playback, the same as the timeline's ⏸/▶
-    const held = isPaused(); pb.hidden = !scrub.playing; pb.textContent = held ? '▶' : '⏸'; pb.classList.toggle('on', held); tip(pb, held ? 'Resume the playback' : 'Pause the playback');
+    const held = isPaused(); pb.hidden = !scrub.playing; setIcon(pb, held ? 'play' : 'pause'); pb.classList.toggle('on', held); tip(pb, held ? 'Resume the playback' : 'Pause the playback');
   } else {
-    pb.hidden = !working && !p; pb.textContent = p ? '▶' : '⏸'; pb.classList.toggle('on', p);
+    pb.hidden = !working && !p; setIcon(pb, p ? 'play' : 'pause'); pb.classList.toggle('on', p);
     tip(pb, p ? 'Play' : 'Pause');
   }
   scheduleAutoBack();
@@ -493,6 +508,8 @@ input.addEventListener('keydown', e => {
 $('#steerBtn').onclick = () => { submitMode = 'steer'; $('#composer').requestSubmit(); };
 function fitInput() {
   input.style.height = '40px';
+  // an empty box is one line high, the same as the buttons beside it: the browser measures a wrapped placeholder as content
+  if (!input.value) { input.style.overflowY = 'hidden'; return; }
   const need = input.scrollHeight + (input.offsetHeight - input.clientHeight);   // content + borders
   const h = need > 41 ? Math.min(need, 140) : 40;
   input.style.height = h + 'px'; input.style.overflowY = need > 140 ? 'auto' : 'hidden';
