@@ -515,10 +515,13 @@ async function sendQ(q, opts, opened) {
   if (held) {
     // the question shows at once, marked as waiting; the answer's bubble appears when it takes over
     turn.el.remove(); ub.classList.add('pending');
-    const w = document.createElement('span'); w.className = 'wait'; w.textContent = opts.aside ? '⏳ Answering on the side… the lesson goes on until it is ready' : '⏳ Opening it up… the lesson goes on until it is ready'; ub.appendChild(w);
+    const w = document.createElement('span'); w.className = 'wait'; ub.appendChild(w);
     turn.held = []; turn.heldUser = { msg: userMsg, el: ub, wait: w }; turn.intro = opts.intro; turn.pulse = opts.pulse || null; turn.askedIn = askedIn;
     turn.pausedAsk = isPaused() && !scrub;   // asked while paused: the lesson stays paused until this answer plays (chat.js)
-    if (turn.pausedAsk) w.textContent = '⏳ Answering… the lesson stays paused until it is ready';
+    // the note is "<what> · <time> · <tokens> · <then>"; the time and tokens are filled in live (showThinking below)
+    turn.heldUser.note = turn.pausedAsk ? ['⏳ Answering…', 'the lesson stays paused until it is ready']
+      : [opts.aside ? '⏳ Answering on the side…' : '⏳ Opening it up…', 'the lesson goes on until it is ready'];
+    w.textContent = turn.heldUser.note.join(' ');
     pendingHeld.add(turn); renderPendingPill();
     // answers that got ready earlier in this pause and wait for ▶ come first (the order asked): they play now too
     if (turn.pausedAsk) for (const x of pendingHeld) if (x.waitResume) { x.waitResume = false; requestRelease(x); }
@@ -539,14 +542,24 @@ async function sendQ(q, opts, opened) {
   opened(); updateSendBtn();
 
   // live "thinking" indicator so a slow reasoning model never looks frozen
-  const t0 = Date.now(); let reasoningChars = 0, linkStatus = '';
-  const showThinking = () => { if (turn.thinking) body.textContent = linkStatus ? `${linkStatus} ${Math.round((Date.now() - t0) / 1000)}s` : `✎ Thinking… ${Math.round((Date.now() - t0) / 1000)}s${reasoningChars ? ` · reasoning ${reasoningChars > 999 ? Math.round(reasoningChars / 1000) + 'k' : reasoningChars} chars` : ''}`; };
+  const t0 = Date.now(); let reasoningChars = 0, contentChars = 0, linkStatus = '';
+  // a question asked in the background: its note under the question shows the time so far and the tokens received,
+  // like the answer's own line does in the main chat (about 4 characters a token until the provider's count is in)
+  const fmtTok = n => n > 999 ? (n / 1000).toFixed(n > 9999 ? 0 : 1) + 'k' : String(n);
+  const showHeld = (done = false) => {
+    const hu = turn.heldUser; if (!turn.held || !hu || !hu.note || !hu.wait.isConnected) return;
+    const st = turn.stats, tok = done && st && st.tok ? st.tok : Math.round((reasoningChars + contentChars) / 4);
+    const exact = done && st && st.tok && !st.est;
+    const head = done ? '✓ Ready' : linkStatus || hu.note[0];
+    hu.wait.textContent = `${head} · ${Math.round((Date.now() - t0) / 1000)}s${tok ? ` · ${exact ? '' : '≈'}${fmtTok(tok)} tokens` : ''} · ${done ? 'it plays when its turn comes' : hu.note[1]}`;
+  };
+  const showThinking = () => { showHeld(); if (turn.thinking) body.textContent = linkStatus ? `${linkStatus} ${Math.round((Date.now() - t0) / 1000)}s` : `✎ Thinking… ${Math.round((Date.now() - t0) / 1000)}s${reasoningChars ? ` · reasoning ${reasoningChars > 999 ? Math.round(reasoningChars / 1000) + 'k' : reasoningChars} chars` : ''}`; };
   showThinking();
   const thinkTimer = setInterval(showThinking, 500);
 
   let modelApplied = null, failed = false;
   try {
-    const opts = { model, effort, run, turn, signal: myAbort.signal, onReasoning: n => { reasoningChars += n; } };
+    const opts = { model, effort, run, turn, signal: myAbort.signal, onReasoning: n => { reasoningChars += n; }, onContent: n => { contentChars += n; } };
     // links in the question: the server reads them first (the answer then gets them from its cache)
     await readLinksFirst(q, ub, s => { linkStatus = s; showThinking(); }, myAbort.signal);
     // could the web help? the server decides (leaning to yes) and searches; the answer then gets the results
@@ -606,6 +619,7 @@ async function sendQ(q, opts, opened) {
     }
   } finally {
     clearInterval(thinkTimer);
+    if (!failed && !myAbort.signal.aborted) showHeld(true);   // still waiting its turn: the final time and tokens stay
     if (turn.counted) activeStreams = Math.max(0, activeStreams - 1);
     streaming = activeStreams > 0; turn.streamDone = true;
     if (turn.held) { if (failed || !turn.held.length) dropHeld(turn); else requestRelease(turn); }
@@ -630,7 +644,7 @@ async function sendQ(q, opts, opened) {
 
 // One streamed Chat Completions call. Say lines and board commands are queued as each line completes.
 // fix = true: a tidy-up pass. Only board edits are taken (no talking, no clear, never the learner's ink), at most FIX_MAX.
-async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, fix = false, search = false }) {
+async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, onContent, fix = false, search = false }) {
   let fixes = 0;
   let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, reasoned = 0;
   let usage = null, firstT = 0;   // the provider's token count (last chunk) and when the reply started arriving
@@ -763,7 +777,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       const rz = delta.reasoning_content || delta.reasoning;
       if (typeof rz === 'string' && rz) { reasoned += rz.length; onReasoning && onReasoning(rz.length); }
       if (typeof delta.content === 'string' && delta.content) {
-        content += delta.content; partial += delta.content;
+        content += delta.content; partial += delta.content; onContent && onContent(delta.content.length);
         let k;
         while ((k = partial.indexOf('\n')) >= 0) { handleLine(partial.slice(0, k)); partial = partial.slice(k + 1); }
       }
