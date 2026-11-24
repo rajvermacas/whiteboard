@@ -9,7 +9,7 @@ $('#zoomPct').onclick = () => {
   const { W, H } = viewSize(), s = defaultScale(), cx = camera.x + W / camera.scale / 2, cy = camera.y + H / camera.scale / 2;
   animateCamera({ scale: s, x: cx - W / s / 2, y: cy - H / s / 2 }, 300);
 };
-$('#fitBtn').onclick = () => fit(true);
+$('#fitBtn').onclick = () => { dlog('fit: show the whole board', isPaused() ? '(paused)' : '', scrub ? `(looking back at step ${scrub.i})` : ''); fit(true); };
 $('#wipeBtn').onclick = () => { if (!objs.size || scrub) return; if (confirm('Wipe the whole board? (The chat and the step history stay.)')) { stopAll(); recordEdit({ cmd: 'clear' }); clearBoard({ gen }, true); } };
 $('#replayBtn').onclick = replay;
 $('#fsBtn').onclick = () => { $('#app').classList.contains('fs') ? exitFullscreen() : enterFullscreen(); };
