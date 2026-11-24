@@ -256,8 +256,13 @@ function continueParked() {
   const side = liveTurn && liveTurn !== t ? liveTurn : null;   // the side answer that just finished
   liveTurn = t;                                      // pausing it again and asking forks it again
   if (!t.streamDone) abortCtl = t.abort;
+  // nothing came in between (it was only set aside to look back, or to switch tabs): carry on in the same bubble.
+  // Only when a side answer sits in between does it need a new bubble saying where it picks up again
+  if (t.el && t.el.isConnected && t.el === msgBox.lastElementChild) dlog('back to', lab(t), ': same bubble (nothing in between)');
+  else {
   t.el = bubble({ role: 'assistant', text: '', meta: '', tab: t.tab, tabTitle: tabTitle(t.tab) });
   const contEl = document.createElement('span'); contEl.className = 'cont'; contEl.textContent = `↩ back to where we left off${p.say ? `: “${p.say.slice(0, 60)}${p.say.length > 60 ? '…' : ''}”` : ''}`; t.el.insertBefore(contEl, t.el.firstChild);
+  }
   dlog('back to', lab(t), 'from', lab(side), ':', items.length, 'lines · stack:', forkStack());
   Voice.unlock();
   // back from a side question: say so out loud, show it on the board, and look at where that answer was drawing
