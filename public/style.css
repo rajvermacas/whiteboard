@@ -141,6 +141,21 @@ dialog::backdrop { background: rgba(20,24,28,.35); }
 #topicForm menu button { border: 1px solid #d0d5db; background: #fff; border-radius: 8px; padding: 7px 14px; }
 #topicForm menu button.primary { background: #1d6fb8; color: #fff; border-color: #1d6fb8; font-weight: 600; }
 
+/* ---------- shortcuts ---------- */
+.keysWrap { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 12px; max-height: 84vh; overflow-y: auto; }
+#keysList { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; }
+.kGroup h3 { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: #8a929b; font-weight: 600; }
+.kRow { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #f0f2f4; font-size: 13px; color: #2b3138; }
+.kRow:last-child { border-bottom: 0; }
+.kKeys { display: flex; align-items: center; gap: 4px; flex-shrink: 0; color: #8a929b; font-size: 11px; }
+kbd { display: inline-block; min-width: 22px; padding: 2px 6px; border: 1px solid #d0d5db; border-bottom-width: 2px; border-radius: 6px; background: #fff; font: 600 11.5px/16px ui-monospace, SFMono-Regular, Menlo, monospace; color: #2b3138; text-align: center; }
+.keysWrap .note kbd { min-width: 0; padding: 0 5px; }
+#keysDlg { width: min(680px, 94vw); }
+.keysWrap:focus { outline: none; }
+.kKeys .kMouse { font-size: 12px; color: #444c56; background: #f3f5f7; border-radius: 6px; padding: 2px 8px; }
+@media (max-width: 560px) { #keysList { grid-template-columns: 1fr; } }
+@media (max-width: 560px), (hover: none) { #keysBtn { display: none; } }
+
 /* ---------- board text ---------- */
 .hand { font-family: Caveat, 'Comic Sans MS', cursive; }
 .math { font-family: 'Times New Roman', Georgia, serif; font-style: italic; }

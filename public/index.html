@@ -32,6 +32,7 @@
       </span>
       <button id="penBtn" title="Draw on the board yourself" aria-pressed="false">✏️ <span class="lbl">Draw</span></button>
       <button id="muteBtn" title="Narration on/off">🔊</button>
+      <button id="keysBtn" title="Keyboard shortcuts (?)" aria-haspopup="dialog">⌨</button>
       <button id="fsBtn" title="Full screen (F)">⛶</button>
     </div>
   </header>
@@ -162,6 +163,17 @@
     <p class="note">Every lesson is saved automatically as you go, in the <code>sessions/</code> folder next to the app. Pick one to carry on where you left off.</p>
     <button id="sessNew" class="primary">＋ New lesson</button>
     <ul id="sessList"></ul>
+  </div>
+</dialog>
+
+<dialog id="keysDlg" aria-labelledby="keysTitle">
+  <div class="keysWrap" tabindex="-1" autofocus>
+    <div class="sessHead">
+      <h2 id="keysTitle">Shortcuts</h2>
+      <button id="keysClose" title="Close (Esc)">✕</button>
+    </div>
+    <div id="keysList"></div>
+    <p class="note">The letter keys work when you are not typing. Press <kbd>Esc</kbd> in the chat box to give the keys back to the board.</p>
   </div>
 </dialog>
 

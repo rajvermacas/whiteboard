@@ -315,6 +315,26 @@ async function streamText(model, effort, session, messages, signal, onDelta) {
   }
 }
 
+// the shortcuts card (⌨ in the top bar, or ?): one list, so the card and the keys below stay in step
+const KEYS = [
+  ['Lesson', [['Play / pause', ['Space'], ['S']], ['Previous step', ['←'], ['A']], ['Next step', ['→'], ['D']]]],
+  ['Board', [['Zoom to fit everything', ['T']], ['Full screen', ['F']], ['Erase the selected drawing', ['Delete']], ['Clear the selection', ['Esc']]]],
+  ['Session', [['New session', ['N']], ['Rename this session', ['R']], ['Jump to the chat box', ['Tab']], ['Back to the board from chat', ['Esc']]]],
+  ['Mouse', [['Pan', ['Scroll']], ['Zoom', [/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl', 'Scroll']], ['Explain what is inside a drawing', ['Double-click']], ['Ask about a drawing, or the whole board', ['Right-click']]]],
+  ['Help', [['Show these shortcuts', ['?']]]],
+];
+function openKeys() {
+  const kbd = ks => ks.map(k => /^(Scroll|Double-click|Right-click)$/.test(k) ? `<span class="kMouse">${k}</span>` : `<kbd>${k}</kbd>`).join('<span>+</span>');
+  $('#keysList').innerHTML = KEYS.map(([g, rows]) => `<section class="kGroup"><h3>${g}</h3>${rows.map(([what, a, b]) =>
+    `<div class="kRow"><span>${what}</span><span class="kKeys">${kbd(a)}${b ? `<span>or</span>${kbd(b)}` : ''}</span></div>`).join('')}</section>`).join('');
+  if (!$('#keysDlg').open) { $('#keysDlg').showModal(); $('#keysDlg .keysWrap').focus({ preventScroll: true }); }
+  dlog('user: shortcuts card');
+}
+$('#keysBtn').onclick = openKeys;
+$('#keysClose').onclick = () => $('#keysDlg').close();
+$('#keysDlg').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });   // a click on the backdrop closes it
+$('#keysDlg').addEventListener('close', () => focusBoard());
+
 document.addEventListener('keydown', e => {
   // the shortcuts work everywhere except where text is typed (the chat box, the popup, the model search, dialogs' fields);
   // a focused button, checkbox or slider does not count, so clicking ⛶ or ✏️ Draw leaves Space, A/S/D, F, N, R, T and the arrows working
@@ -349,6 +369,8 @@ document.addEventListener('keydown', e => {
   if (k === 'r' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && lesson) { e.preventDefault(); dlog('user: R → rename session'); $('#topicBtn').click(); return; }
   // T zooms to fit everything on the board, the same as ⤢ Fit
   if (k === 't' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); dlog('user: T → fit'); $('#fitBtn').click(); return; }
+  // ? shows the shortcuts card
+  if (e.key === '?' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); openKeys(); return; }
   // ← / A go back a step, → / D go forward one
   const back = k === 'ArrowLeft' || k === 'a', fwd = k === 'ArrowRight' || k === 'd';
   if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && (back || fwd) && navSteps().length) { e.preventDefault(); stepBy(back ? -1 : 1); }
