@@ -148,7 +148,10 @@ function hideParts(parts) {
   for (const p of parts) {
     if (p.kind === 'stroke') { const L = p.el.getTotalLength(); p.len = L; p.el.style.strokeDasharray = `${L} ${L}`; p.el.style.strokeDashoffset = L; }
     else if (p.kind === 'text') {
-      const b = p.el.getBBox(); p.bb = b;
+      // WebKit's getBBox() on a <foreignObject> (a formula) leaves out its x/y, so the pen and the reveal ran at the
+      // drawing's origin while the formula sat further down and popped in at the end: read its box from the attributes
+      const fo = p.el.tagName === 'foreignObject', a = n => parseFloat(p.el.getAttribute(n)) || 0;
+      const b = fo ? { x: a('x'), y: a('y'), width: a('width'), height: a('height') } : p.el.getBBox(); p.bb = b;
       const cid = 'clip' + Math.random().toString(36).slice(2, 9);
       const cp = el('clipPath', { id: cid }, defs); p.clipRect = el('rect', { x: b.x - 6, y: b.y - 8, width: 0, height: b.height + 16 }, cp); p.clipPath = cp;
       p.el.setAttribute('clip-path', `url(#${cid})`);
