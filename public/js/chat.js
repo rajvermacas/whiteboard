@@ -73,7 +73,7 @@ function renderChips() {
     suggestTimer = setTimeout(() => { suggestCache.set(key, 'pending'); writeSuggestions(kind, names, key); }, 350);   // not on every click
   };
   if ([...inkSinceAsk].some(id => objs.has(id))) {
-    add('Check my drawing', 'Check my drawing.', true);   // sends your sketch to be checked
+    // no "Check my drawing" chip here: the board's own button attaches the sketch and waits for the learner's words
     dynamic('sketch', [...objs.keys()].filter(id => !inkSinceAsk.has(id)).slice(-12).map(nameOf));
     return;
   }
