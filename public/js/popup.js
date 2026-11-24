@@ -279,9 +279,13 @@ async function streamText(model, effort, session, messages, signal, onDelta) {
 }
 
 document.addEventListener('keydown', e => {
-  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+  // the shortcuts work everywhere except where text is typed (the chat box, the popup, the model search, dialogs' fields);
+  // a focused button, checkbox or slider does not count, so clicking ⛶ or ✏️ Draw leaves Space, F and the arrows working
+  const ae = document.activeElement, tag = ae && ae.tagName;
+  const typing = !!ae && (tag === 'TEXTAREA' || tag === 'SELECT' || ae.isContentEditable || (tag === 'INPUT' && !/^(button|checkbox|radio|range|color|file|submit|reset)$/.test(ae.type)) || !!ae.closest('dialog[open]'));
   if (e.key === 'Escape' && !ctxMenu.hidden) { e.preventDefault(); hideCtxMenu(); return; }
   if (document.activeElement && document.activeElement.closest('.askPop')) return;   // keys typed in the popup stay in the popup
+  if (e.key === 'Escape' && document.activeElement === input) { e.preventDefault(); focusBoard(); return; }
   if (e.key === 'Escape') {
     if (selection.size) { setSelection([]); return; }
     if ($('#app').classList.contains('fs')) exitFullscreen();
@@ -291,9 +295,15 @@ document.addEventListener('keydown', e => {
   // Delete erases the selected drawing; with the chat box focused and empty only Delete does, so Backspace keeps editing text
   const inChat = document.activeElement === input;
   if ((!typing || (inChat && e.key === 'Delete' && !input.value)) && (e.key === 'Delete' || e.key === 'Backspace') && selection.size && !scrub) { e.preventDefault(); learnerErase([...selection]); }
-  // Space on the board (not in the chat box or a field) is the timeline's ▶/⏸
-  if (e.key === ' ' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && document.activeElement && document.activeElement.closest('#boardWrap') && !document.activeElement.closest('button') && !$('#timeline').hidden) {
-    e.preventDefault(); dlog('user: space on the board → timeline', $('#tlPlay').textContent); $('#tlPlay').click(); return;
+  // Space (anywhere but a text field) is the timeline's ▶/⏸; a focused button gives up the focus so it is not pressed too
+  if (e.key === ' ' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && !$('#timeline').hidden) {
+    e.preventDefault(); if (ae && ae !== document.body && !ae.closest('#boardWrap')) focusBoard(); dlog('user: space on the board → timeline', $('#tlPlay').textContent); $('#tlPlay').click(); return;
+  }
+  // Tab (outside the text fields) jumps to the chat box; Escape in the (empty or not) chat box hands the keys back to the board
+  if (e.key === 'Tab' && !e.shiftKey && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); input.focus({ preventScroll: true }); return; }
+  // F toggles full screen (not while typing in the chat box or a field)
+  if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault(); dlog('user: F → full screen', !$('#app').classList.contains('fs')); $('#fsBtn').click(); return;
   }
   if (!typing && !e.metaKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && navSteps().length) { e.preventDefault(); stepBy(e.key === 'ArrowLeft' ? -1 : 1); }
 });

@@ -472,16 +472,14 @@ function scheduleAutoBack() {
     else scheduleAutoBack();
   }, 900);
 }
-// Clicking a drawing puts the cursor in the chat box, so the next keys type a question about it. Clicking an empty part of
-// the board moves the focus to the board itself (Space then plays/pauses the lesson). Buttons, sliders and fields keep their own focus.
-// (decided at pointerdown: the board captures the pointer, so the click event's target is always the board)
+// The board is the default focus: the keys (Space ▶/⏸, ←/→ steps, F full screen, Delete) go to it. The chat box gets the
+// focus only when the learner clicks into it. Clicking the board (a drawing or empty space) keeps the focus on the board;
+// buttons, sliders and fields keep their own focus.
 $('#boardWrap').tabIndex = -1;
-let downOnDrawing = false;
-$('#boardWrap').addEventListener('pointerdown', e => { downOnDrawing = !!e.target.closest('.objLayer'); }, { capture: true });
+const focusBoard = () => $('#boardWrap').focus({ preventScroll: true });
 $('#boardWrap').addEventListener('click', e => {
   if (e.target.closest('button,input,select,textarea,a,label,.askPop,#ctxMenu')) return;
-  if (downOnDrawing) input.focus({ preventScroll: true });
-  else $('#boardWrap').focus({ preventScroll: true });
+  focusBoard();
 });
 // While the teacher is teaching: Enter (or Send) asks on the side (a fork: answered in parallel, the lesson goes on and
 // comes back after it); ⌘/Ctrl+Enter (or ↪ Steer) steers the lesson (it stops after its sentence and takes the message in).
@@ -493,7 +491,12 @@ input.addEventListener('keydown', e => {
   e.preventDefault(); submitMode = (e.metaKey || e.ctrlKey) ? 'steer' : 'fork'; $('#composer').requestSubmit();
 });
 $('#steerBtn').onclick = () => { submitMode = 'steer'; $('#composer').requestSubmit(); };
-function fitInput() { input.style.height = ''; const sh = input.scrollHeight + 2; input.style.height = Math.max(40, Math.min(sh, 140)) + 'px'; input.style.overflowY = sh > 140 ? 'auto' : 'hidden'; }
+function fitInput() {
+  input.style.height = '40px';
+  const need = input.scrollHeight + (input.offsetHeight - input.clientHeight);   // content + borders
+  const h = need > 41 ? Math.min(need, 140) : 40;
+  input.style.height = h + 'px'; input.style.overflowY = need > 140 ? 'auto' : 'hidden';
+}
 input.addEventListener('input', fitInput);
 $('#composer').addEventListener('submit', e => {
   e.preventDefault();
@@ -506,7 +509,7 @@ $('#composer').addEventListener('submit', e => {
   const images = takeImages();
   ask(q, mode, images.length ? { images } : {});
   // once a message is sent the keys go to the board, so Space right after plays/pauses instead of typing a space
-  input.blur(); $('#boardWrap').focus({ preventScroll: true });
+  input.blur(); focusBoard();
 });
 // one place that decides how a question goes in: while paused it is a side question (answered now, then back);
 // while teaching it forks in the background (default) or steers (⌘/Ctrl+Enter); otherwise it is a new question

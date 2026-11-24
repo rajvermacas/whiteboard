@@ -81,7 +81,7 @@ input.addEventListener('paste', e => {
 document.addEventListener('paste', e => {
   if (e.target === input || e.target.closest && e.target.closest('input,textarea,[contenteditable]')) return;
   const files = [...((e.clipboardData && e.clipboardData.files) || [])];
-  if (addImageFiles(files)) { e.preventDefault(); input.focus({ preventScroll: true }); }
+  if (addImageFiles(files)) e.preventDefault();
 });
 // drop an image file on the chat panel
 const chatPane = $('#composer').parentElement;
@@ -91,7 +91,7 @@ chatPane.addEventListener('drop', e => {
   chatPane.classList.remove('dropping');
   if (!e.dataTransfer.files.length) return;
   e.preventDefault();
-  if (addImageFiles(e.dataTransfer.files)) input.focus({ preventScroll: true });
+  addImageFiles(e.dataTransfer.files);
 });
 // 📎 button: pick image files
 $('#imgBtn').onclick = () => $('#imgFile').click();

@@ -154,7 +154,7 @@ async function newSession() {
   lesson = { topic: 'New session', autoName: true, plan: null, session: 'wbt-' + uuid() };
   sessionCreatedAt = new Date().toISOString();
   camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
-  renderTitle(); renderChat(); input.focus();
+  renderTitle(); renderChat(); focusBoard();
 }
 $('#newBtn').onclick = () => newSession();
 // Ask the selected model, in parallel with the answer, for a short title from the first question.
@@ -357,6 +357,7 @@ function mcpSetup() {
   renderTitle(); renderChat(); applyCamera();
   if (MCP_MODE) mcpSetup(); else await loadModels();
   if (!had) newSession();
+  focusBoard();
   await restoreInflight();   // a reload in the middle of the lesson: carry on where it was (paused until ▶)
   // test hook (used by the automated check only)
   window.__wbt = { objs, camera: () => camera, execCommand: (raw, animate = true) => { const c = normalize(raw); return c && execCommand(c, { gen }, animate); }, selection, stopAll, send, lesson: () => lesson, steps: () => steps, scrub: () => scrub, showStep, stepBy, exitScrub };

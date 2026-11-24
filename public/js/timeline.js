@@ -36,17 +36,16 @@ async function replay() {
   playFrom(nav[0]);
 }
 // The drawing goes with the next question; the learner can type one, or send nothing and get it checked.
-async function showAttach(focus) {
+async function showAttach() {
   const ids = [...inkSinceAsk].filter(id => objs.has(id));
   const box = $('#attach');
   if (!ids.length || penMode) { box.hidden = true; input.placeholder = 'Ask about…'; return; }
   box.hidden = false; input.placeholder = 'Ask about your drawing…';
   try { const reg = inkRegion(ids); if (reg) $('#attachImg').src = await boardImage(reg); } catch (e) { dlog('thumbnail failed', String(e)); }
-  if (focus) input.focus();
 }
 $('#attachX').onclick = () => { inkSinceAsk.clear(); showAttach(false); renderChips(); };
 function setPen(on) {
-  penMode = on; svg.classList.toggle('penMode', on); if (!on) showAttach(false); else $('#attach').hidden = true;
+  penMode = on; svg.classList.toggle('penMode', on); if (!on) showAttach(); else $('#attach').hidden = true;
   $('#penBtn').setAttribute('aria-pressed', on); $('#penBar').hidden = !on;
   if (on) setSelection([]); else setRubber(false);
 }
@@ -54,7 +53,7 @@ $('#penRubber').onclick = () => setRubber(!rubber);
 svg.addEventListener('pointerleave', () => rubberRing.setAttribute('visibility', 'hidden'));
 $('#penBtn').onclick = () => { if (!scrub) setPen(!penMode); };
 $('#penDone').onclick = () => setPen(false);
-$('#penCheck').onclick = () => { setPen(false); showAttach(true); };
+$('#penCheck').onclick = () => { setPen(false); showAttach(false); };
 $('#penUndo').onclick = () => {
   const last = [...inkSinceAsk].pop() || [...objs.keys()].reverse().find(k => objs.get(k).cmd.cmd === 'ink');
   if (!last) return; inkSinceAsk.delete(last); recordEdit({ cmd: 'erase', ids: [last] }); eraseIds([last], { gen }, false); renderChips();
@@ -239,8 +238,13 @@ function syncPlayButton() {
   const p = isPaused(), playing = scrub ? !!scrub.playing && !p : liveWorking() && !p;
   const b = $('#tlPlay');
   b.textContent = playing ? '⏸' : '▶';
+  document.body.classList.toggle('teaching', playing && !scrub);
+  document.body.classList.toggle('recapping', playing && !!scrub);
   b.title = playing ? 'Pause' : parked ? 'Continue the answer where it was left off' : p ? 'Resume the lesson' : scrub ? 'Play from this step to the end, with narration' : 'Play the lesson from the start, with narration';
 }
+// the board border (yellow: the lesson is teaching, red: a recap is playing) follows the play state; a light tick catches the moments no button update runs for
+// (the voice finishing its last line, for one)
+setInterval(() => { const p = isPaused(), on = scrub ? !!scrub.playing && !p : liveWorking() && !p; if (document.body.classList.contains(scrub ? 'recapping' : 'teaching') !== on || document.body.classList.contains(scrub ? 'teaching' : 'recapping')) syncPlayButton(); }, 300);
 $('#tlPrev').onclick = () => stepBy(-1);
 $('#tlNext').onclick = () => stepBy(1);
 $('#tlLive').onclick = () => exitScrub();
