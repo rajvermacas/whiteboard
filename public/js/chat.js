@@ -280,8 +280,8 @@ function requestRelease(t) {
   }
   const go = () => releaseHeld(t);
   // nothing is being said or drawn right now: take over at once; otherwise at the next sentence boundary
-  // paused for this question (asked while paused): the paused answer is set aside now, it does not play on first
-  if (!queueRunning || (isPaused() && pauseHold())) { go(); return; }
+  // paused: nothing plays until it would end a sentence, so the paused answer is set aside now and this one plays
+  if (!queueRunning || isPaused()) { go(); return; }
   // one handover per sentence boundary: after an earlier one takes over, this one is looked at again (it may now
   // have to wait for that sibling)
   const prev = switchReq; switchReq = prev ? () => { prev(); t.releasing = false; requestRelease(t); } : go;
@@ -291,14 +291,14 @@ function releaseHeld(t, idle = false) {
   if (!t.held) return;
   if (!idle && !mayTakeOver(t)) { t.releasing = false; return; }   // no longer its turn (the teacher moved on): wait
   if (scrub || (tabAway && parked)) { t.releasing = false; setTimeout(() => requestRelease(t), 500); return; }   // looking back / at another tab: wait until live again
-  // paused: a question asked during the pause plays as soon as it is ready (the lesson stays paused until then, and
-  // goes on once it is answered); any other answer that gets ready waits, ▶ carries on and it takes over at a sentence
-  if (isPaused() && pauseHold()) dlog('ready while paused for it: plays now', lab(t));
-  else if (isPaused()) {
+  // a side answer plays as soon as it is ready (in the order asked), whether the lesson is playing or paused, nested
+  // ones too. Only answers brought back by a page reload wait for ▶: nothing may start talking on its own after a reload.
+  if (isPaused() && t.restored) {
     t.releasing = false;
-    if (!t.waitResume) { dlog('ready while paused, waits for ▶:', lab(t)); t.waitResume = true; t.ready = true; renderPendingPill(); pauseWaiters.push(() => { t.waitResume = false; if (t.held) requestRelease(t); }); }
+    if (!t.waitResume) { dlog('restored after a reload, waits for ▶:', lab(t)); t.waitResume = true; t.ready = true; renderPendingPill(); pauseWaiters.push(() => { t.waitResume = false; t.restored = false; if (t.held) requestRelease(t); }); }
     return;
   }
+  if (isPaused()) dlog('ready while paused: plays now', lab(t));
   parkLive('question');                   // the running answer is set aside (if it is still going) and continues afterwards
   if (!t.held) return;                    // setting it aside woke a waiter that already took this answer over (or dropped it)
   pendingHeld.delete(t); if (waitingFor === t) waitingFor = null; renderPendingPill();
@@ -330,7 +330,7 @@ function renderPendingPill() {
   el.hidden = !n;
   if (n && waitingFor === first && !isPaused()) { el.textContent = `⏳ Waiting for the answer to “${clip(first.q.replace(/^what is inside /, ''), 50)}” (it is next)${n > 1 ? ` · then ${n - 1} more` : ''}`; return; }
   if (n && isPaused() && pauseHold()) { const h = pauseHeldFirst(); el.textContent = `⏸ Paused until the answer to “${clip(h.q.replace(/^what is inside /, ''), 50)}” is ready · ▶ carries on with the lesson meanwhile`; return; }
-  if (n && isPaused()) { el.textContent = first.ready ? `✓ The answer to “${clip(first.q.replace(/^what is inside /, ''), 50)}” is ready: press ▶, it comes in at the next sentence` : `⏳ Answering “${clip(first.q.replace(/^what is inside /, ''), 50)}” in the background · ▶ carries on with the lesson meanwhile`; return; }
+  if (n && isPaused()) { const q = clip(first.q.replace(/^what is inside /, ''), 50); el.textContent = first.waitResume ? `✓ The answer to “${q}” is ready: press ▶ to hear it` : first.ready ? `✓ The answer to “${q}” is ready: it plays next` : `⏳ Answering “${q}”… it plays as soon as it is ready`; return; }
   if (n) el.textContent = `⏳ ${/^what is inside /.test(first.q) ? 'Opening up ' + first.q.replace(/^what is inside /, '') : `Answering “${clip(first.q, 50)}”`}${n > 1 ? ` (+${n - 1})` : ''} … the lesson goes on meanwhile`;
 }
 // ---- the question tree (top of the chat): main question → side question → side question …, indented ----
@@ -360,7 +360,7 @@ function resetTree() { qtree.length = 0; renderTreeSoon(); }
 // what is happening to a question right now
 function nodeState(t) {
   if (t.dropped) return { k: 'stopped', icon: '✕', text: 'not opened' };
-  if (pendingHeld.has(t)) return t.ready ? { k: 'ready', icon: '●', text: isPaused() ? 'ready · press ▶' : 'ready · comes in next' } : { k: 'bg', icon: '⏳', text: 'answering on the side' };
+  if (pendingHeld.has(t)) return t.ready ? { k: 'ready', icon: '●', text: t.waitResume ? 'ready · press ▶' : 'ready · comes in next' } : { k: 'bg', icon: '⏳', text: 'answering on the side' };
   if (forks.some(f => f.turn === t)) return { k: 'waiting', icon: '⏸', text: t === (parked && parked.turn) ? 'waits · goes back here next' : 'waits' };
   if (t === liveTurn) {
     if (t.steered) return { k: 'steered', icon: '↪', text: 'steered' };
@@ -516,7 +516,7 @@ $('#composer').addEventListener('submit', e => {
 // Paused works the same as teaching: Enter forks in the background (the lesson stays paused; ▶ carries on with
 // the current topic and the answer takes over once it is ready), ⌘/Ctrl+Enter resumes and steers.
 // Where a message goes, given what the teacher is doing (used by ask() and by the popup hand-off to say what happens):
-//   how 'side'  answered in its own request while the lesson goes on; comes in at the next sentence (or on ▶ when paused)
+//   how 'side'  answered in its own request while the lesson goes on; comes in at the next sentence (at once when paused)
 //   how 'steer' the teacher stops after its sentence and answers with the message taken in
 //   how 'park'  paused with nothing live to go back to: asked as a normal answer
 //   how 'new'   a normal answer (it replaces whatever is running)

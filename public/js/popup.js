@@ -199,7 +199,7 @@ function parseHandoff(text) {
 const maybeHandoff = text => /^\s*(```(json)?\s*)?\{/i.test(text) || /^\s*`{1,3}$/.test(text);
 // the popup hands the question to the teacher: the same path as Enter in the chat, so while the teacher teaches it
 // is answered on the side (asked now, comes in at the next sentence, "You asked…", then back to the lesson), when
-// paused it waits for ▶, and when idle it is a normal answer. The popup's drawings go with it as the selection.
+// paused it plays as soon as it is ready, and when idle it is a normal answer. The popup's drawings go with it as the selection.
 function handToTeacher(p, item, h, ad, ids) {
   // in opencode mode opencode's model draws on this board; the app's own teacher is not running
   const viaOpencode = MCP_MODE;
