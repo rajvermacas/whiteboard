@@ -586,9 +586,11 @@ function stopAll(dropPark = true, why = '', keepHeld = false) {
   Voice.stop(); narrationDone = Promise.resolve();
   if (scrub) scrub.playing = false;
   if (abortCtl) { abortCtl.abort(); abortCtl = null; }
-  if (isPaused()) setPaused(false);
   if (dropPark) dropParked(true);
-  if (!keepHeld) { switchReq = null; [...pendingHeld].forEach(t => { t.abort.abort(); dropHeld(t); }); waitingFor = null; }
+  if (!keepHeld) { switchReq = null; [...pendingHeld].forEach(t => { if (t.abort) t.abort.abort(); dropHeld(t); }); waitingFor = null; }
+  // unpaused only after the side answers are dropped: un-pausing wakes the ones waiting for ▶, and one would take over
+  // (and play, even in a new session after a reload) before it could be dropped
+  if (isPaused()) setPaused(false);
   finishTyping();
   hideIcon(pen); hideIcon(eraser);
   updateSendBtn();
