@@ -137,14 +137,14 @@ async function quickText(model, session, messages, signal) {
   }
   return out;
 }
-// "teaching…" at the end of the live answer, with animated dots, for as long as the teacher is working (while Stop
-// shows). Not while it is still thinking (that line has its own timer) and it says "paused" while paused.
+// "Teaching…" at the end of the live answer, with animated dots, for as long as the teacher is working (while Stop
+// shows). Not while it is still thinking (that line has its own timer) and it says "Paused" while paused.
 const teachEl = document.createElement('span'); teachEl.className = 'teaching'; teachEl.setAttribute('aria-hidden', 'true');
 function renderTeaching(working = liveWorking(), paused = isPaused()) {
   const t = liveTurn, host = t && !t.held && t.el && t.el.isConnected ? t.el : null;
   if (!working || scrub || !host || t.thinking) { teachEl.remove(); return; }
   const label = paused ? 'paused' : 'teaching';
-  if (teachEl.dataset.label !== label) { teachEl.dataset.label = label; teachEl.innerHTML = paused ? 'paused' : 'teaching<i>.</i><i>.</i><i>.</i>'; }
+  if (teachEl.dataset.label !== label) { teachEl.dataset.label = label; teachEl.innerHTML = paused ? 'Paused' : 'Teaching<i>.</i><i>.</i><i>.</i>'; }
   teachEl.classList.toggle('paused', paused);
   const meta = host.querySelector('.meta');
   if (teachEl.parentNode !== host || teachEl.nextSibling !== meta) { host.insertBefore(teachEl, meta); scrollChat(); }
