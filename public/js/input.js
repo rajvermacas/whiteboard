@@ -142,7 +142,11 @@ svg.addEventListener('wheel', e => {
   let dy = e.deltaY, dx = e.deltaX;
   if (e.deltaMode === 1) { dy *= 16; dx *= 16; } else if (e.deltaMode === 2) { dy *= 400; dx *= 400; }
   lastUserCamera = Date.now();
-  if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-clamp(dy, -120, 120) * 0.013), e.clientX, e.clientY);
+  // ⌘ + scroll zooms the other way round from before (asked for): with the Mac's natural scrolling, moving the fingers
+  // or wheel down (deltaY < 0) zooms out and up zooms in. A trackpad pinch (it arrives as ctrl + wheel) and Ctrl +
+  // scroll are unchanged: pinching out zooms in
+  if (e.metaKey) zoomAt(Math.exp(clamp(dy, -120, 120) * 0.013), e.clientX, e.clientY);
+  else if (e.ctrlKey) zoomAt(Math.exp(-clamp(dy, -120, 120) * 0.013), e.clientX, e.clientY);
   else {
     if (e.shiftKey && !dx) { dx = dy; dy = 0; }
     camera.x += dx / camera.scale; camera.y += dy / camera.scale; applyCamera();
