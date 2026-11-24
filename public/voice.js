@@ -40,15 +40,24 @@ window.Voice = (() => {
     if (ctx) { log('audio context rebuilt (was ' + ctx.state + ')'); try { ctx.close(); } catch {} }
     ctx = new AC(); return ctx;
   }
+  // resume() settles a moment later: until then the context still reads 'suspended' and must not be taken for dead
+  function resumeCtx(c) {
+    c._resuming = true;
+    c.resume().catch(() => {}).finally(() => { c._resuming = false; });
+  }
   function ensureCtx() {
     if (!ctx || ctx.state === 'closed') newCtx();
-    if (ctx && ctx.state !== 'running' && !paused) ctx.resume().catch(() => {});
+    if (ctx && ctx.state !== 'running' && !paused && !ctx._resuming) resumeCtx(ctx);
     return ctx;
   }
-  // called from a click / key press: the only moment Safari lets audio start
+  // inside a click or key press (the only moment Safari lets audio start)? Without the API, assume so.
+  const inGesture = () => !navigator.userActivation || navigator.userActivation.isActive;
+  // called from a click / key press, and also from code that runs later (a side answer taking over): only a real
+  // gesture may replace a stuck context, since a context made outside one is born suspended and stays silent
   function unlockAudio() {
     if (paused) return;   // a click while paused must not restart the audio
-    if (ctx && ctx.state !== 'running' && ctx.state !== 'closed' && ctx._gestured) newCtx();   // a resume in an earlier gesture didn't take
+    if (!inGesture()) { ensureCtx(); return; }
+    if (ctx && ctx.state !== 'running' && ctx.state !== 'closed' && ctx._gestured && !ctx._resuming) newCtx();   // a resume in an earlier gesture didn't take
     const c = ensureCtx(); if (!c) return;
     c._gestured = true;
     try { const s = c.createBufferSource(); s.buffer = c.createBuffer(1, 1, 22050); s.connect(c.destination); s.start(0); } catch {}
@@ -164,8 +173,10 @@ window.Voice = (() => {
     if (myEpoch !== epoch) return none;
     await whenResumed();
     if (myEpoch !== epoch) return none;
-    const c = ensureCtx();
-    if (!(await running(c))) {
+    let c = ensureCtx();
+    let ok = await running(c);
+    if (!ok && ctx !== c && ctx.state !== 'closed') { c = ctx; ok = await running(c); }   // rebuilt by a click meanwhile: use the new one
+    if (!ok) {
       log('audio context is ' + c.state + ' (no sound possible until a click or key press): this line stays silent');
       setStatus('info', 'Click anywhere on the page to turn the sound on.');
       return myEpoch === epoch ? silent(h.text) : none;
@@ -190,7 +201,7 @@ window.Voice = (() => {
   }
   function resume() {
     if (!paused) return; paused = false;
-    if (ctx && ctx.state !== 'closed') ctx.resume().catch(() => {});
+    if (ctx && ctx.state !== 'closed') resumeCtx(ctx);
     resumeWaiters.splice(0).forEach(f => f());
   }
   function stop() {
