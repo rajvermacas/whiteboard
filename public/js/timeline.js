@@ -53,7 +53,8 @@ $('#penRubber').onclick = () => setRubber(!rubber);
 svg.addEventListener('pointerleave', () => rubberRing.setAttribute('visibility', 'hidden'));
 $('#penBtn').onclick = () => { if (!scrub) setPen(!penMode); };
 $('#penDone').onclick = () => setPen(false);
-$('#penCheck').onclick = () => { setPen(false); showAttach(false); };
+// the sketch waits by the chat box: the keys go there so the learner can type a question (or just press ↵)
+$('#penCheck').onclick = () => { setPen(false); showAttach(false); input.focus({ preventScroll: true }); };
 $('#penUndo').onclick = () => {
   const last = [...inkSinceAsk].pop() || [...objs.keys()].reverse().find(k => objs.get(k).cmd.cmd === 'ink');
   if (!last) return; inkSinceAsk.delete(last); recordEdit({ cmd: 'erase', ids: [last] }); eraseIds([last], { gen }, false); renderChips();
