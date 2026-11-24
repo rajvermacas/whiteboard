@@ -51,7 +51,9 @@ function setPen(on) {
 }
 $('#penRubber').onclick = () => setRubber(!rubber);
 svg.addEventListener('pointerleave', () => rubberRing.setAttribute('visibility', 'hidden'));
-$('#penBtn').onclick = () => { if (!scrub) setPen(!penMode); };
+// looking back at earlier steps: Draw goes back to the live board first (like Live ●, the view stays where it is), so
+// the button never silently does nothing; the learner draws on the live board
+$('#penBtn').onclick = () => { if (scrub) { dlog('draw: back to the live board first'); exitScrub(true); } setPen(!penMode); };
 $('#penDone').onclick = () => setPen(false);
 // the sketch waits by the chat box: the keys go there so the learner can type a question (or just press ↵)
 $('#penCheck').onclick = () => { setPen(false); showAttach(false); input.focus({ preventScroll: true }); };
