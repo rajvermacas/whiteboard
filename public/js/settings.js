@@ -128,6 +128,7 @@ $('#copyLogBtn').onclick = async () => {
 };
 $('#modelBtn').onclick = e => {
   e.stopPropagation(); const pop = $('#modelPop'); pop.hidden = !pop.hidden;
+  if (!pop.hidden) showCurrentVoice();
   if (!pop.hidden && !MCP_MODE) { showCurrentModel(); $('#modelSearch').focus({ preventScroll: true }); }
 };
 document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e.target.closest('#modelPop') && !e.target.closest('#modelBtn')) $('#modelPop').hidden = true; });
@@ -140,7 +141,8 @@ function voiceCfg() { const v = settings.voice || (settings.voice = {}); const m
 function applyVoice() {
   const v = voiceCfg();
   Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });
-  $('#voiceMode').value = v.mode; $('#voiceName').value = v.voice;
+  $('#voiceModeSeg').querySelectorAll('button').forEach(b => { const on = b.dataset.m === v.mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+  fillVoiceList();
   $('#voiceSpeed').value = String(v.speed); $('#voiceSpeedVal').textContent = v.speed.toFixed(2) + '×';
   $('#kokoroRow').hidden = v.mode !== 'kokoro';
   $('#muteBtn').textContent = v.mode === 'off' ? '🔇' : '🔊';
@@ -155,11 +157,39 @@ function renderVoiceStatus(st) {
   $('#voiceStatus').textContent = Voice.describe();
 }
 Voice.onStatus(renderVoiceStatus);
+// the voice list: the same in-page list as the model picker, grouped by accent; ↑/↓ pick, ↵ or Space plays a preview
+const voiceRows = () => [...$('#voiceList').querySelectorAll('.mRow')];
+function fillVoiceList() {
+  const box = $('#voiceList'), cur = voiceCfg().voice; box.textContent = '';
+  const groups = [['American', 'US'], ['British', 'UK']];
+  for (const [label, tag] of groups) {
+    const list = Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; }).filter(v => v.acc === tag);
+    if (!list.length) continue;
+    const h = document.createElement('div'); h.className = 'mGroup'; h.textContent = label; box.appendChild(h);
+    for (const v of list) {
+      const o = document.createElement('div'); o.className = 'mRow'; o.id = 'v-' + v.id; o.setAttribute('role', 'option'); o.dataset.id = v.id;
+      const on = v.id === cur; o.setAttribute('aria-selected', on); o.classList.toggle('on', on); o.classList.toggle('active', on);
+      const n = document.createElement('span'); n.className = 'mName'; n.textContent = v.name;
+      const k = document.createElement('span'); k.className = 'mId'; k.textContent = v.kind;
+      o.append(n, k); o.title = `${v.name} (${label}, ${v.kind.replace(/ · /g, ', ')})`;
+      o.onclick = () => { setVoice({ voice: v.id }); box.focus({ preventScroll: true }); };
+      box.appendChild(o);
+    }
+  }
+  box.setAttribute('aria-activedescendant', 'v-' + cur);
+}
+function showCurrentVoice() {
+  const box = $('#voiceList'), r = box.querySelector('.mRow.on');
+  if (r) box.scrollTop = r.offsetTop - box.clientHeight / 2 + r.offsetHeight / 2;
+}
+$('#voiceList').onkeydown = e => {
+  const rows = voiceRows(), i = rows.findIndex(r => r.classList.contains('on'));
+  const to = e.key === 'ArrowDown' ? i + 1 : e.key === 'ArrowUp' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : null;
+  if (to !== null) { e.preventDefault(); e.stopPropagation(); const r = rows[clamp(to, 0, rows.length - 1)]; setVoice({ voice: r.dataset.id }); voiceRows().find(x => x.dataset.id === r.dataset.id).scrollIntoView({ block: 'nearest' }); return; }
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); $('#voicePreview').click(); }
+};
 (() => {
-  const sel = $('#voiceName');
-  for (const [id, label] of Voice.VOICES) { const o = document.createElement('option'); o.value = id; o.textContent = label; sel.appendChild(o); }
-  $('#voiceMode').onchange = e => setVoice({ mode: e.target.value, lastMode: e.target.value === 'off' ? voiceCfg().lastMode : e.target.value });
-  sel.onchange = e => setVoice({ voice: e.target.value });
+  $('#voiceModeSeg').querySelectorAll('button').forEach(b => { b.onclick = () => { const m = b.dataset.m; setVoice({ mode: m, lastMode: m === 'off' ? voiceCfg().lastMode : m }); }; });
   $('#voicePreview').onclick = async () => {
     const b = $('#voicePreview'); Voice.unlock(); b.textContent = '… generating';
     try { const r = await Voice.preview(); b.textContent = '🔊 playing'; await r.done; } catch (e) { dlog('preview failed', String(e)); }

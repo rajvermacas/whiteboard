@@ -82,7 +82,7 @@
         <div id="modelPick">
           <div class="mHead">Model</div>
           <input id="modelSearch" type="text" placeholder="Search models or providers…" autocomplete="off" spellcheck="false" aria-label="Search models" aria-controls="modelList">
-          <div id="modelList" role="listbox" aria-label="Models"></div>
+          <div id="modelList" class="pickList" role="listbox" aria-label="Models"></div>
         </div>
         <p class="note" id="providerNote"></p>
         <div class="effortRow">Reasoning
@@ -90,14 +90,14 @@
         </div>
         <p class="note" id="effortNote">Lower reasoning starts drawing sooner. Only the levels this model supports are shown.</p>
         <hr>
-        <label>Narration
-          <select id="voiceMode">
-            <option value="kokoro">Kokoro (natural voice, runs on this computer)</option>
-            <option value="off">Off</option>
-          </select>
-        </label>
+        <div class="effortRow">Narration
+          <span class="seg" id="voiceModeSeg" role="radiogroup" aria-label="Narration">
+            <button type="button" data-m="kokoro" role="radio">On</button><button type="button" data-m="off" role="radio">Off</button>
+          </span>
+        </div>
         <div class="vrow" id="kokoroRow">
-          <label>Voice <select id="voiceName"></select></label>
+          <div class="mHead" id="voiceHead">Voice</div>
+          <div id="voiceList" class="pickList" role="listbox" tabindex="0" aria-labelledby="voiceHead"></div>
         </div>
         <button id="voicePreview" type="button" class="linkish">▶ Preview voice</button>
         <label>Speaking speed <span id="voiceSpeedVal"></span>
