@@ -9,10 +9,24 @@ let queueBusy = false;       // a board command is being drawn right now
 function within(p, ms) { const g = psleep(ms); return Promise.race([p, g]).finally(() => g.cancel()); }
 function psleep(ms) { let id; const p = new Promise(res => { let left = ms, last = performance.now(); id = setInterval(() => { const now = performance.now(); if (!isPaused()) left -= now - last; last = now; if (left <= 0) { clearInterval(id); res(); } }, 100); }); p.cancel = () => clearInterval(id); return p; }
 let currentItem = null, lastSay = null;
+// a spoken line needs a letter or a digit: a stray "}" or "]" (the end of a JSON object the model broke across lines)
+// would be shown in the chat and read aloud as a short noise
+const sayable = t => /[\p{L}\p{N}]/u.test(String(t));
 function enqueue(item) {
+  if (item.say != null && !sayable(item.say)) { dlog('dropped a spoken line with nothing to say', JSON.stringify(item.say)); return; }
   if (item.turn && item.turn.held) { item.turn.held.push(item); requestRelease(item.turn); return; }   // asked in the background: wait to take over
   if (item.turn && item.turn.parkedQ) { item.turn.parkedQ.push(item); return; }   // its answer is set aside: keep for Continue
-  queue.push(item); if (!queueRunning) runQueue();
+  queue.push(item);
+  if (item.say != null) prefetchAhead();   // a sentence that streams in while another plays is voiced before its turn
+  if (!queueRunning) runQueue();
+}
+// Kokoro makes one line at a time: start voicing the next sentences waiting in the queue so each is ready when the
+// one before it ends (only two ahead, so a side question's answer never waits behind a long queue of lines). The line
+// about to play stays first (lines already voiced are skipped), so a sentence streaming in never jumps ahead of it.
+function prefetchAhead(current = lastSay && (!lastSay.run || lastSay.run.gen === gen) ? lastSay : null) {
+  if (!Voice.enabled()) return;
+  const next = queue.filter(q => q.say != null && q.voice).slice(0, 2).map(q => q.voice);
+  Voice.prefetch(current && current.voice ? [current.voice, ...next] : next);
 }
 async function runQueue() {
   queueRunning = true; updateSendBtn();
@@ -28,7 +42,7 @@ async function runQueue() {
       if (!tabs.has(it.turn.tab) || it.fix) { dlog('dropped a line for a tab not on screen', it.fix ? '(tidy fix)' : '(tab closed)'); continue; }
       switchTabNow(it.turn.tab, 'follow');   // between items: nothing is animating
     }
-    if (it.say != null && Voice.enabled()) Voice.prefetch(queue.filter(q => q.say != null && q.voice).slice(0, 2).map(q => q.voice));
+    if (it.say != null) prefetchAhead(it);
     currentItem = it;
     try {
     if (it.say != null) {
@@ -642,6 +656,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     } else {
       jsonBuf = null;
       if (fix) return;
+      if (!sayable(line)) { dlog('dropped a stray line', JSON.stringify(line.slice(0, 40))); return; }   // e.g. the "}" of {"say":"…"\n}
       const t = trimSay(line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200));
       keepLine(JSON.stringify({ say: t }));
       enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });

@@ -498,6 +498,8 @@ $('#composer').addEventListener('submit', e => {
   input.value = ''; fitInput();
   const mode = submitMode; submitMode = 'fork';
   ask(q, mode);
+  // once a message is sent the keys go to the board, so Space right after plays/pauses instead of typing a space
+  input.blur(); $('#boardWrap').focus({ preventScroll: true });
 });
 // one place that decides how a question goes in: while paused it is a side question (answered now, then back);
 // while teaching it forks in the background (default) or steers (⌘/Ctrl+Enter); otherwise it is a new question
