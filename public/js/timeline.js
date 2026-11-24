@@ -241,7 +241,7 @@ function syncPlayButton() {
   b.textContent = playing ? '⏸' : '▶';
   document.body.classList.toggle('teaching', playing && !scrub);
   document.body.classList.toggle('recapping', playing && !!scrub);
-  b.title = playing ? 'Pause' : parked ? 'Continue the answer where it was left off' : p ? 'Resume the lesson' : scrub ? 'Play from this step to the end, with narration' : 'Play the lesson from the start, with narration';
+  b.title = (playing ? 'Pause' : parked ? 'Continue the answer where it was left off' : p ? 'Resume the lesson' : scrub ? 'Play from this step to the end, with narration' : 'Play the lesson from the start, with narration') + ' (Space or S)';
 }
 // the board border (yellow: the lesson is teaching, red: a recap is playing) follows the play state; a light tick catches the moments no button update runs for
 // (the voice finishing its last line, for one)
