@@ -115,13 +115,14 @@ function endPointer(e) {
   }
   if (gesture.mode === 'pending' && e.type === 'pointerup') {
     const id = gesture.hit;
-    const now = Date.now(), lt = lastTap;
-    lastTap = { t: now, x: e.clientX, y: e.clientY };
-    if (lt && now - lt.t < 320 && Math.hypot(e.clientX - lt.x, e.clientY - lt.y) < 24) {
-      lastTap = null; gesture = null;
-      // double-tap a drawing: the teacher opens it up; on empty board: zoom
-      if (id && !penMode && objs.has(id)) drillInto(id); else zoomTap(e.clientX, e.clientY, e.shiftKey);
-      return;
+    // a double-tap on a touch screen (a mouse's double-click is the browser's dblclick below, which follows the
+    // system's double-click speed)
+    if (e.pointerType === 'touch') {
+      const now = Date.now(), lt = lastTap;
+      lastTap = { t: now, x: e.clientX, y: e.clientY };
+      if (lt && now - lt.t < 400 && Math.hypot(e.clientX - lt.x, e.clientY - lt.y) < 24) {
+        lastTap = null; gesture = null; touchDouble = now; doubleTap(id, e); return;
+      }
     }
     if (id) { if (gesture.mods) { selection.has(id) ? selection.delete(id) : selection.add(id); drawSelection(); updateSelectionUI(); } else setSelection([id]); }
     else if (selection.size) setSelection([]);
@@ -151,13 +152,28 @@ svg.addEventListener('wheel', e => {
 let gScale = 1;
 svg.addEventListener('gesturestart', e => { e.preventDefault(); gScale = 1; });
 svg.addEventListener('gesturechange', e => { e.preventDefault(); lastUserCamera = Date.now(); zoomAt(Math.pow(e.scale / gScale, 2.2), e.clientX, e.clientY); gScale = e.scale; });
-let lastTap = null;
-svg.addEventListener('dblclick', e => e.preventDefault());
+let lastTap = null, touchDouble = 0;
+// double-click a drawing: the teacher opens it up; on the empty board: zoom
+function doubleTap(id, e) {
+  if (id && !penMode && objs.has(id)) drillInto(id); else if (!penMode) zoomTap(e.clientX, e.clientY, e.shiftKey);
+}
+svg.addEventListener('dblclick', e => {
+  e.preventDefault();
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || Date.now() - touchDouble < 700) return;   // a touch double-tap was already taken (some browsers add a dblclick after it)
+  doubleTap(hitTest(e.clientX, e.clientY), e);
+});
 // Open a drawing up: its exact internal structure (real shapes, numbers, the computation inside it), built next to it.
 // While the teacher is answering this forks the answer, like a question asked while paused; it continues afterwards.
 const drillQuestion = n => `Open up “${n}”: show exactly what is inside it, with real shapes and numbers (the actual vectors, matrices, tables or data structures) and the computation it does, step by step${MCP_MODE ? ', right next to it' : ''}.`;
 function drillInto(id) {
-  if (scrub) return;
+  // looking back at an earlier step: back to the live board first (the set-aside answer carries on, paused if it was,
+  // as when a question is typed there); the drawing must still be on the live board
+  if (scrub) {
+    const stay = !!(parked && parked.wasPaused);
+    dlog('user: double-click while looking back: back to the live board first');
+    exitScrub(true); if (parked) { if (stay) setPaused(true); continueParked(); }
+    if (!objs.has(id)) { dlog('that drawing is no longer on the live board'); return; }
+  }
   dlog('user: double-click', JSON.stringify(nameOf(id)), '· state:', isPaused() ? 'paused' : liveBusy() ? 'teaching' : 'idle', '· live:', lab(liveTurn));
   setSelection([id]);
   const q = drillQuestion(nameOf(id));
