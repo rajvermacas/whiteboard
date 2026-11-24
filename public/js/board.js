@@ -115,13 +115,15 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
 // ======================================================================
 // animation primitives
 // ======================================================================
-function tween(ms, fn, run, ease) {
+// now: the clock the animation runs on. The default stops while paused (the pen freezes with the lesson); a camera
+// move passes the wall clock, so Fit, zooming to a drawing and the like still work while the lesson is paused.
+function tween(ms, fn, run, ease, now = clock) {
   return new Promise(res => {
     if (instantMode() || !run || run.gen !== gen || ms <= 0 || document.hidden) { fn(1); return res(); }
-    const t0 = clock();
+    const t0 = now();
     const step = () => {
       if (run.gen !== gen || document.hidden) { fn(1); return res(); }
-      const t = clamp((clock() - t0) / ms, 0, 1);
+      const t = clamp((now() - t0) / ms, 0, 1);
       fn(ease ? ease(t) : t);
       if (t < 1) requestAnimationFrame(step); else res();
     };
@@ -225,7 +227,7 @@ function animateCamera(target, ms, run) {
     // interpolate scale geometrically for a smooth zoom feel
     camera.scale = from.scale * Math.pow(target.scale / from.scale, t);
     camera.x = lerp(from.x, target.x, t); camera.y = lerp(from.y, target.y, t); applyCamera();
-  }, run || { gen }, easeInOut);
+  }, run || { gen }, easeInOut, () => performance.now());
 }
 function cameraFor(b, pad = 60, maxScale = null) {
   const { W, H } = viewSize();
