@@ -53,10 +53,31 @@ async function loadModels() {
   fillModelSelect();
   renderEffort(); renderModelLabel();
 }
-// the search text in the picker; every word typed must appear in a model's provider, name or id (case-insensitive)
-let modelQuery = '';
+// the picker: a search box over an in-page list (a native <select> opens the system's own grey menu), grouped by
+// provider; every word typed must appear in a model's provider, name or id (case-insensitive). ↑/↓ move, ↵ picks.
+let modelQuery = '', modelActive = -1;
+const modelRows = () => [...$('#modelList').querySelectorAll('.mRow')];
+function pickModel(id) {
+  if (!id) return;
+  settings.model = id; saveSettings(); renderEffort(); renderModelLabel();
+  $('#modelSearch').value = ''; modelQuery = ''; fillModelSelect(); showCurrentModel();
+}
+function setModelActive(i, scroll = true) {
+  const rows = modelRows(); if (!rows.length) { modelActive = -1; return; }
+  modelActive = clamp(i, 0, rows.length - 1);
+  rows.forEach((r, k) => r.classList.toggle('active', k === modelActive));
+  $('#modelSearch').setAttribute('aria-activedescendant', rows[modelActive].id);
+  if (scroll) rows[modelActive].scrollIntoView({ block: 'nearest' });
+}
+// opened: the chosen model in view, and the keys ready for searching
+function showCurrentModel() {
+  const rows = modelRows(), i = rows.findIndex(r => r.dataset.id === settings.model);
+  setModelActive(i < 0 ? 0 : i, false);
+  const r = rows[i < 0 ? 0 : i], list = $('#modelList');
+  if (r) list.scrollTop = r.offsetTop - list.clientHeight / 2 + r.offsetHeight / 2;
+}
 function fillModelSelect() {
-  const sel = $('#modelSelect'); sel.textContent = '';
+  const sel = $('#modelList'); sel.textContent = '';
   const words = modelQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const hit = m => { const hay = `${m.providerName || 'OpenCode Go'} ${m.name} ${m.id}`.toLowerCase(); return words.every(w => hay.includes(w)); };
   const oc = m => m.provider !== 'openrouter' && m.provider !== 'opengateway';
@@ -64,24 +85,31 @@ function fillModelSelect() {
   let shown = 0;
   for (const [label, test] of groups) {
     const list = models.filter(test).filter(hit).sort((a, b) => a.name.localeCompare(b.name)); if (!list.length) continue;
-    const og = document.createElement('optgroup'); og.label = label;
-    // each option names its provider, so the choice is clear even when several providers are on
-    for (const m of list) { const o = document.createElement('option'); o.value = m.id; o.textContent = `${m.providerName || 'OpenCode Go'} · ${m.name}${oc(m) ? `  (${m.id})` : ''}`; og.appendChild(o); shown++; }
-    sel.appendChild(og);
+    const h = document.createElement('div'); h.className = 'mGroup'; h.textContent = label; sel.appendChild(h);
+    for (const m of list) {
+      const o = document.createElement('div'); o.className = 'mRow'; o.id = 'm-' + shown; o.setAttribute('role', 'option'); o.dataset.id = m.id;
+      const on = m.id === settings.model; o.setAttribute('aria-selected', on); if (on) o.classList.add('on');
+      const n = document.createElement('span'); n.className = 'mName'; n.textContent = m.name;
+      const k = document.createElement('span'); k.className = 'mId'; k.textContent = oc(m) ? m.id : '';
+      o.append(n, k); o.title = `${m.providerName || 'OpenCode Go'} · ${m.name}${oc(m) ? ` (${m.id})` : ''}`;
+      o.onpointerdown = e => e.preventDefault();   // the search box keeps the keys
+      o.onclick = () => pickModel(m.id);
+      o.onpointermove = () => { const i = modelRows().indexOf(o); if (i !== modelActive) setModelActive(i, false); };
+      sel.appendChild(o); shown++;
+    }
   }
-  if (!shown) { const o = document.createElement('option'); o.disabled = true; o.textContent = `No model matches “${modelQuery.trim()}”`; sel.appendChild(o); }
-  sel.value = settings.model || '';   // stays unselected when the current model is filtered out
+  if (!shown) { const o = document.createElement('div'); o.className = 'mNone'; o.textContent = `No model matches “${modelQuery.trim()}”`; sel.appendChild(o); }
+  modelActive = -1; if (shown) setModelActive(0, false);
 }
-$('#modelSearch').oninput = e => { modelQuery = e.target.value; fillModelSelect(); };
+$('#modelSearch').oninput = e => { modelQuery = e.target.value; fillModelSelect(); $('#modelList').scrollTop = 0; };
 $('#modelSearch').onkeydown = e => {
-  if (e.key === 'ArrowDown') { e.preventDefault(); $('#modelSelect').focus(); }
-  else if (e.key === 'Escape') { e.target.value = ''; modelQuery = ''; fillModelSelect(); }
-  else if (e.key === 'Enter') {
-    // Enter picks the first match
-    e.preventDefault();
-    const first = $('#modelSelect').querySelector('option:not([disabled])'); if (!first) return;
-    settings.model = first.value; saveSettings(); renderEffort(); renderModelLabel();
-    e.target.value = ''; modelQuery = ''; fillModelSelect();
+  const rows = modelRows();
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setModelActive(modelActive + (e.key === 'ArrowDown' ? 1 : -1)); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (rows[modelActive]) pickModel(rows[modelActive].dataset.id); }
+  else if (e.key === 'Escape') {
+    e.preventDefault(); e.stopPropagation();
+    if (e.target.value) { e.target.value = ''; modelQuery = ''; fillModelSelect(); showCurrentModel(); }
+    else { $('#modelPop').hidden = true; focusBoard(); }
   }
 };
 $('#tidyChk').onchange = e => { settings.tidy = e.target.checked; saveSettings(); };
@@ -98,8 +126,10 @@ $('#copyLogBtn').onclick = async () => {
   catch { const w = window.open('', '_blank'); if (w) { w.document.body.innerText = info; } }
   setTimeout(() => { $('#copyLogBtn').textContent = 'Copy debug log'; }, 2000);
 };
-$('#modelBtn').onclick = e => { e.stopPropagation(); $('#modelPop').hidden = !$('#modelPop').hidden; };
-$('#modelSelect').onchange = e => { settings.model = e.target.value; saveSettings(); renderEffort(); renderModelLabel(); };
+$('#modelBtn').onclick = e => {
+  e.stopPropagation(); const pop = $('#modelPop'); pop.hidden = !pop.hidden;
+  if (!pop.hidden && !MCP_MODE) { showCurrentModel(); $('#modelSearch').focus({ preventScroll: true }); }
+};
 document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e.target.closest('#modelPop') && !e.target.closest('#modelBtn')) $('#modelPop').hidden = true; });
 
 // ======================================================================
@@ -332,8 +362,7 @@ function mcpConnect() {
 function mcpSetup() {
   document.body.classList.add('mcpMode');
   if (EMBED) document.body.classList.add('embed');
-  $('#modelSelect').closest('label').hidden = true;
-  $('#modelSearch').hidden = true;
+  $('#modelPick').hidden = true;
   $('#tidyChk').closest('label').hidden = true;
   $('#emptyHint').textContent = 'Ask in opencode → its answer is drawn here';
   $('#attach span').textContent = 'Your drawing is ready. In opencode, ask "check my drawing".';

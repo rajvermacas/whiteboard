@@ -51,7 +51,19 @@ button { font: inherit; cursor: pointer; }
 #modelPop { position: absolute; top: 40px; left: 10px; right: 10px; z-index: 5; background: #fff; border: 1px solid #e3e6ea; border-radius: 12px; padding: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.12); font-size: 13px; }
 #modelPop label { display: flex; flex-direction: column; gap: 4px; }
 #modelPop select { font: inherit; padding: 6px; border-radius: 8px; border: 1px solid #d0d5db; }
-#modelPop #modelSearch { font: inherit; box-sizing: border-box; width: 100%; padding: 6px 8px; margin-bottom: 8px; border-radius: 8px; border: 1px solid #d0d5db; }
+#modelPick[hidden] { display: none; }
+#modelPick .mHead { font-size: 12px; font-weight: 600; color: #5b636b; margin-bottom: 6px; }
+#modelPop #modelSearch { -webkit-appearance: none; appearance: none; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; height: 34px; padding: 0 12px; border: 1px solid #d0d5db; border-radius: 10px; background: #fff; color: #1f2328; outline: none; }
+#modelPop #modelSearch:focus { border-color: #1d6fb8; }
+#modelList { margin-top: 6px; max-height: 232px; overflow-y: auto; border: 1px solid #e3e6ea; border-radius: 10px; padding: 4px; background: #fff; overscroll-behavior: contain; }
+#modelList .mGroup { position: sticky; top: -4px; z-index: 1; background: #fff; padding: 7px 8px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #8a929b; }
+#modelList .mRow { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px 6px 24px; border-radius: 7px; cursor: pointer; position: relative; color: #1f2328; }
+#modelList .mRow.active { background: #f3f8fd; }
+#modelList .mRow.on { color: #14507f; font-weight: 600; }
+#modelList .mRow.on::before { content: '✓'; position: absolute; left: 8px; color: #1d6fb8; font-weight: 600; }
+#modelList .mName { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#modelList .mId { flex: 1 1 auto; min-width: 0; font-size: 11.5px; font-weight: 400; color: #8a929b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+#modelList .mNone { padding: 10px 8px; color: #7d848c; font-size: 12.5px; }
 .effortRow { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
 .seg { display: inline-flex; }
 .seg button { border: 1px solid #d0d5db; background: #fff; padding: 4px 10px; margin-left: -1px; font-size: 12px; }
