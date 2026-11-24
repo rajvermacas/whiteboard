@@ -253,10 +253,10 @@ $('#tlPlay').onclick = () => {
   const atEnd = !scrub || nav.indexOf(scrub.i) === nav.length - 1;
   // an answer that is set aside (paused, or a question came in while it was paused) continues where it left off
   // (while a side answer is still running, the button pauses/resumes that instead)
-  if (parked && atEnd && (scrub || (!liveWorking() && !isPaused()))) { say('continue the set-aside answer'); if (scrub) exitScrub(true); continueParked(); return; }
+  if (parked && atEnd && (scrub || (!liveWorking() && !isPaused()))) { say('continue the set-aside answer'); releasePauseHold('continue'); if (scrub) exitScrub(true); continueParked(); return; }
   if (!scrub) {
     // the live lesson: the same as the chat's pause button
-    if (isPaused()) { say('resume'); setPaused(false); return; }
+    if (isPaused()) { say('resume'); releasePauseHold('play'); setPaused(false); return; }
     if (liveWorking()) { say('pause'); setPaused(true); return; }
     say('replay the lesson'); replay();   // a completed answer: play it from the beginning
     return;

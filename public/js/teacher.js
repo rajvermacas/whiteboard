@@ -466,7 +466,11 @@ async function sendQ(q, opts, opened) {
     turn.el.remove(); ub.classList.add('pending');
     const w = document.createElement('span'); w.className = 'wait'; w.textContent = opts.aside ? '⏳ Answering on the side… the lesson goes on until it is ready' : '⏳ Opening it up… the lesson goes on until it is ready'; ub.appendChild(w);
     turn.held = []; turn.heldUser = { msg: userMsg, el: ub, wait: w }; turn.intro = opts.intro; turn.pulse = opts.pulse || null; turn.askedIn = askedIn;
+    turn.pausedAsk = isPaused() && !scrub;   // asked while paused: the lesson stays paused until this answer plays (chat.js)
+    if (turn.pausedAsk) w.textContent = '⏳ Answering… the lesson stays paused until it is ready';
     pendingHeld.add(turn); renderPendingPill();
+    // answers that got ready earlier in this pause and wait for ▶ come first (the order asked): they play now too
+    if (turn.pausedAsk) for (const x of pendingHeld) if (x.waitResume) { x.waitResume = false; requestRelease(x); }
   }
   renderChips(); saveSoon();
 

@@ -46,9 +46,16 @@ function renderChat() {
 // answer they are the "next" questions it gave; otherwise (a drawing selected, several selected, a sketch of yours,
 // an empty board, an answer without them) a quick low-reasoning call writes them, cached per situation.
 const suggestCache = new Map(); let suggestTimer = null, suggestAbort = null;
+// the suggestion row scrolls sideways: a mouse wheel scrolls it too, and the edges fade where chips are hidden
+const chipsBox = $('#chips');
+function chipEdges() { const b = chipsBox, x = b.scrollLeft, max = b.scrollWidth - b.clientWidth; b.classList.toggle('moreL', x > 2); b.classList.toggle('moreR', x < max - 2); }
+chipsBox.addEventListener('wheel', e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && chipsBox.scrollWidth > chipsBox.clientWidth) { chipsBox.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
+chipsBox.addEventListener('scroll', chipEdges, { passive: true });
+new ResizeObserver(chipEdges).observe(chipsBox);
+new MutationObserver(() => { chipsBox.scrollLeft = 0; chipEdges(); }).observe(chipsBox, { childList: true });
 function renderChips() {
   const box = $('#chips'); box.textContent = '';
-  const add = (label, q, primary) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (primary) b.className = 'primary'; b.onclick = () => ask(q || label); box.appendChild(b); };
+  const add = (label, q, primary) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.title = label; if (primary) b.className = 'primary'; b.onclick = () => ask(q || label); box.appendChild(b); };
   if (!lesson) { add('Choose a topic', null, true); box.lastChild.onclick = openTopic; return; }
   const ids = [...selection].filter(id => objs.has(id));
   const dynamic = (kind, names) => {
@@ -165,8 +172,8 @@ $('#stopBtn').onclick = () => { dlog('user: ■ stop'); stopAll(true, 'stop butt
 // icon buttons: the label shows on hover (and is what screen readers read)
 function tip(el, text) { if (el.dataset.tip !== text) { el.dataset.tip = text; el.setAttribute('aria-label', text); el.removeAttribute('title'); } }
 tip($('#stopBtn'), 'Stop');
-$('#pauseBtn').onclick = () => { dlog('user:', scrub ? (isPaused() ? 'resume playback' : 'pause playback') : isPaused() ? '▶ play' : '⏸ pause'); if (scrub) { if (scrub.playing) setPaused(!isPaused()); return; } setPaused(!isPaused()); };
-$('#resumeGo').onclick = () => { dlog('user: ▶ continue set-aside answer'); continueParked(); };
+$('#pauseBtn').onclick = () => { dlog('user:', scrub ? (isPaused() ? 'resume playback' : 'pause playback') : isPaused() ? '▶ play' : '⏸ pause'); if (scrub) { if (scrub.playing) setPaused(!isPaused()); return; } if (isPaused()) releasePauseHold('play'); setPaused(!isPaused()); };
+$('#resumeGo').onclick = () => { dlog('user: ▶ continue set-aside answer'); releasePauseHold('continue'); continueParked(); };
 $('#resumeX').onclick = () => { dlog('user: ✕ drop set-aside answer', lab(parked && parked.turn)); dropParked(); };
 
 function setPaused(on) {
@@ -199,6 +206,16 @@ function parkLive(why = 'look') {   // why: 'question' (a side question) or 'loo
 }
 const forkStack = () => forks.length ? forks.map(f => lab(f.turn)).join(' > ') : 'empty';
 const forkLeft = f => (f.turn.parkedQ && f.turn.parkedQ.length) || !f.turn.streamDone;
+// questions asked while the lesson was paused hold it: it stays paused until their answers play (they do as soon as
+// they are ready), and only goes back to the paused answer once they are answered. Pressing ▶ lets it go on meanwhile.
+const pauseHeldFirst = () => [...pendingHeld].filter(t => t.pausedAsk && !t.dropped).sort((a, b) => (a.seq || 0) - (b.seq || 0))[0] || null;
+const pauseHold = () => !!pauseHeldFirst();
+function releasePauseHold(why) {
+  const n = [...pendingHeld].filter(t => t.pausedAsk).length; if (!n) return;
+  for (const t of pendingHeld) t.pausedAsk = false;
+  dlog('▶ pressed:', n, 'question(s) asked while paused no longer hold the lesson (' + why + ')');
+  if (waitingFor) { waitingFor = null; renderPendingPill(); }
+}
 function popFork() { const f = forks.pop(); parked = forks[forks.length - 1] || null; return f; }
 function continueParked() {
   if (!parked || streamingLive() || queueRunning) return;
@@ -258,7 +275,8 @@ function requestRelease(t) {
   }
   const go = () => releaseHeld(t);
   // nothing is being said or drawn right now: take over at once; otherwise at the next sentence boundary
-  if (!queueRunning) { go(); return; }
+  // paused for this question (asked while paused): the paused answer is set aside now, it does not play on first
+  if (!queueRunning || (isPaused() && pauseHold())) { go(); return; }
   // one handover per sentence boundary: after an earlier one takes over, this one is looked at again (it may now
   // have to wait for that sibling)
   const prev = switchReq; switchReq = prev ? () => { prev(); t.releasing = false; requestRelease(t); } : go;
@@ -268,8 +286,10 @@ function releaseHeld(t, idle = false) {
   if (!t.held) return;
   if (!idle && !mayTakeOver(t)) { t.releasing = false; return; }   // no longer its turn (the teacher moved on): wait
   if (scrub || (tabAway && parked)) { t.releasing = false; setTimeout(() => requestRelease(t), 500); return; }   // looking back / at another tab: wait until live again
-  // paused: the answer is ready but waits; ▶ carries on with the current topic, and it takes over at the next sentence
-  if (isPaused()) {
+  // paused: a question asked during the pause plays as soon as it is ready (the lesson stays paused until then, and
+  // goes on once it is answered); any other answer that gets ready waits, ▶ carries on and it takes over at a sentence
+  if (isPaused() && pauseHold()) dlog('ready while paused for it: plays now', lab(t));
+  else if (isPaused()) {
     t.releasing = false;
     if (!t.waitResume) { dlog('ready while paused, waits for ▶:', lab(t)); t.waitResume = true; t.ready = true; renderPendingPill(); pauseWaiters.push(() => { t.waitResume = false; if (t.held) requestRelease(t); }); }
     return;
@@ -304,6 +324,7 @@ function renderPendingPill() {
   const n = pendingHeld.size, first = (waitingFor && pendingHeld.has(waitingFor)) ? waitingFor : headOf(currentNode()) || [...pendingHeld][0];
   el.hidden = !n;
   if (n && waitingFor === first && !isPaused()) { el.textContent = `⏳ Waiting for the answer to “${clip(first.q.replace(/^what is inside /, ''), 50)}” (it is next)${n > 1 ? ` · then ${n - 1} more` : ''}`; return; }
+  if (n && isPaused() && pauseHold()) { const h = pauseHeldFirst(); el.textContent = `⏸ Paused until the answer to “${clip(h.q.replace(/^what is inside /, ''), 50)}” is ready · ▶ carries on with the lesson meanwhile`; return; }
   if (n && isPaused()) { el.textContent = first.ready ? `✓ The answer to “${clip(first.q.replace(/^what is inside /, ''), 50)}” is ready: press ▶, it comes in at the next sentence` : `⏳ Answering “${clip(first.q.replace(/^what is inside /, ''), 50)}” in the background · ▶ carries on with the lesson meanwhile`; return; }
   if (n) el.textContent = `⏳ ${/^what is inside /.test(first.q) ? 'Opening up ' + first.q.replace(/^what is inside /, '') : `Answering “${clip(first.q, 50)}”`}${n > 1 ? ` (+${n - 1})` : ''} … the lesson goes on meanwhile`;
 }
@@ -431,7 +452,8 @@ function scheduleAutoBack() {
   // (order.js decides: the front question of this tab if ready, else this tab's current topic, else wait here; up a
   // level only when the tab has nothing left)
   const idle = () => !scrub && !(tabAway && parked) && !isPaused() && !sendsPending && !liveWorking() && !steering;
-  const step = idle() ? nextStep() : null;
+  let step = idle() ? nextStep() : null;
+  if (step && step.resume && pauseHold()) step = { wait: pauseHeldFirst() };   // asked while paused: answered before going back
   if (!step || step.wait) { if (autoBack) { clearTimeout(autoBack); autoBack = null; } if (step && step.wait && waitingFor !== step.wait) { waitingFor = step.wait; dlog('waits on', tabTitle(tabOfTurnSafe(currentNode())) || 'Main', 'for', lab(step.wait)); renderPendingPill(); renderResumeBar(); } return; }
   if (waitingFor) { waitingFor = null; renderPendingPill(); }
   if (autoBack) return;
@@ -439,6 +461,7 @@ function scheduleAutoBack() {
     autoBack = null;
     if (!idle()) { renderResumeBar(); return; }
     const s = nextStep(); if (!s) return;
+    if (s.resume && pauseHold()) { scheduleAutoBack(); return; }
     if (s.release) { s.release.releasing = false; releaseHeld(s.release, true); }
     else if (s.resume) continueParked();
     else scheduleAutoBack();
@@ -491,7 +514,7 @@ function askRoute(mode = 'fork') {
   const teaching = !scrub && (streamingLive() || queueRunning);
   const state = paused ? 'paused' : teaching ? 'teaching' : scrub ? 'looking back' : 'idle';
   if (scrub && parked && forkLeft(parked) && !streamingLive())
-    return { how: mode === 'steer' ? 'steer' : 'side', back: true, waitsForPlay: mode !== 'steer' && !!parked.wasPaused, state };
+    return { how: mode === 'steer' ? 'steer' : 'side', back: true, waitsForPlay: mode !== 'steer' && (!!parked.wasPaused || isPaused()), state };
   if ((teaching || paused) && mode === 'steer') return { how: 'steer', state };
   if ((teaching || paused) && liveTurn) return { how: 'side', waitsForPlay: paused, state };
   if (paused) return { how: 'park', state };
@@ -501,11 +524,11 @@ function ask(q, mode = 'fork', extra = {}) {
   const r = askRoute(mode);
   dlog('user: asks', JSON.stringify(clip(q, 60)), '· key:', mode, '· state:', r.state, '· route:', r.how + (r.back ? ' (back to live)' : ''), '· live:', lab(liveTurn));
   // looking back: go back to the live board and pick the set-aside answer up where it was (still paused if it was
-  // paused before looking back), then treat the message as if it was typed there
+  // paused before looking back, or the look-back itself was paused), then treat the message as if it was typed there
   if (r.back) {
-    dlog('user: asked while looking back: back to the live board,', parked.wasPaused ? 'paused in' : 'carrying on with', lab(parked.turn));
-    const wasPaused = !!parked.wasPaused;
-    exitScrub(true); continueParked(); if (wasPaused) setPaused(true);
+    const stayPaused = !!parked.wasPaused || (mode !== 'steer' && isPaused());
+    dlog('user: asked while looking back: back to the live board,', stayPaused ? 'paused in' : 'carrying on with', lab(parked.turn));
+    exitScrub(true); if (stayPaused) setPaused(true); continueParked();   // paused first: nothing of it plays meanwhile
   }
   const side = { parallel: true, aside: true, topic: q, intro: `You asked: “${clip(q, 90)}”.` };
   if (r.how === 'steer') { if (isPaused()) setPaused(false); return send(q, { ...extra, steer: true }); }

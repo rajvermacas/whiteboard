@@ -173,14 +173,14 @@ function handToTeacher(p, item, h, ad, ids) {
   ad.classList.remove('thinking'); ad.classList.add('handoff'); ad.textContent = '';
   const head = document.createElement('div'); head.className = 'apHandHead';
   head.textContent = viaOpencode ? '✎ This board is drawn by opencode: ask it there to draw this.'
-    : r.how === 'side' && r.waitsForPlay ? `✎ Sent to the teacher as a side question${r.back ? ' (back to the live board)' : ''}: it is answered now and comes in when you press ▶.`
+    : r.how === 'side' && r.waitsForPlay ? `✎ Sent to the teacher as a side question${r.back ? ' (back to the live board)' : ''}: the lesson stays paused and the answer plays as soon as it is ready (▶ carries on meanwhile).`
     : r.how === 'side' ? `✎ Sent to the teacher as a side question${r.back ? ' (back to the live board)' : ''}: it comes in after the current sentence.`
     : '✎ Sent to the teacher: drawing it on the board now.';
   ad.appendChild(head);
   if (h.note) { const n = document.createElement('div'); n.className = 'apHandNote'; n.textContent = h.note; ad.appendChild(n); }
   const qd = document.createElement('div'); qd.className = 'apHandQ'; qd.textContent = '“' + h.q + '”'; ad.appendChild(qd);
   if (viaOpencode) { dlog('ask popup: hand-off not sent (opencode mode)', JSON.stringify(clip(h.q, 120))); return; }
-  dlog('ask popup: handed to the teacher', JSON.stringify(clip(h.q, 120)), '· route', r.how, r.waitsForPlay ? '(waits for ▶)' : '', '· about', ids.join(','));
+  dlog('ask popup: handed to the teacher', JSON.stringify(clip(h.q, 120)), '· route', r.how, r.waitsForPlay ? '(paused until it is ready)' : '', '· about', ids.join(','));
   ask(h.q, 'fork', { ids, via: 'popup', newTab: { tab: p.tab, obj: ids[0] } });
 }
 
