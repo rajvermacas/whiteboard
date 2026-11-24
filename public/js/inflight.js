@@ -35,7 +35,7 @@ function inflightSnapshot() {
   }
   for (const f of forks) if (forkLeft(f)) out.forks.push({ turn: turnOut(f.turn), items: (f.turn.parkedQ || []).map(itemOut).filter(Boolean), why: f.why, wasPaused: !!f.wasPaused, say: f.say || '' });
   for (const t of pendingHeld) if (t.heldUser) out.held.push({ turn: turnOut(t), items: (t.held || []).map(itemOut).filter(Boolean), user: t.heldUser.msg, am: t.msg });
-  for (const p of pops) out.pops.push({ tab: p.tab || TAB_MAIN, ids: p.ids, thread: p.thread.map(x => ({ q: x.q, a: x.a })), min: p.min, at: p.at });
+  for (const p of pops) out.pops.push({ tab: p.tab || TAB_MAIN, ids: p.ids, board: p.board || undefined, thread: p.thread.map(x => ({ q: x.q, a: x.a })), min: p.min, at: p.at });
   return out.live || out.forks.length || out.held.length || out.pops.length ? out : null;
 }
 // saved when it changes (checked a few times a second) and once more as the page closes
@@ -146,9 +146,9 @@ async function continueStream(t) {
 }
 function restorePop(s) {
   if (!s || !tabs.has(s.tab) || !Array.isArray(s.ids)) return;
-  const ids = withTab(s.tab, () => s.ids.filter(id => objs.has(id)));
-  if (!ids.length) return;
-  withTab(s.tab, () => openAskPop(ids));   // synchronous: builds it against its own tab's drawings
+  const ids = s.board ? [] : withTab(s.tab, () => s.ids.filter(id => objs.has(id)));
+  if (!s.board && !ids.length) return;
+  withTab(s.tab, () => openAskPop(ids, s.board && Array.isArray(s.at) ? s.at : null));   // synchronous: builds it against its own tab's drawings
   if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.askPop')) document.activeElement.blur();
   const p = pops[pops.length - 1]; if (!p || p.tab !== s.tab) return;
   const log = p.el.querySelector('.apLog');

@@ -10,18 +10,20 @@ const ctxMenu = document.createElement('div'); ctxMenu.id = 'ctxMenu'; ctxMenu.h
 $('#boardWrap').append(ctxMenu);
 
 svg.addEventListener('contextmenu', e => {
-  const id = hitTest(e.clientX, e.clientY);
-  if (!id || !objs.has(id) || penMode) { hideCtxMenu(); return; }   // empty board: the browser's own menu
+  if (penMode) { hideCtxMenu(); return; }
   e.preventDefault();
-  // right-clicking one of several selected drawings asks about them all; otherwise just this one
-  const ids = selection.has(id) && selection.size > 1 ? [...selection].filter(x => objs.has(x)) : [id];
+  const id = hitTest(e.clientX, e.clientY), onDrawing = !!id && objs.has(id);
+  // right-clicking one of several selected drawings asks about them all; otherwise just this one;
+  // right-clicking empty board asks about the whole board (everything on it, not one drawing)
+  const ids = !onDrawing ? [] : selection.has(id) && selection.size > 1 ? [...selection].filter(x => objs.has(x)) : [id];
   if (ids.length === 1 && !selection.has(id)) setSelection([id]);
   const names = ids.map(nameOf);
+  const at = boardPoint(e.clientX, e.clientY);
   ctxMenu.innerHTML = '';
   const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem');
   b.innerHTML = `<span>💬 Ask whiteboard</span><small></small>`;
-  b.querySelector('small').textContent = ids.length > 1 ? `about ${ids.length} drawings` : `about “${names[0]}”`;
-  b.onclick = () => { hideCtxMenu(); openAskPop(ids); };
+  b.querySelector('small').textContent = !ids.length ? 'about the whole board' : ids.length > 1 ? `about ${ids.length} drawings` : `about “${names[0]}”`;
+  b.onclick = () => { hideCtxMenu(); openAskPop(ids, ids.length ? null : at); };
   ctxMenu.appendChild(b);
   const r = $('#boardWrap').getBoundingClientRect();
   ctxMenu.hidden = false;
@@ -29,8 +31,13 @@ svg.addEventListener('contextmenu', e => {
   ctxMenu.style.left = clamp(e.clientX - r.left, 6, r.width - w - 6) + 'px';
   ctxMenu.style.top = clamp(e.clientY - r.top, 6, r.height - h - 6) + 'px';
   b.focus({ preventScroll: true });
-  dlog('user: right-click', ids.map(x => JSON.stringify(nameOf(x))).join(', '));
+  dlog('user: right-click', ids.length ? ids.map(x => JSON.stringify(nameOf(x))).join(', ') : 'empty board');
 });
+// a screen point as a board position
+function boardPoint(cx, cy) {
+  const sv = svg.getBoundingClientRect();
+  return [camera.x + (cx - sv.left) / camera.scale, camera.y + (cy - sv.top) / camera.scale];
+}
 function hideCtxMenu() { ctxMenu.hidden = true; }
 // a click anywhere outside a popup folds it (it never closes by itself)
 document.addEventListener('pointerdown', e => {
@@ -38,8 +45,10 @@ document.addEventListener('pointerdown', e => {
   for (const p of pops) if (!p.min && !p.el.contains(e.target)) minimisePop(p);
 }, true);
 
-function openAskPop(ids) {
-  const key = activeTab + ':' + [...ids].sort().join(',');   // ids are per tab
+// ids: the drawings it is about; none = the whole board (one such popup per tab, opened at `at`, a board position)
+function openAskPop(ids, at) {
+  const board = !ids.length;
+  const key = activeTab + ':' + (board ? '*board*' : [...ids].sort().join(','));   // ids are per tab
   const had = pops.find(p => p.key === key);
   if (had) { expandPop(had); return; }
   const names = ids.map(nameOf);
@@ -47,10 +56,11 @@ function openAskPop(ids) {
   el.innerHTML = `<div class="apHead"><button type="button" class="apTitle"></button><button type="button" class="apMin" title="Minimise (Esc)" aria-label="Minimise">–</button><button type="button" class="apX" title="Close" aria-label="Close">✕</button></div>
 <div class="apLog" aria-live="polite" hidden></div>
 <form class="apForm"><textarea rows="1" placeholder="Ask a quick question…" aria-label="Your question"></textarea><button type="submit" class="apSend" title="Ask (↵)" aria-label="Ask">➤</button></form>`;
-  const p = { el, key, ids, names, thread: [], abort: null, at: [0, 0], min: false, unread: false, tab: activeTab };
+  const p = { el, key, ids, names, board, thread: [], abort: null, at: [0, 0], min: false, unread: false, tab: activeTab };
   const title = el.querySelector('.apTitle');
-  title.textContent = ids.length > 1 ? `💬 ${ids.length} drawings: ${names.map(n => `“${n}”`).join(', ')}` : `💬 “${names[0]}”`;
-  title.title = 'Ask about ' + names.join(', ');
+  title.textContent = board ? '💬 The whole board' : ids.length > 1 ? `💬 ${ids.length} drawings: ${names.map(n => `“${n}”`).join(', ')}` : `💬 “${names[0]}”`;
+  title.title = board ? 'Ask about everything on this board' : 'Ask about ' + names.join(', ');
+  if (board) { el.classList.add('board'); el.querySelector('textarea').placeholder = 'Ask about anything on the board…'; }
   title.onclick = () => p.min ? expandPop(p) : minimisePop(p);
   el.querySelector('.apMin').onclick = () => minimisePop(p, true);
   el.querySelector('.apX').onclick = () => closePop(p);
@@ -68,9 +78,9 @@ function openAskPop(ids) {
   });
   $('#boardWrap').appendChild(el); pops.push(p);
   el.style.zIndex = ++popZ;
-  anchorPop(p);
+  if (board) { p.at = at || boardPoint(...popSpot($('#boardWrap'))); placePop(p); } else anchorPop(p);
   input.focus({ preventScroll: true });
-  dlog('ask popup: open about', names.map(n => JSON.stringify(n)).join(', '), '·', pops.length, 'popup(s)');
+  dlog('ask popup: open about', board ? 'the whole board' : names.map(n => JSON.stringify(n)).join(', '), '·', pops.length, 'popup(s)');
 }
 // where it opens: next to the drawings (right if there is room, else left, else below); kept as a board position
 function anchorPop(p) {
@@ -93,12 +103,13 @@ function placePop(p) {
   p.el.style.left = clamp(x, 6, Math.max(6, wrap.width - w - 6)) + 'px';
   p.el.style.top = clamp(y, 6, Math.max(6, wrap.height - h - 6)) + 'px';
 }
+const popSpot = el => { const r = el.getBoundingClientRect(); return [r.left + r.width / 3, r.top + r.height / 4]; };
 function placePops() { for (const p of pops) placePop(p); }
 function minimisePop(p, focusBoard) {
   if (p.min) return;
   p.min = true; p.el.classList.add('min'); placePop(p);
   if (focusBoard) $('#boardWrap').focus({ preventScroll: true });
-  dlog('ask popup: minimised', JSON.stringify(p.names.join(', ')));
+  dlog('ask popup: minimised', p.board ? 'whole board' : JSON.stringify(p.names.join(', ')));
 }
 function expandPop(p) {
   p.min = false; p.unread = false; p.el.classList.remove('min', 'unread'); p.el.style.zIndex = ++popZ;
@@ -147,6 +158,30 @@ function askContext(ids) {
   lines.push('\nTHE WHOLE BOARD, FOR REFERENCE:\n' + boardSummary());
   return lines.join('\n');
 }
+// the whole board: every drawing (in full), what the teacher said through the lesson, and the chat
+function boardAskContext() {
+  const lines = [`Lesson: ${lesson ? lesson.topic : ''}`];
+  const list = [...objs.values()];
+  if (!list.length) lines.push('\nTHE BOARD IS EMPTY.');
+  else {
+    lines.push(`\nEVERYTHING ON THE BOARD (${list.length} drawing${list.length > 1 ? 's' : ''}${list.length > 150 ? ', last 150 shown' : ''}), in the order drawn:`);
+    list.slice(-150).forEach(o => lines.push('- ' + objLine(o, true)));
+  }
+  const said = steps.filter(s => s.by === 'teacher' && s.say).map(s => s.say);
+  if (said.length) { lines.push(`\nWHAT THE TEACHER SAID WHILE DRAWING IT, IN ORDER${said.length > 60 ? ' (latest 60)' : ''}:`); said.slice(-60).forEach(s => lines.push('- ' + clip(s, 300))); }
+  const recent = chat.filter(m => (m.role === 'user' || m.role === 'assistant') && m.text).slice(-8);
+  if (recent.length) { lines.push('\nTHE LESSON CHAT, LATEST MESSAGES:'); recent.forEach(m => lines.push(`${m.role === 'user' ? 'Learner' : 'Teacher'}: ${clip(m.text, 500)}`)); }
+  const sel = [...selection].filter(id => objs.has(id));
+  if (sel.length) lines.push('\nSELECTED RIGHT NOW (only a hint; the question is about the whole board): ' + sel.map(id => `${id} (${nameOf(id)})`).join(', '));
+  lines.push('\nLAYOUT:\n' + boardSummary().split('\n').filter(l => !l.startsWith('- ') && !l.startsWith('Objects on the board')).join('\n'));
+  return lines.join('\n');
+}
+const BOARD_ASK_SYSTEM = `You answer a learner's quick question about a teaching whiteboard as a whole, in a small popup they opened on an empty part of the board. Everything drawn on the board, what the teacher said while drawing it and the latest chat are given below. The question can be about any of it: the big picture, how the parts connect, what to look at first, a summary, or any one drawing; refer to the drawings by their own names, numbers and labels so the learner can find them.
+Answer short and direct: usually 2 to 6 sentences, a short list only when it truly helps (for example a walk through the parts in order). Lead with the answer itself, no preamble, no restating the question. Use Markdown where it helps (**bold** for the key term, short - lists); no tables or images. For maths use inline LaTeX between single dollar signs, like $W_1 x + b$.
+You cannot draw here, but the teacher can. When the learner asks for a drawing, diagram, picture, visual or worked explanation on the board (for example "draw it", "show me with a diagram", "explain it on the board", "visualise this"), do not answer it yourself: hand it to the teacher by replying with exactly one JSON line and nothing else:
+{"handoff":"<the question for the teacher, as the learner asking it in the first person (\"Draw …\", \"Show me …\"), written to stand on its own: name the drawings it is about and what the learner wants explained or drawn, including anything from this popup's thread it depends on>","note":"<one short sentence to the learner saying what the teacher will draw>"}
+Write both in the language of the learner's question. Hand off only when the learner asks for something to be drawn or shown on the board. Otherwise answer in text, never write drawing commands or board code, and if the question really needs a full drawn explanation, give the short answer and add one line saying they can ask "draw it" here to have the teacher draw it.
+If the board is empty, say so briefly and answer from the lesson and chat if you can. Follow-up questions in this popup continue the same thread. Answer in the language of the learner's question.`;
 const ASK_SYSTEM = `You answer a learner's quick question about one or more drawings on a teaching whiteboard, in a small popup next to them. The drawings, what they connect to, what is near them and what the teacher said while drawing them are given below; use them to know exactly what the learner is pointing at, and use the drawing's own names, numbers and labels.
 Answer short and direct: usually 2 to 5 sentences, a short list only when it truly helps. Lead with the answer itself, no preamble, no restating the question. Use Markdown where it helps (**bold** for the key term, short - lists); no tables or images. For maths use inline LaTeX between single dollar signs, like $W_1 x + b$.
 You cannot draw here, but the teacher can. When the learner asks for a drawing, diagram, picture, visual or worked explanation on the board (for example "draw it", "show me with a diagram", "explain it on the board", "visualise this"), do not answer it yourself: hand it to the teacher by replying with exactly one JSON line and nothing else:
@@ -180,15 +215,17 @@ function handToTeacher(p, item, h, ad, ids) {
   if (h.note) { const n = document.createElement('div'); n.className = 'apHandNote'; n.textContent = h.note; ad.appendChild(n); }
   const qd = document.createElement('div'); qd.className = 'apHandQ'; qd.textContent = '“' + h.q + '”'; ad.appendChild(qd);
   if (viaOpencode) { dlog('ask popup: hand-off not sent (opencode mode)', JSON.stringify(clip(h.q, 120))); return; }
-  dlog('ask popup: handed to the teacher', JSON.stringify(clip(h.q, 120)), '· route', r.how, r.waitsForPlay ? '(paused until it is ready)' : '', '· about', ids.join(','));
-  ask(h.q, 'fork', { ids, via: 'popup', newTab: { tab: p.tab, obj: ids[0] } });
+  dlog('ask popup: handed to the teacher', JSON.stringify(clip(h.q, 120)), '· route', r.how, r.waitsForPlay ? '(paused until it is ready)' : '', '· about', p.board ? 'the whole board' : ids.join(','));
+  // about the whole board: drawn on this board (no drawing to open a tab from); about drawings: in their own tab
+  if (p.board) ask(h.q, 'fork', { ids: [], via: 'popup' });
+  else ask(h.q, 'fork', { ids, via: 'popup', newTab: { tab: p.tab, obj: ids[0] } });
 }
 
 async function askQuick(p, q) {
   const log = p.el.querySelector('.apLog'), send = p.el.querySelector('.apSend');
   const note = text => { log.hidden = false; const d = document.createElement('div'); d.className = 'apA err'; d.textContent = text; log.appendChild(d); };
   const ids = p.ids.filter(id => objs.has(id));
-  if (!ids.length) { note('Those drawings are no longer on the board.'); return; }
+  if (!p.board && !ids.length) { note('Those drawings are no longer on the board.'); return; }
   const item = { q, a: '' }; p.thread.push(item);
   log.hidden = false;
   const qd = document.createElement('div'); qd.className = 'apQ'; qd.textContent = q; log.appendChild(qd);
@@ -196,10 +233,10 @@ async function askQuick(p, q) {
   log.scrollTop = log.scrollHeight; placePop(p);
   const ac = p.abort = new AbortController(); send.disabled = true; p.el.classList.add('busy');
   const model = settings.model || (models[0] && models[0].id), eff = currentEffort();
-  const messages = [{ role: 'system', content: ASK_SYSTEM + '\n\n' + askContext(ids) }];
+  const messages = [{ role: 'system', content: p.board ? BOARD_ASK_SYSTEM + '\n\n' + boardAskContext() : ASK_SYSTEM + '\n\n' + askContext(ids) }];
   p.thread.slice(0, -1).forEach(t => { messages.push({ role: 'user', content: t.q }); messages.push({ role: 'assistant', content: t.a || '(no answer)' }); });
   messages.push({ role: 'user', content: q });
-  dlog('ask popup: asking', JSON.stringify(clip(q, 120)), '· about', ids.join(','), '· model', model, eff, '· follow-up', p.thread.length - 1);
+  dlog('ask popup: asking', JSON.stringify(clip(q, 120)), '· about', p.board ? 'the whole board' : ids.join(','), '· model', model, eff, '· follow-up', p.thread.length - 1);
   const t0 = performance.now();
   let painted = 0;
   const paint = () => { if (maybeHandoff(item.a)) return; painted = item.a.length; ad.classList.remove('thinking'); ad.innerHTML = mdToHtml(item.a); const nearEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40; if (nearEnd) log.scrollTop = log.scrollHeight; };
