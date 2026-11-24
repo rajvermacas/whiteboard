@@ -211,7 +211,7 @@ function openTopic(forceNew = false) {
 }
 $('#topicBtn').onclick = () => openTopic(false);
 $('#tCancel').onclick = () => dlg.close('cancel');
-$('#topicBtn').title = 'Rename this session';
+$('#topicBtn').title = 'Rename this session (R)';
 dlg.addEventListener('close', () => { if (!lesson && dlg.returnValue !== 'ok') setTimeout(openSessions, 0); });
 $('#topicForm').addEventListener('submit', async e => {
   if (e.submitter && e.submitter.value === 'cancel') return;
@@ -230,7 +230,7 @@ $('#topicForm').addEventListener('submit', async e => {
 function renderTitle() {
   const t = $('#titleText'); t.textContent = lesson ? lesson.topic : 'Whiteboard Teacher';
   if (lesson && lesson.session !== renderTitle.last) { renderTitle.last = lesson.session; dlog('session', lesson.session, JSON.stringify(lesson.topic)); }
-  $('#topicBtn').title = lesson ? `${lesson.session}\n(click to rename or start a new session)` : 'Start a session';
+  $('#topicBtn').title = lesson ? `${lesson.session}\n(click or press R to rename)` : 'Start a session';
   document.title = lesson ? `${lesson.topic} — Whiteboard Teacher` : 'Whiteboard Teacher';
 }
 
