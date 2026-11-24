@@ -584,7 +584,7 @@ async function sendQ(q, opts, opened) {
     }
     turn.answered = true;   // every line of the answer is in (the tidy-up below only adjusts the board)
     // look at what was drawn and fix what is unclear (best effort; never fails the answer)
-    if (settings.tidy !== false && !myAbort.signal.aborted && run.gen === gen)
+    if (!myAbort.signal.aborted && run.gen === gen)
       await tidyPass({ question: q, answer, model, run, turn, signal: myAbort.signal });
   } catch (err) {
     failed = true;
