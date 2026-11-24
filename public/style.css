@@ -151,6 +151,8 @@ dialog::backdrop { background: rgba(20,24,28,.35); }
 kbd { display: inline-block; min-width: 22px; padding: 2px 6px; border: 1px solid #d0d5db; border-bottom-width: 2px; border-radius: 6px; background: #fff; font: 600 11.5px/16px ui-monospace, SFMono-Regular, Menlo, monospace; color: #2b3138; text-align: center; }
 .keysWrap .note kbd { min-width: 0; padding: 0 5px; }
 #keysDlg { width: min(680px, 94vw); }
+#keysBtn { display: inline-flex; align-items: center; justify-content: center; color: #444c56; }
+#keysBtn svg { display: block; }
 .keysWrap:focus { outline: none; }
 .kKeys .kMouse { font-size: 12px; color: #444c56; background: #f3f5f7; border-radius: 6px; padding: 2px 8px; }
 @media (max-width: 560px) { #keysList { grid-template-columns: 1fr; } }
