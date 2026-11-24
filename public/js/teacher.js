@@ -230,15 +230,24 @@ END OF BOARD NOW
 
 `;
 }
-function buildMessages(question, selIds, inkIds = [], image = null, steer = false, aside = false) {
+const imagePart = url => ({ type: 'image_url', image_url: { url } });
+function buildMessages(question, selIds, inkIds = [], image = null, steer = false, aside = false, pics = []) {
   const msgs = [{ role: 'system', content: systemPrompt() }];
   const hist = chat.filter(m => m.role === 'user' || m.role === 'assistant').slice(-8);
+  // the images of the latest earlier message that had some go along again (while this visit still has them in full),
+  // so a follow-up about them still lets the model see them
+  const lastPics = pics.length ? null : [...hist].reverse().find(m => m.role === 'user' && m.images && m.images.some(t => fullImages.has(t)));
   for (const m of hist) {
-    if (m.role === 'user') msgs.push({ role: 'user', content: (m.about && m.about.length ? `[About the selected drawings: ${m.about.join(', ')}] ` : '') + (m.sketch ? `[With my sketch: ${m.sketch.join(', ')}] ` : '') + m.text });
+    if (m.role === 'user') {
+      const t = (m.about && m.about.length ? `[About the selected drawings: ${m.about.join(', ')}] ` : '') + (m.sketch ? `[With my sketch: ${m.sketch.join(', ')}] ` : '') + (m.images && m.images.length ? `[With ${m.images.length > 1 ? m.images.length + ' images' : 'an image'} I attached] ` : '') + m.text;
+      const full = m === lastPics ? m.images.map(th => fullImages.get(th)).filter(Boolean) : [];
+      msgs.push({ role: 'user', content: full.length ? [{ type: 'text', text: t }, ...full.map(imagePart)] : t });
+    }
     else msgs.push({ role: 'assistant', content: (m.text || '(drew only)') + (m.interrupted ? '\n(The learner interrupted me here with their next message.)' : '') + (m.drew && m.drew.length ? `\n(On the board I drew or changed: ${m.drew.join(', ')})` : '') });
   }
-  const text = boardNow(selIds) + (aside ? '[I asked this on the side while you were teaching. Answer just this question, building in free space next to what it is about; your earlier explanation continues by itself afterwards, so do not continue or repeat it here.] ' : '') + (steer ? '[I sent this while you were still answering, so you stopped after your current sentence. Take it into account now: answer or adjust as it asks, then carry on with whatever part of your previous answer still matters, without repeating what is already on the board.] ' : '') + (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + (inkIds.length ? `[I drew a sketch on the board (${inkIds.join(', ')}). ${image ? 'A picture of it, with the drawings around it, is attached: work out what it shows from the picture.' : 'Its strokes are listed in the board summary.'}] ` : '') + question;
-  msgs.push({ role: 'user', content: image ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }] : text });
+  const text = boardNow(selIds) + (aside ? '[I asked this on the side while you were teaching. Answer just this question, building in free space next to what it is about; your earlier explanation continues by itself afterwards, so do not continue or repeat it here.] ' : '') + (steer ? '[I sent this while you were still answering, so you stopped after your current sentence. Take it into account now: answer or adjust as it asks, then carry on with whatever part of your previous answer still matters, without repeating what is already on the board.] ' : '') + (selIds.length ? `[I selected on the board: ${selIds.join(', ')}] ` : '') + (inkIds.length ? `[I drew a sketch on the board (${inkIds.join(', ')}). ${image ? 'A picture of it, with the drawings around it, is attached: work out what it shows from the picture.' : 'Its strokes are listed in the board summary.'}] ` : '') + (pics.length ? `[I attached ${pics.length > 1 ? pics.length + ' images' : 'an image'} (after my sketch picture, if any). Read ${pics.length > 1 ? 'them' : 'it'} yourself (text, diagrams, equations, code, photos) and teach from ${pics.length > 1 ? 'them' : 'it'}: redraw what matters on the board in your own clean drawings and explain it. Never ask me to describe ${pics.length > 1 ? 'them' : 'it'}.] ` : '') + question;
+  const parts = [...(image ? [image] : []), ...pics].map(imagePart);
+  msgs.push({ role: 'user', content: parts.length ? [{ type: 'text', text }, ...parts] : text });
   return msgs;
 }
 
@@ -456,9 +465,10 @@ async function sendQ(q, opts, opened) {
   let image = null;
   if (inkIds.length) { try { const reg = inkRegion(inkIds); if (reg) image = await boardImage(reg); } catch (e) { console.warn('sketch image failed', e); } }
   if (!own) { inkSinceAsk.clear(); $('#attach').hidden = true; input.placeholder = 'Ask about…'; }
-  const messages = withTab(tabId, () => buildMessages(into ? into.note + q : q, selIds, inkIds, image, !!opts.steer, !!opts.aside));
+  const pics = (opts.images || []).map(p => p.url);
+  const messages = withTab(tabId, () => buildMessages(into ? into.note + q : q, selIds, inkIds, image, !!opts.steer, !!opts.aside, pics));
   const tabTag = tabId !== TAB_MAIN ? { tab: tabId, tabTitle: tabTitle(tabId) } : {};
-  const userMsg = { role: 'user', text: q, about: into ? into.about : selIds.map(nameOf), ...tabTag, sketch: inkIds.length ? inkIds : undefined, steer: opts.steer || undefined, via: opts.via || undefined };
+  const userMsg = { role: 'user', text: q, about: into ? into.about : selIds.map(nameOf), ...tabTag, sketch: inkIds.length ? inkIds : undefined, images: pics.length ? opts.images.map(p => p.thumb) : undefined, steer: opts.steer || undefined, via: opts.via || undefined };
   const held = !!opts.parallel;
   if (!held) chat.push(userMsg);
   const ub = bubble(userMsg);
@@ -490,8 +500,9 @@ async function sendQ(q, opts, opened) {
 
   let model = settings.model || (models[0] && models[0].id);
   if (lesson.autoName) nameSession(q, model);   // in parallel with the answer, same model
-  // a sketch needs a model that can see images
-  if (image && !(modelInfo(model) || {}).vision) { const v = models.find(m => m.id === 'deepseek-v4.1-flash' && m.vision) || models.find(m => m.vision); if (v) model = v.id; }
+  // a sketch or a pasted image needs a model that can see images
+  const seesImages = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
+  if (seesImages && !(modelInfo(model) || {}).vision) { const v = models.find(m => m.id === 'deepseek-v4.1-flash' && m.vision) || models.find(m => m.vision); if (v) model = v.id; }
   const eff = model === settings.model ? currentEffort() : defaultEffort(model);
   let effort = eff === 'auto' ? null : eff;
   const run = { gen };

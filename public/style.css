@@ -325,3 +325,18 @@ foreignObject .katex { font-size: 1em; }
 .tabBadge:hover { background: #1d6fb8; color: #fff; }
 .msg .tabTag { display: inline-block; margin-top: 4px; border: 1px solid #9cc3e6; background: #eef5fc; color: #14507f; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; cursor: pointer; }
 .msg .tabTag:disabled { opacity: .55; cursor: default; }
+
+/* images waiting to go with the next message (images.js) */
+#imgTray { display: flex; align-items: center; gap: 10px; margin: 0 10px; padding: 8px 10px; border: 1px solid #cfd8e3; border-bottom: 0; border-radius: 10px 10px 0 0; background: #f3f8fd; font-size: 12px; color: #5b636c; }
+#imgTray[hidden], #imgNote[hidden] { display: none; }
+#imgList { display: flex; gap: 8px; overflow-x: auto; }
+#imgTray .hint { flex: 1; min-width: 0; }
+.imgItem { position: relative; flex: 0 0 auto; }
+.imgItem img { display: block; height: 52px; max-width: 90px; object-fit: cover; border: 1px solid #e3e6ea; border-radius: 6px; background: #fff; }
+.imgItem button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: #1f2328; color: #fff; font-size: 10px; line-height: 18px; padding: 0; cursor: pointer; }
+#imgNote { margin: 0 10px 4px; font-size: 12px; color: #b35900; }
+#composer #imgBtn::after { left: 0; transform: translateY(4px); }
+#composer #imgBtn:hover::after, #composer #imgBtn:focus-visible::after { transform: translateY(0); }
+.dropping #composer #input { border-color: #1d6fb8; background: #f3f8fd; }
+.msg.user .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.msg.user .thumbs img { max-width: 120px; max-height: 90px; border-radius: 6px; background: #fff; cursor: zoom-in; }

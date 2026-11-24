@@ -23,6 +23,11 @@ function bubble(m) {
   d.className = 'msg ' + m.role;
   const body = document.createElement('span'); body.className = 'body'; body.textContent = m.text || ''; d.appendChild(body);
   if (m.role === 'user' && ((m.about && m.about.length) || m.sketch)) { const a = document.createElement('span'); a.className = 'about'; a.textContent = [m.about && m.about.length ? 'about ' + m.about.join(', ') : '', m.sketch ? 'with your sketch' : ''].filter(Boolean).join(' · '); d.appendChild(a); }
+  if (m.role === 'user' && m.images && m.images.length) {   // pasted images: small thumbnails; a click opens the full picture
+    const t = document.createElement('div'); t.className = 'thumbs';
+    for (const th of m.images) { const im = document.createElement('img'); im.src = th; im.alt = 'your image'; im.onclick = () => showImage(fullImages.get(th) || th); t.appendChild(im); }
+    d.appendChild(t);
+  }
   if (m.role === 'user' && m.via === 'popup') { const a = document.createElement('span'); a.className = 'steer'; a.textContent = '💬 sent from an Ask whiteboard popup'; d.appendChild(a); }
   if (m.role === 'user' && m.steer) { const a = document.createElement('span'); a.className = 'steer'; a.textContent = '↪ sent while the teacher was answering'; d.appendChild(a); }
   if (m.tab && m.tab !== TAB_MAIN && (m.role === 'user' || m.role === 'assistant')) {
@@ -493,11 +498,13 @@ input.addEventListener('input', fitInput);
 $('#composer').addEventListener('submit', e => {
   e.preventDefault();
   let q = input.value.trim();
+  if (!q && pastedImages.length) q = pastedImages.length > 1 ? 'Teach me what these images show.' : 'Teach me what this image shows.';
   if (!q && [...inkSinceAsk].some(id => objs.has(id))) q = 'Check my drawing.';
   if (!q) return;
   input.value = ''; fitInput();
   const mode = submitMode; submitMode = 'fork';
-  ask(q, mode);
+  const images = takeImages();
+  ask(q, mode, images.length ? { images } : {});
   // once a message is sent the keys go to the board, so Space right after plays/pauses instead of typing a space
   input.blur(); $('#boardWrap').focus({ preventScroll: true });
 });
