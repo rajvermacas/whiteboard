@@ -48,8 +48,8 @@ const OG_BASE = (process.env.OPENGATEWAY_API_BASE || 'https://apis.opengateway.a
 const OG_MODEL = process.env.OPENGATEWAY_MODEL || 'deepseek/deepseek-v4.1-flash-eco';
 const OG_PREFIX = 'og:';
 const isOG = id => typeof id === 'string' && id.startsWith(OG_PREFIX);
-// default: the OpenGateway model when its key is set, else the OpenRouter model when its key is set, else OpenCode Go's DeepSeek V4.1 Flash
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || (OG_KEY ? OG_PREFIX + OG_MODEL : OR_KEY ? OR_PREFIX + OR_MODEL : 'deepseek-v4.1-flash');
+// default: OpenCode Go's GLM 5.3 (asked for at low reasoning by the page); DEFAULT_MODEL overrides it
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'glm-5.3';
 // the env var that holds the key for a given model id (used in error messages)
 const keyNameFor = id => isOG(id) ? 'OPENGATEWAY_API_KEY' : isOR(id) ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY';
 const USER_AGENT = 'whiteboard-teacher/1.0';
@@ -511,7 +511,7 @@ function wav(samples, sr) {
 async function handleTTS(req, res) {
   let body; try { body = JSON.parse(await readBody(req, 20000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request' } }); }
   const text = String(body.text || '').slice(0, 1500).trim();
-  const voice = /^[a-z]{2}_[a-z]+$/.test(body.voice || '') ? body.voice : 'af_bella';
+  const voice = /^[a-z]{2}_[a-z]+$/.test(body.voice || '') ? body.voice : 'af_heart';
   const speed = Math.max(0.5, Math.min(2, Number(body.speed) || 1));
   if (!text) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'no text' } });
   loadTTS();

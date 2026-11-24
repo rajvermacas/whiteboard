@@ -45,7 +45,11 @@ async function loadModels() {
   try {
     const r = await fetch('/api/models'); const j = await r.json();
     models = j.models || [];
-    if (!settings.model || !models.some(m => m.id === settings.model)) { settings.model = j.default || (models[0] && models[0].id); saveSettings(); }
+    if (!settings.model || !models.some(m => m.id === settings.model)) {
+      settings.model = j.default || (models[0] && models[0].id);
+      if (effortsOf(settings.model).includes('low')) settings.efforts[settings.model] = 'low';   // the default model starts at low reasoning
+      saveSettings();
+    }
     // the first time a non-OpenCode default is available (OpenGateway or OpenRouter), switch to it once; later choices are kept
     if (j.default && /^(og|or):/.test(j.default) && !settings.remoteDefaultApplied && models.some(m => m.id === j.default)) { settings.model = j.default; settings.remoteDefaultApplied = true; saveSettings(); }
     if (j.error) bubble({ role: 'error', text: `Could not list models (${j.error.code}): ${j.error.message}` });
@@ -136,7 +140,7 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // narration settings
 // ======================================================================
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
-function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_bella', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro' }; }
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro' }; }
 function applyVoice() {
   const v = voiceCfg();
   Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });

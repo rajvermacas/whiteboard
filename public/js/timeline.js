@@ -372,12 +372,14 @@ async function resumeSession(id) {
 }
 async function loadAll() {
   try { Object.assign(settings, JSON.parse(localStorage.getItem(LS_SET) || '{}')); } catch {}
-  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'kokoro', voice: 'af_bella', speed: 0.85, engine: 'server' };
+  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'kokoro', voice: 'af_heart', speed: 0.85, engine: 'server' };
   // default speaking speed is 0.85× (v1): move the old 1× default over once; a speed picked later is kept
   if (!settings.speedV1) { if (!settings.voice.speed || settings.voice.speed === 1) settings.voice.speed = 0.85; settings.speedV1 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
   // narration is on by default (v4): switch it on once for everyone (Kokoro, Bella); 🔊 / ⚙ turn it off and that is kept
-  if (!settings.voiceV4) { settings.voice = { ...settings.voice, mode: 'kokoro', voice: settings.voice.voice || 'af_bella' }; settings.voiceV3 = settings.voiceV4 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
+  if (!settings.voiceV4) { settings.voice = { ...settings.voice, mode: 'kokoro', voice: settings.voice.voice || 'af_heart' }; settings.voiceV3 = settings.voiceV4 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
   if (!settings.efforts || typeof settings.efforts !== 'object') settings.efforts = {};
+  // new defaults (v5): the Heart voice, and GLM 5.3 at low reasoning; applied once, later picks are kept
+  if (!settings.defaultsV5) { settings.voice = { ...settings.voice, voice: 'af_heart' }; settings.model = 'glm-5.3'; settings.efforts['glm-5.3'] = 'low'; settings.defaultsV5 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
   // migrate the single-board save from the first version
   try {
     const old = JSON.parse(localStorage.getItem('wbt.data.v1') || 'null');

@@ -6,7 +6,7 @@
  */
 window.Voice = (() => {
   'use strict';
-  let cfg = { mode: 'kokoro', voice: 'af_bella', speed: 0.85, engine: 'server' };
+  let cfg = { mode: 'kokoro', voice: 'af_heart', speed: 0.85, engine: 'server' };
   let serverState = 'unknown';         // unknown | loading | ready | unavailable
   let ctx = null, current = null, epoch = 0, speakingNow = false, lastSource = '';
   const cache = new Map(), listeners = new Set();
