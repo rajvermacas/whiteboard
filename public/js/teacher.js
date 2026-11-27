@@ -704,7 +704,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     if (item.say != null) {
       if (turn) turn.saidLines = (turn.saidLines || 0) + 1;
       flushBeat();
-      beat = { say: item, cmds: [], timer: setTimeout(flushBeat, BEAT_WAIT_MS) };
+      beat = { say: item, cmds: [], timer: setTimeout(flushBeat, BEAT_WAIT_MS), sayLine: turn && turn.got && turn.got[turn.got.length - 1] };
       if (turn) turn.beat = beat;   // the unplayed beat is saved with the answer (inflight.js): its lines are already counted in turn.got
       prefetchAhead(undefined, item.voice);   // voice it while its drawing streams in
     } else if (beat) beat.cmds.push(item);
