@@ -17,8 +17,11 @@ function lastLines(lines, max) {
   for (let i = (lines || []).length - 1; i >= 0; i--) { const l = String(lines[i]); if (l.length > 4000) continue; if (n + l.length > max) break; out.unshift(l); n += l.length + 1; }
   return out;
 }
+// the beat still being collected (a say line and the commands that came with it) is not in any queue yet, but its lines
+// are already in `got`, so a continuation would not ask for them again: it is saved here and replayed ahead of the rest
+const beatOut = t => t.beat ? [t.beat.say, ...t.beat.cmds].map(itemOut).filter(Boolean) : [];
 function turnOut(t) {
-  return { key: t.key, q: t.q, ask: clip(t.ask || t.q, 2000), tab: t.tab || TAB_MAIN, intro: t.intro || null, aside: !!t.aside, streamDone: !!(t.streamDone || t.answered),
+  return { beat: beatOut(t), key: t.key, q: t.q, ask: clip(t.ask || t.q, 2000), tab: t.tab || TAB_MAIN, intro: t.intro || null, aside: !!t.aside, streamDone: !!(t.streamDone || t.answered),
     parent: t.parentTurn ? t.parentTurn.key : null, kind: t.kind || null, tparent: t.parent ? t.parent.key : null, seq: t.seq || 0, got: t.streamDone || t.answered ? [] : lastLines(t.got, 12000), text: String(t.text || '').slice(-6000), drew: [...(t.drew || [])].slice(-200), depth: t.depth || null };
 }
 function inflightSnapshot() {
@@ -70,9 +73,10 @@ function turnIn(s, msg) {
   if (msg && s.text && s.text.trim().length > String(msg.text || '').length) msg.text = s.text.trim();
   return { msg: msg || { role: 'assistant', text: '', drew: [], meta: '', key: s.key }, q: s.q, ask: s.ask || s.q, tab: tabs.has(s.tab) ? s.tab : TAB_MAIN,
     intro: s.intro || null, aside: !!s.aside, text: s.text || '', drew: new Set(s.drew || []), el: null, thinking: false, cmds: 0,
-    key: s.key || 't' + Date.now().toString(36), run: { gen }, streamDone: true, parentKey: s.parent || null, kind: s.kind || null, tparent: s.tparent !== undefined ? s.tparent : s.parent || null, seq: (askSeq = Math.max(askSeq, s.seq || 0), s.seq || 0), got: Array.isArray(s.got) ? s.got.slice() : [], depth: s.depth || null, restored: true };
+    key: s.key || 't' + Date.now().toString(36), run: { gen }, streamDone: true, parentKey: s.parent || null, kind: s.kind || null, tparent: s.tparent !== undefined ? s.tparent : s.parent || null, seq: (askSeq = Math.max(askSeq, s.seq || 0), s.seq || 0), got: Array.isArray(s.got) ? s.got.slice() : [], depth: s.depth || null, restored: true, savedBeat: Array.isArray(s.beat) ? s.beat : [] };
 }
-const itemsIn = (t, list) => (Array.isArray(list) ? list : []).map(x => !x ? null
+// the saved beat goes after the saved queue, and only once: the lines the continuation brings in come after it
+const itemsIn = (t, list) => [...(Array.isArray(list) ? list : []), ...(t.savedBeat || []).splice(0)].map(x => !x ? null
   : x.say != null ? { say: String(x.say), repeat: !!x.repeat, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(String(x.say)) : null }
   : x.cmd && typeof x.cmd === 'object' && x.cmd.cmd ? { cmd: x.cmd, turn: t, run: t.run, fix: !!x.fix } : null).filter(Boolean);
 // a restored question's place in the tree, as it was (addToTree works it out from what is happening now)
