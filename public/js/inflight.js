@@ -90,7 +90,7 @@ async function restoreInflight() {
     inflightSent = Math.max(inflightSent, d.at || 0);
     const findMsg = key => key && chat.find(m => m.role === 'assistant' && m.key === key);
     // paused first: nothing restored may start playing before the learner presses ▶
-    if (d.live || (d.forks || []).length || (d.held || []).length) setPaused(true);
+    if (d.live || (d.forks || []).length || (d.held || []).length) { setPaused(true); reloadPaused = true; }
     const resume = [], nodes = [];   // nodes: every restored question, put in the tree below once each knows its parent
     // answers set aside, oldest first, then the answer that was playing on top: it is the one ▶ carries on with
     const parkIt = (s, why, say, wasPaused) => {
@@ -106,8 +106,8 @@ async function restoreInflight() {
     parked = forks[forks.length - 1] || null;
     if (parked) liveTurn = parked.turn;
     renderChat();   // with the words the restored answers had said
-    // each restored answer owns its bubble again, so ▶ carries on in it (chat[i] is the i-th bubble)
-    for (const f of forks) { const i = chat.indexOf(f.turn.msg); if (i >= 0 && msgBox.children[i]) f.turn.el = msgBox.children[i]; }
+    // each restored answer owns its bubble again, so ▶ carries on in it
+    for (const f of forks) f.turn.el = bubbleOf(f.turn);
     // side answers that were waiting: they come in at a sentence once the lesson plays again
     for (const h of d.held || []) {
       if (!h.user) continue;
