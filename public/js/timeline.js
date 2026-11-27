@@ -126,6 +126,7 @@ function enterScrub() {
   if (scrub) return;
   scrub = { i: -1, applied: -1, token: 0, live: { objs: [...objs.values()].map(o => cloneCmd(o.cmd)), camera: { ...camera } }, playing: false };
   setSelection([]);
+  resetBoard();   // the live objects are saved above; showStep builds the board of the step from nothing (else later steps' drawings stay on it)
   document.body.classList.add('scrubbing');
 }
 function exitScrub(keepCamera = false) {
