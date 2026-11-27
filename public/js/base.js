@@ -133,3 +133,18 @@ function roughEllipse(cx, cy, rx, ry, r, overshoot = 1.06) {
   }
   return smoothPath(pts);
 }
+// The page is going away (reload, close, navigation). Safari aborts the open fetches BEFORE pagehide, so a stream's error
+// and tidy-up paths would run first and overwrite the good checkpoint (inflight.js) with a worse one. This is set as
+// early as beforeunload; the send / continue / tidy-up / popup error paths, the non-closing checkpoint saves and the
+// hand-over of waiting side answers check it. If the page stays after all (a download, a bfcache round trip) the flag
+// is released and what was held back runs then (afterUnload), so nothing is left "Teaching…" forever.
+let unloading = false, unloadTimer = 0; const unloadWaiters = [];
+const afterUnload = () => new Promise(r => unloadWaiters.push(r));   // never resolves if the page really goes away
+function unloadEnd() {
+  unloading = false; clearTimeout(unloadTimer);
+  unloadWaiters.splice(0).forEach(f => f());
+  if (typeof pendingHeld !== 'undefined') for (const t of pendingHeld) if (t.held && t.held.length) requestRelease(t);   // hand-overs held back meanwhile
+}
+window.addEventListener('beforeunload', () => { unloading = true; clearTimeout(unloadTimer); unloadTimer = setTimeout(unloadEnd, 5000); });
+window.addEventListener('pagehide', () => { unloading = true; });
+window.addEventListener('pageshow', () => { if (unloading) unloadEnd(); });

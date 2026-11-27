@@ -45,7 +45,7 @@ function inflightSnapshot() {
 }
 // saved when it changes (checked a few times a second) and once more as the page closes
 function inflightSave(closing = false) {
-  if (!inflightReady || !lesson || MCP_MODE) return;
+  if (!inflightReady || !lesson || MCP_MODE || (unloading && !closing)) return;   // unloading: only the closing save, taken before anything was cleaned up
   const snap = inflightSnapshot(), body = snap ? JSON.stringify(snap) : '';
   if (!closing && body === inflightLast) return;
   inflightLast = body;
@@ -56,6 +56,7 @@ function inflightSave(closing = false) {
     .catch(() => { inflightLast = null; });   // try again on the next check
 }
 setInterval(() => inflightSave(), 400);
+window.addEventListener('beforeunload', () => inflightSave(true));   // Safari aborts the streams before pagehide (base.js): save while they are still whole
 window.addEventListener('pagehide', () => inflightSave(true));
 // another session is opened (or a new one starts): the one being left has nothing in progress any more
 function inflightDrop(session) {
@@ -157,6 +158,7 @@ async function continueStream(t) {
   try { await streamAnswer(messages, { model, effort: eff === 'auto' ? null : eff, run: t.run, turn: t, signal: ac.signal }); }
   catch (e) { if (!ac.signal.aborted) dlog('reload: could not get the rest of', lab(t), e.code || '', e.message || ''); }
   finally {
+    if (unloading) await afterUnload();   // the page is going away: the abort is not the end of this answer (base.js)
     if (t.counted) { activeStreams = Math.max(0, activeStreams - 1); t.counted = false; }
     streaming = activeStreams > 0; t.streamDone = true;
     if (t.held) { if (!t.held.length) dropHeld(t); else requestRelease(t); }

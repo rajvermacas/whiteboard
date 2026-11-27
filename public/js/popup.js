@@ -251,6 +251,7 @@ async function askQuick(p, q) {
     dlog('ask popup: answered in', Math.round(performance.now() - t0), 'ms,', item.a.length, 'chars');
   } catch (e) {
     if (ac.signal.aborted) return;
+    if (unloading) await afterUnload();   // the page is going away (base.js)
     ad.classList.remove('thinking'); ad.classList.add('err'); ad.textContent = 'Could not answer: ' + (e.message || e);
     dlog('ask popup: failed', String(e.message || e));
   } finally {
