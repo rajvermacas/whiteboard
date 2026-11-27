@@ -124,7 +124,7 @@ function answerNo(i) { const keys = []; for (let j = 0; j <= i; j++) { const t =
 
 function enterScrub() {
   if (scrub) return;
-  scrub = { i: -1, applied: -1, token: 0, live: { objs: [...objs.values()].map(o => cloneCmd(o.cmd)), camera: { ...camera } }, playing: false };
+  scrub = { i: -1, applied: -1, token: 0, live: { objs: [...objs.values()].filter(o => !o.erasing).map(o => cloneCmd(o.cmd)), camera: { ...camera } }, playing: false };
   resetBoard();   // the live objects are saved above; showStep builds the board of the step from nothing (else later steps' drawings stay on it)
   document.body.classList.add('scrubbing');
 }

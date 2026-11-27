@@ -579,7 +579,7 @@ function ask(q, mode = 'fork', extra = {}) {
 $('#clearChatBtn').onclick = () => { if (!chat.length) return; stopAll(true, 'clear chat'); chat = []; renderChat(); resetTree(); saveSoon(); };
 $('#selAsk').onclick = () => input.focus();
 $('#selErase').onclick = () => { if (!scrub) learnerErase([...selection]); };
-function learnerErase(ids) { recordEdit({ cmd: 'erase', ids: ids.slice() }); eraseIds(ids, { gen }, true); }
+function learnerErase(ids) { ids = ids.filter(id => objs.has(id) && !objs.get(id).erasing); if (!ids.length) return; recordEdit({ cmd: 'erase', ids: ids.slice() }); eraseIds(ids, { gen }, true, () => performance.now()); }
 $('#selClear').onclick = () => setSelection([]);
 
 // typewriter (~60 chars/s) — never blocks the pen
