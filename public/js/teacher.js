@@ -581,7 +581,7 @@ async function sendQ(q, opts, opened) {
   showThinking();
   const thinkTimer = setInterval(showThinking, 500);
 
-  let modelApplied = null, failed = false;
+  let modelApplied = null, failed = false, drawing = false;
   try {
     const opts = { model, effort, run, turn, signal: myAbort.signal, onReasoning: n => { reasoningChars += n; }, onContent: n => { contentChars += n; } };
     // links in the question: the server reads them first (the answer then gets them from its cache)
@@ -616,6 +616,7 @@ async function sendQ(q, opts, opened) {
       const follow = messages.concat(
         { role: 'assistant', content: r1.content.slice(0, 6000) || '(no answer)' },
         { role: 'user', content: withTab(turn.tab, () => boardNow()) + 'That was too wordy for a whiteboard. Now SHOW it: add 10-25 drawing commands (icons, tokens, boxes, arrows, frames, braces, schedule, graph…) laid out with "near" next to what is already on the board. Labels of 1-4 words, no write sentences, at most one short say line. Do not repeat what you already said.' });
+      drawing = true;
       const r2 = await streamAnswer(follow, opts);
       modelApplied = r2.model || modelApplied;
       answer += '\n' + r2.content;
@@ -631,12 +632,13 @@ async function sendQ(q, opts, opened) {
     else {
       const code = err.code || 'network';
       dlog('answer failed', code, err.message);
-      if (turn.thinking && !turn.cmds && chat.includes(am)) { turn.el.remove(); chat.splice(chat.indexOf(am), 1); }
+      if (turn.thinking && !turn.cmds && !turn.saidLines && chat.includes(am)) { turn.el.remove(); chat.splice(chat.indexOf(am), 1); }
       const text = code === 'rate_limited' ? 'Rate limited by OpenCode Go. Wait a moment and ask again.'
         : code === 'thinking_budget' ? `${modelName(model)} used its whole token budget thinking and never wrote an answer. Pick a lower reasoning level (⚙ in the chat header) or another model, then ask again.`
         : code === 'not_granted' ? `The API key was rejected (${err.message}). Check ${keyNameFor(model)} in .env (just the key, nothing before it) and restart the server.`
         : code === 'no_api_key' ? `No API key on the server. Put ${keyNameFor(model)} in .env and restart.`
         : code === 'empty' ? `${modelName(model)} returned an empty answer. Try again, or pick another model.`
+        : code === 'cut_off' ? `${modelName(model)}'s ${drawing ? 'drawing' : 'answer'} stopped midway (the connection ended early). What arrived is shown; ask again to get the rest.`
         : code === 'stalled' ? `${modelName(model)} stopped responding mid-answer. What arrived is shown; ask again or pick another model.`
         : code === 'network' || err instanceof TypeError ? 'Cannot reach the local server. Is `npm start` still running?'
         : `Something went wrong (${code})${err.message ? ': ' + err.message : ''}`;
@@ -671,7 +673,7 @@ async function sendQ(q, opts, opened) {
 // fix = true: a tidy-up pass. Only board edits are taken (no talking, no clear, never the learner's ink), at most FIX_MAX.
 async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, onContent, fix = false, search = false }) {
   let fixes = 0;
-  let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, reasoned = 0;
+  let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, ended = false, reasoned = 0;
   let usage = null, firstT = 0;   // the provider's token count (last chunk) and when the reply started arriving
   // brace depth outside strings: >0 means the JSON object continues on the next line
   const depthOf = t => { let d = 0, q = false, esc = false; for (const ch of t) { if (esc) { esc = false; continue; } if (ch === '\\') { esc = true; continue; } if (ch === '"') q = !q; else if (!q) { if (ch === '{' || ch === '[') d++; else if (ch === '}' || ch === ']') d--; } } return d; };
@@ -783,19 +785,19 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     catch (e) { try { reader.cancel().catch(() => {}); } catch {} if (e.code === 'stalled') dlog('stream stalled after', bytes, 'bytes'); throw e; }
     finally { clearTimeout(stallTimer); }
     const { done, value } = chunk;
-    if (done) { dlog('stream end', lab(turn), bytes, 'bytes in', ((Date.now() - t0) / 1000).toFixed(1) + 's', 'finish', finish || '-'); break; }
-    bytes += value.length;
-    sse += dec.decode(value, { stream: true });
+    if (done) sse += dec.decode() + '\n';   // a last event with no trailing newline still counts
+    else { bytes += value.length; sse += dec.decode(value, { stream: true }); }
     let nl;
     while ((nl = sse.indexOf('\n')) >= 0) {
       const ln = sse.slice(0, nl).trim(); sse = sse.slice(nl + 1);
       if (!ln.startsWith('data:')) continue;
       const data = ln.slice(5).trim();
-      if (!data || data === '[DONE]') continue;
+      if (data === '[DONE]') { ended = true; continue; }
+      if (!data) continue;
       let j; try { j = JSON.parse(data); } catch { continue; }
       if (j.error) throw Object.assign(new Error(j.error.message || 'stream error'), { code: j.error.code || j.error.type || 'stream_error' });
       if (j.model) modelApplied = j.model;
-      if (j.usage) usage = j.usage;   // final chunk, when the provider reports usage
+      if (j.usage) { usage = j.usage; if (!(j.choices && j.choices.length)) ended = true; }   // final chunk, when the provider reports usage: some end with it alone
       const ch = j.choices && j.choices[0]; if (!ch) continue;
       if (ch.finish_reason) finish = ch.finish_reason;
       const delta = ch.delta; if (!delta) continue;
@@ -808,12 +810,13 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         while ((k = partial.indexOf('\n')) >= 0) { handleLine(partial.slice(0, k)); partial = partial.slice(k + 1); }
       }
     }
+    if (done) { dlog('stream end', lab(turn), bytes, 'bytes in', ((Date.now() - t0) / 1000).toFixed(1) + 's', 'finish', finish || '-'); break; }
   }
   if (partial.trim()) handleLine(partial);
   if (jsonBuf) { const b = jsonBuf; jsonBuf = null; try { handleLine(b); } catch {} }
   } finally { if (signal && signal.aborted) { if (beat) clearTimeout(beat.timer); beat = null; } else flushBeat(); }
   if (!content.trim()) {
-    throw Object.assign(new Error(''), { code: reasoned && (finish === 'length' || !finish) ? 'thinking_budget' : 'empty' });
+    throw Object.assign(new Error(''), { code: reasoned && finish === 'length' ? 'thinking_budget' : !finish && !ended && !fix ? 'cut_off' : 'empty' });
   }
   // tokens/second over this reply's streaming time (a turn can stream several replies: drawing follow-up, tidy-up)
   if (turn && firstT) {
@@ -823,5 +826,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     st.ms += Date.now() - firstT;
     if (!exact) st.est = true;
   }
+  // a clean EOF with neither a finish reason nor [DONE] is a cut-off connection, not a finished answer (the lines that arrived are already queued)
+  if (!finish && !ended && !fix) { dlog('stream cut off: ended without a finish reason or [DONE]'); throw Object.assign(new Error(''), { code: 'cut_off' }); }
   return { content, model: modelApplied };
 }
