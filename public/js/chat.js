@@ -199,14 +199,14 @@ tip($('#stopBtn'), 'Stop');
 $('#pauseBtn').onclick = () => { dlog('user:', scrub ? (isPaused() ? 'resume playback' : 'pause playback') : isPaused() ? '▶ play' : '⏸ pause'); if (scrub) { if (scrub.playing) setPaused(!isPaused()); return; } if (isPaused()) releasePauseHold('play'); setPaused(!isPaused()); };
 $('#resumeGo').onclick = () => {
   dlog('user: ▶ continue set-aside answer'); releasePauseHold('continue');
-  const fromReload = reloadPaused; continueParked();
-  if (fromReload && isPaused()) setPaused(false);   // the reload paused it, not the learner: Continue plays, as the reload note says
+  const fromApp = appPaused; continueParked();
+  if (fromApp && isPaused()) setPaused(false);   // the app paused it, not the learner: Continue plays, as the reload note says
 };
 $('#resumeX').onclick = () => { dlog('user: ✕ drop set-aside answer', lab(parked && parked.turn)); dropParked(); };
 
-let reloadPaused = false;   // the pause came from a reload restore, not from the learner
+let appPaused = false;   // the app paused it (a reload restore, or back from a side answer asked while paused), not the learner: Continue plays
 function setPaused(on) {
-  if (!on) reloadPaused = false;
+  if (!on) appPaused = false;
   if (on && pausedAt == null) { pausedAt = performance.now(); Voice.pause(); dlog('paused'); }
   else if (!on && pausedAt != null) { pausedTotal += performance.now() - pausedAt; pausedAt = null; Voice.resume(); pauseWaiters.splice(0).forEach(f => f()); dlog('resumed'); }
   document.body.classList.toggle('paused', isPaused());
@@ -219,10 +219,16 @@ function streamingLive() { return activeStreams - forks.filter(f => !f.turn.stre
 // forked. A question during a side answer forks again, so nested questions unwind in order, like a teacher would.
 // Looking back with ‹ / the slider sets the answer aside the same way; reaching the end of the recap picks it up.
 let liveTurn = null;
+// a side question asked while paused: its answer plays now, then the answer set aside (f) stays paused where it was
+function holdParkedPause(f, why, wasPaused) { if (f && why === 'question' && wasPaused) f.holdPause = true; }
 function parkLive(why = 'look') {   // why: 'question' (a side question) or 'look' (looking back)
   const t = liveTurn, wasPaused = isPaused();
   const busy = t && !forks.some(f => f.turn === t) && (!t.streamDone || queue.length || queueBusy || Voice.speaking());
-  if (!busy) { if (streamingLive() || queueRunning) stopAll(false, 'set aside: nothing left', true); setPaused(false); return; }   // keeps the answers waiting to come in
+  if (!busy) {
+    if (streamingLive() || queueRunning) stopAll(false, 'set aside: nothing left', true);
+    holdParkedPause(parked && forkLeft(parked) ? parked : null, why, wasPaused);   // a follow-up asked while an answer waits paused
+    setPaused(false); return;   // keeps the answers waiting to come in
+  }
   t.parkedQ = queue.splice(0);
   const cut = lastSay && lastSay.turn === t && (queueBusy || Voice.speaking() || (t.parkedQ.length && t.parkedQ[0].say == null));
   // the sentence that was cut short is said again. Set aside by a question, from its start (after "back to …");
@@ -233,7 +239,8 @@ function parkLive(why = 'look') {   // why: 'question' (a side question) or 'loo
     else t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? (why === 'look' && mine ? lastSay.voice : Voice.prepare(lastSay.say)) : null, from: why === 'look' && mine ? Math.max(0, pos.at - 0.3) : 0 });
   }
   if (currentItem && currentItem.cmd && currentItem.turn === t) currentItem.keep = true;
-  forks.push({ turn: t, why, wasPaused, abort: t.abort, say: lastSay && lastSay.turn === t ? lastSay.say : '' }); parked = forks[forks.length - 1];
+  forks.push({ turn: t, why, wasPaused, holdPause: false, abort: t.abort, say: lastSay && lastSay.turn === t ? lastSay.say : '' }); parked = forks[forks.length - 1];
+  holdParkedPause(parked, why, wasPaused);
   if (abortCtl === t.abort) abortCtl = null;          // Stop during the side answer must not cut the set-aside stream
   dlog('set aside', lab(t), '(' + why + '):', t.parkedQ.length, 'lines', t.streamDone ? '' : '(still streaming)', '· stack:', forkStack());
   gen++; Voice.stop(); narrationDone = Promise.resolve(); finishTyping(); hideIcon(pen); hideIcon(eraser);
@@ -247,6 +254,7 @@ const forkLeft = f => (f.turn.parkedQ && f.turn.parkedQ.length) || !f.turn.strea
 const pauseHeldFirst = () => [...pendingHeld].filter(t => t.pausedAsk && !t.dropped).sort((a, b) => (a.seq || 0) - (b.seq || 0))[0] || null;
 const pauseHold = () => !!pauseHeldFirst();
 function releasePauseHold(why) {
+  if (!appPaused) for (const f of forks) f.holdPause = false;   // ▶ pressed by the learner (not the reload / hold pause): the set-aside answer goes on after the side answer
   const n = [...pendingHeld].filter(t => t.pausedAsk).length; if (!n) return;
   for (const t of pendingHeld) t.pausedAsk = false;
   dlog('▶ pressed:', n, 'question(s) asked while paused no longer hold the lesson (' + why + ')');
@@ -486,7 +494,11 @@ function renderResumeBar() {
   const show = !!parked && !streamingLive() && !queueRunning && forkLeft(parked);
   bar.hidden = !show;
   if (show && waitingFor && pendingHeld.has(waitingFor)) { $('#resumeText').textContent = `⏳ Waiting for “${clip(waitingFor.q.replace(/^what is inside /, ''), 40)}” first · ▶ Continue goes back now to “${parked.say || 'the previous answer'}”`; return; }
-  if (show) $('#resumeText').textContent = `${autoBack ? '↩ Going back to' : '⏸ Paused at'}: “${parked.say || 'the previous answer'}”${forks.length > 1 ? ` (+${forks.length - 1} more)` : ''}`;
+  // not paused (a side answer plays, or looks like it is about to): the set-aside answer waits, it is not "paused"
+  if (show) {
+    const how = autoBack && !parked.holdPause ? '↩ Going back to' : isPaused() || scrub || tabAway ? '⏸ Paused at' : '⏳ Set aside at';
+    $('#resumeText').textContent = `${how}: “${parked.say || 'the previous answer'}”${forks.length > 1 ? ` (+${forks.length - 1} more)` : ''}`;
+  }
 }
 // Once the side answer is done (and nothing is paused or being looked back at), go back to where it forked.
 let autoBack = null, sendsPending = 0, waitingFor = null;   // waitingFor: the question the teacher waits on this tab for
@@ -508,6 +520,8 @@ function scheduleAutoBack() {
     const s = nextStep(); if (!s) return;
     if (s.resume && pauseHold()) { scheduleAutoBack(); return; }
     if (s.release) { s.release.releasing = false; releaseHeld(s.release, true); }
+    // the main answer was paused when the side question came in: it stays paused where it was (the bar says so, ▶ goes on)
+    else if (s.resume && parked && parked.holdPause) { parked.holdPause = false; appPaused = true; setPaused(true); dlog('side answer done: the answer set aside was paused, it stays paused:', lab(parked.turn)); }
     else if (s.resume) continueParked();
     else scheduleAutoBack();
   }, 900);
