@@ -352,11 +352,11 @@ document.addEventListener('keydown', e => {
     return;
   }
   // Delete erases the selected drawing; with the chat box focused and empty only Delete does, so Backspace keeps editing text
-  const inChat = document.activeElement === input;
-  if ((!typing || (inChat && e.key === 'Delete' && !input.value)) && (e.key === 'Delete' || e.key === 'Backspace') && selection.size && !scrub) { e.preventDefault(); learnerErase([...selection]); }
+  // Shift+letter / Shift+arrow / Shift+Delete is not the shortcut (Caps Lock gives an uppercase e.key but no shiftKey, so it still works); only ? takes Shift, as it needs it on most layouts
+  const mods = !e.metaKey && !e.ctrlKey && !e.altKey, plain = mods && !e.shiftKey, inChat = document.activeElement === input;
+  if (plain && (!typing || (inChat && e.key === 'Delete' && !input.value)) && (e.key === 'Delete' || e.key === 'Backspace') && selection.size && !scrub) { e.preventDefault(); learnerErase([...selection]); }
   // Space (anywhere but a text field) is the timeline's ▶/⏸, and so is S; a focused button gives up the focus so it is not pressed too
-  // Shift+letter / Shift+arrow is not the shortcut (Caps Lock gives an uppercase e.key but no shiftKey, so it still works); only ? takes Shift, as it needs it on most layouts
-  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key, plain = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   // (before the first step exists the timeline is hidden, e.g. while the teacher is still thinking: then it is the chat's ⏸/▶, when that shows)
   const keyBtn = !$('#timeline').hidden ? $('#tlPlay') : !$('#pauseBtn').hidden ? $('#pauseBtn') : null;
   if ((k === ' ' || k === 's') && !typing && plain && !e.repeat && keyBtn) {
@@ -379,7 +379,7 @@ document.addEventListener('keydown', e => {
   if (k === 'w' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: W → draw', penMode ? 'off' : 'on'); $('#penBtn').click(); return; }
   if (k === 't' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: T → fit'); $('#fitBtn').click(); return; }
   // ? shows the shortcuts card
-  if (e.key === '?' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); openKeys(); return; }
+  if (e.key === '?' && !typing && mods && !e.repeat) { e.preventDefault(); openKeys(); return; }
   // ← / A go back a step, → / D go forward one
   const back = k === 'ArrowLeft' || k === 'a', fwd = k === 'ArrowRight' || k === 'd';
   if (!typing && plain && (back || fwd) && navSteps().length) { e.preventDefault(); stepBy(back ? -1 : 1); }
