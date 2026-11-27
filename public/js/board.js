@@ -336,7 +336,8 @@ function removeNow(id, withDeps = true) {
   o.g.remove(); objs.delete(id); selection.delete(id); badgesSoon();
   if (withDeps) for (const k of hardDependentsOf(id)) removeNow(k, true);
 }
-async function eraseIds(ids, run, animate) {
+// now: the learner's own erase passes the wall clock, so it is not frozen by the lesson's pause (the teacher's stays on clock)
+async function eraseIds(ids, run, animate, now = clock) {
   const all = new Set();
   const add = id => { if (!objs.has(id) || all.has(id)) return; all.add(id); hardDependentsOf(id).forEach(add); };
   ids.forEach(add);
@@ -350,7 +351,7 @@ async function eraseIds(ids, run, animate) {
       const zig = Math.abs(((t * 3) % 2) - 1); // zigzag across the width
       placeIcon(eraser, b.x + b.width * (t * 3 % 2 < 1 ? zig : zig), b.y + b.height * t);
       gs.forEach(g => g.style.opacity = 1 - t);
-    }, run);
+    }, run, null, now);
     hideIcon(eraser);
   }
   const refit = new Set(); for (const id of all) for (const k of dependentsOf(id)) if (!all.has(k)) refit.add(k);
