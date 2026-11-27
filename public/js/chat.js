@@ -94,6 +94,7 @@ function renderChips() {
   }
 }
 async function writeSuggestions(kind, names, key) {
+  if (!lesson) return;   // e.g. a timer from a lesson that was deleted meanwhile
   if (suggestAbort) suggestAbort.abort();
   const ac = suggestAbort = new AbortController();
   const L = lesson, model = settings.model || (models[0] && models[0].id);
