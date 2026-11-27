@@ -19,11 +19,11 @@ function lastLines(lines, max) {
 }
 function turnOut(t) {
   return { key: t.key, q: t.q, ask: clip(t.ask || t.q, 2000), tab: t.tab || TAB_MAIN, intro: t.intro || null, aside: !!t.aside, streamDone: !!(t.streamDone || t.answered),
-    parent: t.parentTurn ? t.parentTurn.key : null, seq: t.seq || 0, got: t.streamDone || t.answered ? [] : lastLines(t.got, 12000), text: String(t.text || '').slice(-6000), drew: [...(t.drew || [])].slice(-200), depth: t.depth || null };
+    parent: t.parentTurn ? t.parentTurn.key : null, kind: t.kind || null, tparent: t.parent ? t.parent.key : null, seq: t.seq || 0, got: t.streamDone || t.answered ? [] : lastLines(t.got, 12000), text: String(t.text || '').slice(-6000), drew: [...(t.drew || [])].slice(-200), depth: t.depth || null };
 }
 function inflightSnapshot() {
   if (!lesson || MCP_MODE) return null;
-  const out = { session: lesson.session, live: null, forks: [], held: [], pops: [] };
+  const out = { session: lesson.session, live: null, forks: [], held: [], pops: [], tree: [] };
   const lt = liveTurn;
   if (lt && lt.key && !forks.some(f => f.turn === lt)) {
     const items = [];
@@ -35,6 +35,11 @@ function inflightSnapshot() {
   }
   for (const f of forks) if (forkLeft(f)) out.forks.push({ turn: turnOut(f.turn), items: (f.turn.parkedQ || []).map(itemOut).filter(Boolean), why: f.why, wasPaused: !!f.wasPaused, say: f.say || '' });
   for (const t of pendingHeld) if (t.heldUser) out.held.push({ turn: turnOut(t), items: (t.held || []).map(itemOut).filter(Boolean), user: t.heldUser.msg, am: t.msg });
+  // the questions above those saved, even when their answers are done: they only show in the tree (nothing to replay)
+  const saved = new Set([out.live, ...out.forks, ...out.held].filter(Boolean).map(x => x.turn.key));
+  for (const x of [...out.live ? [out.live] : [], ...out.forks, ...out.held]) {
+    for (let a = qtree.find(q => q.key === x.turn.tparent); a && !saved.has(a.key); a = a.parent) { saved.add(a.key); out.tree.push({ key: a.key, q: a.q, ask: clip(a.ask || a.q, 2000), kind: a.kind || null, tparent: a.parent ? a.parent.key : null, seq: a.seq || 0 }); }
+  }
   for (const p of pops) out.pops.push({ tab: p.tab || TAB_MAIN, ids: p.ids, board: p.board || undefined, thread: p.thread.map(x => ({ q: x.q, a: x.a })), min: p.min, at: p.at });
   return out.live || out.forks.length || out.held.length || out.pops.length ? out : null;
 }
@@ -64,11 +69,18 @@ function turnIn(s, msg) {
   if (msg && s.text && s.text.trim().length > String(msg.text || '').length) msg.text = s.text.trim();
   return { msg: msg || { role: 'assistant', text: '', drew: [], meta: '', key: s.key }, q: s.q, ask: s.ask || s.q, tab: tabs.has(s.tab) ? s.tab : TAB_MAIN,
     intro: s.intro || null, aside: !!s.aside, text: s.text || '', drew: new Set(s.drew || []), el: null, thinking: false, cmds: 0,
-    key: s.key || 't' + Date.now().toString(36), run: { gen }, streamDone: true, parentKey: s.parent || null, seq: (askSeq = Math.max(askSeq, s.seq || 0), s.seq || 0), got: Array.isArray(s.got) ? s.got.slice() : [], depth: s.depth || null, restored: true };
+    key: s.key || 't' + Date.now().toString(36), run: { gen }, streamDone: true, parentKey: s.parent || null, kind: s.kind || null, tparent: s.tparent !== undefined ? s.tparent : s.parent || null, seq: (askSeq = Math.max(askSeq, s.seq || 0), s.seq || 0), got: Array.isArray(s.got) ? s.got.slice() : [], depth: s.depth || null, restored: true };
 }
 const itemsIn = (t, list) => (Array.isArray(list) ? list : []).map(x => !x ? null
   : x.say != null ? { say: String(x.say), repeat: !!x.repeat, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(String(x.say)) : null }
   : x.cmd && typeof x.cmd === 'object' && x.cmd.cmd ? { cmd: x.cmd, turn: t, run: t.run, fix: !!x.fix } : null).filter(Boolean);
+// a restored question's place in the tree, as it was (addToTree works it out from what is happening now)
+function restoreNode(t, parent) {
+  t.asked = t.ask || t.q; t.parent = parent || null; t.level = parent ? (parent.level || 0) + 1 : 0; t.askedAt = Date.now();
+  t.kind = t.kind || (/^what is inside /.test(t.q) ? 'drill' : t.parent ? 'side' : 'main');
+  if (!t.parent && t.kind === 'side') t.kind = 'main';   // the answer it was asked in is gone: it stands alone
+  qtree.push(t); dlog('tree (reloaded):', t.kind, lab(t), 'under', lab(t.parent), '· level', t.level);
+}
 async function restoreInflight() {
   try {
     if (!lesson || MCP_MODE) return;
@@ -79,14 +91,14 @@ async function restoreInflight() {
     const findMsg = key => key && chat.find(m => m.role === 'assistant' && m.key === key);
     // paused first: nothing restored may start playing before the learner presses ▶
     if (d.live || (d.forks || []).length || (d.held || []).length) setPaused(true);
-    const resume = [];
+    const resume = [], nodes = [];   // nodes: every restored question, put in the tree below once each knows its parent
     // answers set aside, oldest first, then the answer that was playing on top: it is the one ▶ carries on with
     const parkIt = (s, why, say, wasPaused) => {
       const t = turnIn(s.turn, findMsg(s.turn.key));
       t.parkedQ = itemsIn(t, s.items);
       t.streamDone = !!s.turn.streamDone;
       forks.push({ turn: t, why, wasPaused, abort: null, say: say || '' });
-      try { addToTree(t, t.ask, { aside: t.aside }, null); } catch {}
+      nodes.push(t);
       if (!t.streamDone) resume.push(t);
     };
     for (const f of d.forks || []) parkIt(f, f.why || 'look', f.say, !!f.wasPaused);
@@ -103,12 +115,17 @@ async function restoreInflight() {
       const w = document.createElement('span'); w.className = 'wait'; w.textContent = '⏳ Answering on the side… (carried over from before the reload)'; ub.appendChild(w);
       t.heldUser = { msg: h.user, el: ub, wait: w }; t.el = bubble(t.msg); t.el.remove();
       pendingHeld.add(t);
-      try { addToTree(t, t.ask, { aside: true }, null); } catch {}
+      nodes.push(t);
       if (!t.streamDone) resume.push(t);
     }
     // the questions' places in the order: each under the answer it was asked in (if that came back too)
     const byKey = new Map([...forks.map(f => f.turn), ...pendingHeld].map(t => [t.key, t]));
     for (const t of byKey.values()) t.parentTurn = (t.parentKey && byKey.get(t.parentKey)) || null;
+    // the question tree: oldest first, so a parent is in it before the questions asked inside it. Questions above the
+    // saved answers, whose own answers were finished, come back as rows only (nothing of them is replayed)
+    for (const g of Array.isArray(d.tree) ? d.tree : []) if (g && g.key) nodes.push({ key: g.key, q: String(g.q || ''), ask: String(g.ask || g.q || ''), kind: g.kind, tparent: g.tparent, seq: g.seq || 0, streamDone: true, drew: new Set(), msg: findMsg(g.key) });
+    const inTree = new Map();
+    for (const t of nodes.sort((a, b) => (a.seq || 0) - (b.seq || 0))) { restoreNode(t, inTree.get(t.tparent)); inTree.set(t.key, t); }
     for (const t of pendingHeld) if (t.held && t.held.length) requestRelease(t);   // now that each knows its place
     renderPendingPill();
     for (const s of d.pops || []) restorePop(s);
