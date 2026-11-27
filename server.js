@@ -73,25 +73,30 @@ function sendJSON(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
-// Over the limit: stop buffering but keep draining (up to DRAIN_MAX) so the client can read our 413 instead of getting a reset.
-const DRAIN_MAX = 100_000_000;
+// Over the limit (declared by Content-Length or counted): answer 413 at once, stop buffering, and keep discarding the rest for a
+// little (DRAIN_MAX bytes / DRAIN_MS) so the client can read our reply instead of getting a reset; then cut it off.
+const DRAIN_MAX = 32_000_000, DRAIN_MS = 10_000;
 function readBody(req, limit = 2_000_000) {
   return new Promise((resolve, reject) => {
-    let size = 0, over = false; const chunks = [];
+    let size = 0, over = false, timer = null; const chunks = [];
+    const tooBig = () => { over = true; chunks.length = 0; reject(Object.assign(new Error('body too large'), { status: 413, limit })); };
+    if (+req.headers['content-length'] > limit) { tooBig(); timer = setTimeout(() => req.destroy(), DRAIN_MS); }
     req.on('data', c => {
       size += c.length;
-      if (size > DRAIN_MAX) return req.destroy();
+      if (size > DRAIN_MAX) { if (!over) tooBig(); return req.destroy(); }
       if (over) return;
-      if (size > limit) { over = true; chunks.length = 0; reject(Object.assign(new Error('body too large'), { status: 413, limit })); } else chunks.push(c);
+      if (size > limit) { tooBig(); timer = setTimeout(() => req.destroy(), DRAIN_MS); } else chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('end', () => { clearTimeout(timer); resolve(Buffer.concat(chunks).toString('utf8')); });
+    req.on('close', () => clearTimeout(timer));
     req.on('error', reject);
   });
 }
-// A body that is too big is 413 (the client can tell and say so); anything else unreadable is a plain 400.
+// A body that is too big is 413 (the client can tell and say so, with the limit in bytes); anything else unreadable is a plain 400.
 function badBody(res, e, obj) {
   if (e && e.status === 413) {
-    return sendJSON(res, 413, { error: { code: 'payload_too_large', message: `Request too large (over ${+(e.limit / 1e6).toFixed(2)} MB)` } });
+    const limit = Number.isFinite(e.limit) ? e.limit : null;
+    return sendJSON(res, 413, { error: { code: 'payload_too_large', limit, message: limit ? `Request too large (over ${+(limit / 1e6).toFixed(2)} MB)` : 'Request too large' } });
   }
   return sendJSON(res, 400, obj);
 }
