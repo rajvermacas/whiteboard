@@ -354,8 +354,10 @@ document.addEventListener('keydown', e => {
   if ((!typing || (inChat && e.key === 'Delete' && !input.value)) && (e.key === 'Delete' || e.key === 'Backspace') && selection.size && !scrub) { e.preventDefault(); learnerErase([...selection]); }
   // Space (anywhere but a text field) is the timeline's ▶/⏸, and so is S; a focused button gives up the focus so it is not pressed too
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if ((k === ' ' || k === 's') && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && !$('#timeline').hidden) {
-    e.preventDefault(); if (ae && ae !== document.body && !ae.closest('#boardWrap')) focusBoard(); dlog(`user: ${k === ' ' ? 'space' : 'S'} on the board → timeline`, $('#tlPlay').textContent); $('#tlPlay').click(); return;
+  // (before the first step exists the timeline is hidden, e.g. while the teacher is still thinking: then it is the chat's ⏸/▶, when that shows)
+  const keyBtn = !$('#timeline').hidden ? $('#tlPlay') : !$('#pauseBtn').hidden ? $('#pauseBtn') : null;
+  if ((k === ' ' || k === 's') && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && keyBtn) {
+    e.preventDefault(); if (ae && ae !== document.body && !ae.closest('#boardWrap')) focusBoard(); dlog(`user: ${k === ' ' ? 'space' : 'S'} on the board → ${keyBtn.id === 'tlPlay' ? 'timeline' : 'chat pause'}`, keyBtn.textContent); keyBtn.click(); return;
   }
   // Tab (outside the text fields) jumps to the chat box; Escape in the (empty or not) chat box hands the keys back to the board
   if (e.key === 'Tab' && !e.shiftKey && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); input.focus({ preventScroll: true }); return; }
