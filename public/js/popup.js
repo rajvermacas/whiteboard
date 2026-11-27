@@ -355,31 +355,32 @@ document.addEventListener('keydown', e => {
   const inChat = document.activeElement === input;
   if ((!typing || (inChat && e.key === 'Delete' && !input.value)) && (e.key === 'Delete' || e.key === 'Backspace') && selection.size && !scrub) { e.preventDefault(); learnerErase([...selection]); }
   // Space (anywhere but a text field) is the timeline's ▶/⏸, and so is S; a focused button gives up the focus so it is not pressed too
-  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  // Shift+letter / Shift+arrow is not the shortcut (Caps Lock gives an uppercase e.key but no shiftKey, so it still works); only ? takes Shift, as it needs it on most layouts
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key, plain = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
   // (before the first step exists the timeline is hidden, e.g. while the teacher is still thinking: then it is the chat's ⏸/▶, when that shows)
   const keyBtn = !$('#timeline').hidden ? $('#tlPlay') : !$('#pauseBtn').hidden ? $('#pauseBtn') : null;
-  if ((k === ' ' || k === 's') && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && keyBtn) {
+  if ((k === ' ' || k === 's') && !typing && plain && !e.repeat && keyBtn) {
     e.preventDefault(); if (ae && ae !== document.body && !ae.closest('#boardWrap')) focusBoard(); dlog(`user: ${k === ' ' ? 'space' : 'S'} on the board → ${keyBtn.id === 'tlPlay' ? 'timeline' : 'chat pause'}`, keyBtn.id === 'tlPlay' ? keyBtn.textContent : isPaused() ? '▶' : '⏸'); keyBtn.click(); return;
   }
   // Tab (outside the text fields) jumps to the chat box; Escape in the (empty or not) chat box hands the keys back to the board
-  if (e.key === 'Tab' && !e.shiftKey && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); input.focus({ preventScroll: true }); return; }
+  if (e.key === 'Tab' && !typing && plain) { e.preventDefault(); input.focus({ preventScroll: true }); return; }
   // F toggles full screen (not while typing in the chat box or a field)
-  if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && (e.key === 'f' || e.key === 'F')) {
+  if (!typing && plain && !e.repeat && (e.key === 'f' || e.key === 'F')) {
     e.preventDefault(); dlog('user: F → full screen', !$('#app').classList.contains('fs')); $('#fsBtn').click(); return;
   }
   // N starts a new session, the same as ＋ New
-  if (k === 'n' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); dlog('user: N → new session'); $('#newBtn').click(); return; }
+  if (k === 'n' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: N → new session'); $('#newBtn').click(); return; }
   // O opens the sessions list, the same as the Sessions button
-  if (k === 'o' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); dlog('user: O → open sessions'); $('#sessionsBtn').click(); return; }
+  if (k === 'o' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: O → open sessions'); $('#sessionsBtn').click(); return; }
   // R renames this session (the same as clicking its title)
-  if (k === 'r' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && lesson) { e.preventDefault(); dlog('user: R → rename session'); $('#topicBtn').click(); return; }
+  if (k === 'r' && !typing && plain && !e.repeat && lesson) { e.preventDefault(); dlog('user: R → rename session'); $('#topicBtn').click(); return; }
   // T zooms to fit everything on the board, the same as ⤢ Fit
   // W: the learner's pen on / off (the ✏️ Draw button)
-  if (k === 'w' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); dlog('user: W → draw', penMode ? 'off' : 'on'); $('#penBtn').click(); return; }
-  if (k === 't' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); dlog('user: T → fit'); $('#fitBtn').click(); return; }
+  if (k === 'w' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: W → draw', penMode ? 'off' : 'on'); $('#penBtn').click(); return; }
+  if (k === 't' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: T → fit'); $('#fitBtn').click(); return; }
   // ? shows the shortcuts card
   if (e.key === '?' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) { e.preventDefault(); openKeys(); return; }
   // ← / A go back a step, → / D go forward one
   const back = k === 'ArrowLeft' || k === 'a', fwd = k === 'ArrowRight' || k === 'd';
-  if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && (back || fwd) && navSteps().length) { e.preventDefault(); stepBy(back ? -1 : 1); }
+  if (!typing && plain && (back || fwd) && navSteps().length) { e.preventDefault(); stepBy(back ? -1 : 1); }
 });
