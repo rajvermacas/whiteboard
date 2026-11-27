@@ -613,10 +613,11 @@ async function handleBoardResult(req, res) {
 // ---------- static files ----------
 function serveStatic(req, res) {
   let p; try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { return sendJSON(res, 400, { error: { code: 'bad_url' } }); }
+  if (p.includes('\0')) return sendJSON(res, 400, { error: { code: 'bad_url' } }); // fs.readFile throws synchronously on NUL
   if (p === '/') p = '/index.html';
   const file = path.normalize(path.join(PUBLIC_DIR, p));
   // directory boundary, not a bare prefix: a sibling like public-x/ also starts with the public dir's path
-  if (file !== PUBLIC_DIR && !file.startsWith(PUBLIC_DIR + path.sep)) { res.writeHead(403); return res.end('Forbidden'); }
+  if (!file.startsWith(PUBLIC_DIR + path.sep)) { res.writeHead(403); return res.end('Forbidden'); }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Not found'); }
     res.writeHead(200, {
