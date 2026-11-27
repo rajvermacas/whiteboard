@@ -671,7 +671,7 @@ async function sendQ(q, opts, opened) {
 // fix = true: a tidy-up pass. Only board edits are taken (no talking, no clear, never the learner's ink), at most FIX_MAX.
 async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, onContent, fix = false, search = false }) {
   let fixes = 0;
-  let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, reasoned = 0;
+  let content = '', partial = '', jsonBuf = null, jsonMode = false, modelApplied = null, finish = null, reasoned = 0;
   let usage = null, firstT = 0;   // the provider's token count (last chunk) and when the reply started arriving
   // brace depth outside strings: >0 means the JSON object continues on the next line
   const depthOf = t => { let d = 0, q = false, esc = false; for (const ch of t) { if (esc) { esc = false; continue; } if (ch === '\\') { esc = true; continue; } if (ch === '"') q = !q; else if (!q) { if (ch === '{' || ch === '[') d++; else if (ch === '}' || ch === ']') d--; } } return d; };
@@ -720,7 +720,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         if (depthOf(line) > 0 && line.length < 8000) { jsonBuf = line; return; }  // continues on the next line
         dlog('dropped unparsable line', line.slice(0, 160)); jsonBuf = null; return;
       }
-      jsonBuf = null;
+      jsonBuf = null; jsonMode = true;   // from here on the stream follows the protocol
       keepLine(line);
       const items = Array.isArray(obj) ? obj : [obj];
       for (const it of items) {
@@ -753,6 +753,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     } else {
       jsonBuf = null;
       if (fix) return;
+      if (jsonMode) { dlog('dropped a plain-text line in a JSON Lines answer', JSON.stringify(line.slice(0, 60))); return; }   // prose before any JSON is the fallback for models that ignore the format; after it, prose is a stray
       if (!sayable(line)) { dlog('dropped a stray line', JSON.stringify(line.slice(0, 40))); return; }   // e.g. the "}" of {"say":"…"\n}
       const t = trimSay(line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200));
       keepLine(JSON.stringify({ say: t }));
