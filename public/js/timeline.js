@@ -351,6 +351,8 @@ function resetBoard() {
   for (const o of objs.values()) o.g.remove();
   objs.clear(); selection.clear(); updateEmpty(); drawSelection(); updateSelectionUI();
 }
+// nothing of the lesson left: no answer playing, steps, timeline, question tree, look-back, board or chat (the caller sets `lesson`)
+function clearLesson() { stopAll(); liveTurn = null; if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline(); }
 function applySession(d) {
   if (lesson && d.lesson && lesson.session !== d.lesson.session) inflightDrop(lesson.session);   // leaving it: nothing in progress any more
   closeAllPops();
@@ -444,9 +446,14 @@ async function openSessions() {
     del.onclick = async () => {
       sessPick = Math.max(0, [...ul.children].indexOf(li) - 1);   // after deleting, the one above it is picked
       if (!confirm(`Delete “${it.topic}”? This cannot be undone.`)) return;
+      // the current lesson is cleared first: an answer still teaching stops, and no late auto-save or checkpoint can bring it back
+      if (lesson && it.id === lesson.session) {
+        inflightDrop(it.id); closeAllPops(); clearLesson(); lesson = null; dirty = false; clearTimeout(saveTimer); clearTimeout(serverTimer);
+        try { localStorage.removeItem(LS_CURRENT); } catch {}
+        camera = { x: 0, y: 0, scale: defaultScale() }; fit(false); renderTitle(); renderChat();
+      }
       try { await fetch('/api/sessions/' + encodeURIComponent(it.id), { method: 'DELETE' }); } catch {}
       try { localStorage.removeItem('wbt.s.' + it.id); } catch {}
-      if (lesson && it.id === lesson.session) { stopAll(); resetTabs(); resetBoard(); lesson = null; chat = []; try { localStorage.removeItem(LS_CURRENT); } catch {} renderTitle(); renderChat(); }
       openSessions();
     };
     li.append(info, open, del); li.dataset.id = it.id; ul.appendChild(li);
