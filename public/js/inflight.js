@@ -79,14 +79,14 @@ async function restoreInflight() {
     const findMsg = key => key && chat.find(m => m.role === 'assistant' && m.key === key);
     // paused first: nothing restored may start playing before the learner presses ▶
     if (d.live || (d.forks || []).length || (d.held || []).length) setPaused(true);
-    const resume = [];
+    const resume = [], nodes = [];   // nodes: every restored question, put in the tree below once each knows its parent
     // answers set aside, oldest first, then the answer that was playing on top: it is the one ▶ carries on with
     const parkIt = (s, why, say, wasPaused) => {
       const t = turnIn(s.turn, findMsg(s.turn.key));
       t.parkedQ = itemsIn(t, s.items);
       t.streamDone = !!s.turn.streamDone;
       forks.push({ turn: t, why, wasPaused, abort: null, say: say || '' });
-      try { addToTree(t, t.ask, { aside: t.aside }, null); } catch {}
+      nodes.push(t);
       if (!t.streamDone) resume.push(t);
     };
     for (const f of d.forks || []) parkIt(f, f.why || 'look', f.say, !!f.wasPaused);
@@ -103,12 +103,17 @@ async function restoreInflight() {
       const w = document.createElement('span'); w.className = 'wait'; w.textContent = '⏳ Answering on the side… (carried over from before the reload)'; ub.appendChild(w);
       t.heldUser = { msg: h.user, el: ub, wait: w }; t.el = bubble(t.msg); t.el.remove();
       pendingHeld.add(t);
-      try { addToTree(t, t.ask, { aside: true }, null); } catch {}
+      nodes.push(t);
       if (!t.streamDone) resume.push(t);
     }
     // the questions' places in the order: each under the answer it was asked in (if that came back too)
     const byKey = new Map([...forks.map(f => f.turn), ...pendingHeld].map(t => [t.key, t]));
     for (const t of byKey.values()) t.parentTurn = (t.parentKey && byKey.get(t.parentKey)) || null;
+    // oldest first, so a parent is in the tree before the questions asked inside it (else a side question became a main
+    // one). `parked` is left out meanwhile: addToTree would hang every restored question under it, even itself
+    const keep = parked; parked = null;
+    for (const t of nodes.sort((a, b) => (a.seq || 0) - (b.seq || 0))) try { addToTree(t, t.ask, { aside: t.aside || !!t.parentTurn }, t.parentTurn); } catch {}
+    parked = keep;
     for (const t of pendingHeld) if (t.held && t.held.length) requestRelease(t);   // now that each knows its place
     renderPendingPill();
     for (const s of d.pops || []) restorePop(s);
