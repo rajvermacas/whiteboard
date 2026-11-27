@@ -330,9 +330,9 @@ async function saveToServer(keepalive = false) {
   const st = $('#saveState');
   try {
     const r = await fetch('/api/sessions/' + encodeURIComponent(lesson.session), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive });
-    if (!r.ok) throw new Error(r.status);
+    if (!r.ok) throw Object.assign(new Error(r.status), { status: r.status });
     st.textContent = 'saved'; st.title = 'Auto-saved ' + new Date().toLocaleTimeString();
-  } catch { dirty = true; st.textContent = 'saved in browser only'; st.title = 'Could not reach the server; kept in this browser for now.'; }
+  } catch (e) { dirty = true; st.textContent = 'saved in browser only'; st.title = e.status === 413 ? 'This session is too big for the server to keep (8 MB limit); kept in this browser only.' : 'Could not reach the server; kept in this browser for now.'; }
 }
 window.addEventListener('pagehide', () => { saveNow(); if (dirty) saveToServer(true); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { saveNow(); saveToServer(true); } });

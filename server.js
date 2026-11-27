@@ -73,13 +73,27 @@ function sendJSON(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// Over the limit: stop buffering but keep draining (up to DRAIN_MAX) so the client can read our 413 instead of getting a reset.
+const DRAIN_MAX = 100_000_000;
 function readBody(req, limit = 2_000_000) {
   return new Promise((resolve, reject) => {
-    let size = 0; const chunks = [];
-    req.on('data', c => { size += c.length; if (size > limit) { reject(new Error('body too large')); req.destroy(); } else chunks.push(c); });
+    let size = 0, over = false; const chunks = [];
+    req.on('data', c => {
+      size += c.length;
+      if (size > DRAIN_MAX) return req.destroy();
+      if (over) return;
+      if (size > limit) { over = true; chunks.length = 0; reject(Object.assign(new Error('body too large'), { status: 413, limit })); } else chunks.push(c);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+// A body that is too big is 413 (the client can tell and say so); anything else unreadable is a plain 400.
+function badBody(res, e, obj) {
+  if (e && e.status === 413) {
+    return sendJSON(res, 413, { error: { code: 'payload_too_large', message: `Request too large (over ${+(e.limit / 1e6).toFixed(2)} MB)` } });
+  }
+  return sendJSON(res, 400, obj);
 }
 
 function upstreamHeaders(session) {
@@ -187,7 +201,7 @@ async function maxTokensFor(model) {
 // ---------- /api/chat : streaming proxy ----------
 async function handleChat(req, res) {
   let body;
-  try { body = JSON.parse(await readBody(req, 12_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
+  try { body = JSON.parse(await readBody(req, 12_000_000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
   const model = typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL, viaOR = isOR(model), viaOG = isOG(model);
   const prefix = viaOG ? OG_PREFIX : viaOR ? OR_PREFIX : '';
   if (!(viaOG ? OG_KEY : viaOR ? OR_KEY : API_KEY)) return sendJSON(res, 500, { error: { code: 'no_api_key', message: `${keyNameFor(model)} is not set on the server (.env).` } });
@@ -345,7 +359,7 @@ async function addSearchContext(msgs, model, session, signal) {
 // (both cached, so the answer that follows reuses them). Only a summary goes back: queries, titles and hosts.
 async function handleSearch(req, res) {
   let body;
-  try { body = JSON.parse(await readBody(req, 2_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
+  try { body = JSON.parse(await readBody(req, 2_000_000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
   const msgs = (Array.isArray(body.messages) ? body.messages.slice(-12) : []).map(m => ({ role: m.role, content: textOf(m.content) }));
   const model = typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL;
   if (!searchOn() || !msgs.length || links.findURLs(lastUserText(msgs)).length) return sendJSON(res, 200, { enabled: searchOn(), search: false, queries: [] });
@@ -380,7 +394,7 @@ async function addLinkContext(msgs) {
 // says what was read, for the status line under the learner's message. Only a summary is returned, not the page text.
 async function handleLinks(req, res) {
   let body;
-  try { body = JSON.parse(await readBody(req, 200_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
+  try { body = JSON.parse(await readBody(req, 200_000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
   if (!links.enabled()) return sendJSON(res, 200, { enabled: false, links: [] });
   const results = await links.readLinks(String(body.text || '')).catch(() => []);
   sendJSON(res, 200, { enabled: true, links: results.map(links.summary) });
@@ -415,7 +429,7 @@ async function handleInflight(req, res, id) {
     return;
   }
   if (req.method === 'PUT' || req.method === 'POST') {
-    let d; try { d = JSON.parse(await readBody(req, 2_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request' } }); }
+    let d; try { d = JSON.parse(await readBody(req, 2_000_000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
     if (!d || typeof d !== 'object' || !Number.isFinite(d.at)) return sendJSON(res, 400, { error: { code: 'invalid_request' } });
     if (d.at < storedAt()) return sendJSON(res, 200, { ok: true, stale: true });
     if (d.empty) { try { fs.unlinkSync(file); } catch {} return sendJSON(res, 200, { ok: true, removed: true }); }
@@ -447,7 +461,7 @@ async function handleSessions(req, res, url) {
     return;
   }
   if (req.method === 'PUT' || req.method === 'POST') {
-    let d; try { d = JSON.parse(await readBody(req, 8_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request' } }); }
+    let d; try { d = JSON.parse(await readBody(req, 8_000_000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
     if (!d || typeof d !== 'object' || !d.lesson) return sendJSON(res, 400, { error: { code: 'invalid_request' } });
     let createdAt = d.createdAt;
     try { createdAt = JSON.parse(fs.readFileSync(file, 'utf8')).createdAt || createdAt; } catch {}
@@ -510,7 +524,7 @@ function wav(samples, sr) {
   return buf;
 }
 async function handleTTS(req, res) {
-  let body; try { body = JSON.parse(await readBody(req, 20000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request' } }); }
+  let body; try { body = JSON.parse(await readBody(req, 20000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
   const text = String(body.text || '').slice(0, 1500).trim();
   const voice = /^[a-z]{2}_[a-z]+$/.test(body.voice || '') ? body.voice : 'af_heart';
   const speed = Math.max(0.5, Math.min(2, Number(body.speed) || 1));
@@ -558,7 +572,7 @@ function handleBoardEvents(req, res, url) {
 async function handleBoardCall(req, res) {
   // JSON only: a web page cannot send this content type cross-origin without a CORS preflight, which is never granted
   if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return sendJSON(res, 415, { error: { code: 'json_only' } });
-  let body; try { body = JSON.parse(await readBody(req, 4_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
+  let body; try { body = JSON.parse(await readBody(req, 4_000_000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request', message: 'Bad JSON' } }); }
   const method = String(body.method || ''), timeout = Math.max(1000, Math.min(Number(body.timeout) || 60000, 300000));
   const b = boards.findLast(x => x.embed) || boards[boards.length - 1];
   if (!b) return sendJSON(res, 503, { error: { code: 'no_board', message: 'No board page is open.' } });
@@ -571,7 +585,7 @@ async function handleBoardCall(req, res) {
   sendJSON(res, result.ok ? 200 : 500, result);
 }
 async function handleBoardResult(req, res) {
-  let body; try { body = JSON.parse(await readBody(req, 16_000_000)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_request' } }); }
+  let body; try { body = JSON.parse(await readBody(req, 16_000_000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
   const p = pendingCalls.get(body.id);
   if (p) { clearTimeout(p.timer); pendingCalls.delete(body.id); p.resolve({ ok: !!body.ok, result: body.result, error: body.error }); }
   sendJSON(res, 200, { ok: true });
