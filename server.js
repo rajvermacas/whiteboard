@@ -429,7 +429,8 @@ async function handleInflight(req, res, id) {
   return sendJSON(res, 405, { error: { code: 'method' } });
 }
 async function handleSessions(req, res, url) {
-  let id = decodeURIComponent(url.pathname.slice('/api/sessions/'.length));
+  let id;
+  try { id = decodeURIComponent(url.pathname.slice('/api/sessions/'.length)); } catch { return sendJSON(res, 400, { error: { code: 'invalid_id' } }); }
   if (id.endsWith('/inflight')) {
     id = id.slice(0, -'/inflight'.length);
     if (!validId(id)) return sendJSON(res, 400, { error: { code: 'invalid_id' } });
@@ -578,7 +579,7 @@ async function handleBoardResult(req, res) {
 
 // ---------- static files ----------
 function serveStatic(req, res) {
-  let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  let p; try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { return sendJSON(res, 400, { error: { code: 'bad_url' } }); }
   if (p === '/') p = '/index.html';
   const file = path.normalize(path.join(PUBLIC_DIR, p));
   if (!file.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end('Forbidden'); }
@@ -600,21 +601,22 @@ const server = http.createServer(async (req, res) => {
       try { return sendJSON(res, 200, await getModels()); }
       catch (e) { return sendJSON(res, 502, { error: { code: 'upstream_error', message: String(e.message || e) }, models: [{ id: DEFAULT_MODEL, name: DEFAULT_MODEL, efforts: [] }], default: DEFAULT_MODEL }); }
     }
-    if (url.pathname === '/api/chat' && req.method === 'POST') return handleChat(req, res);
-    if (url.pathname === '/api/links' && req.method === 'POST') return handleLinks(req, res);
-    if (url.pathname === '/api/search' && req.method === 'POST') return handleSearch(req, res);
-    if (url.pathname === '/api/tts' && req.method === 'POST') return handleTTS(req, res);
+    if (url.pathname === '/api/chat' && req.method === 'POST') return await handleChat(req, res);
+    if (url.pathname === '/api/links' && req.method === 'POST') return await handleLinks(req, res);
+    if (url.pathname === '/api/search' && req.method === 'POST') return await handleSearch(req, res);
+    if (url.pathname === '/api/tts' && req.method === 'POST') return await handleTTS(req, res);
     if (url.pathname === '/api/tts/status' && req.method === 'GET') { loadTTS(); return sendJSON(res, 200, ttsStatus()); }
-    if (url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) return handleSessions(req, res, url);
+    if (url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) return await handleSessions(req, res, url);
     if (url.pathname === '/api/board/events' && req.method === 'GET') return handleBoardEvents(req, res, url);
     if (url.pathname === '/api/board/status' && req.method === 'GET') return sendJSON(res, 200, { app: 'whiteboard-teacher', boards: boards.length, embedded: boards.filter(b => b.embed).length });
-    if (url.pathname === '/api/board/call' && req.method === 'POST') return handleBoardCall(req, res);
-    if (url.pathname === '/api/board/result' && req.method === 'POST') return handleBoardResult(req, res);
+    if (url.pathname === '/api/board/call' && req.method === 'POST') return await handleBoardCall(req, res);
+    if (url.pathname === '/api/board/result' && req.method === 'POST') return await handleBoardResult(req, res);
     if (req.method === 'GET') return serveStatic(req, res);
     res.writeHead(405); res.end();
   } catch (e) {
     console.error(e);
     if (!res.headersSent) sendJSON(res, 500, { error: { code: 'server_error', message: String(e.message || e) } });
+    else if (!res.writableEnded) { try { res.end(); } catch {} }
   }
 });
 
