@@ -339,7 +339,9 @@ document.addEventListener('keydown', e => {
   // the shortcuts work everywhere except where text is typed (the chat box, the popup, the model search, dialogs' fields);
   // a focused button, checkbox or slider does not count, so clicking ⛶ or ✏️ Draw leaves Space, A/S/D, F, N, O, R, T, W and the arrows working
   const ae = document.activeElement, tag = ae && ae.tagName;
-  const typing = !!ae && (tag === 'TEXTAREA' || tag === 'SELECT' || ae.isContentEditable || (tag === 'INPUT' && !/^(button|checkbox|radio|range|color|file|submit|reset)$/.test(ae.type)) || !!ae.closest('dialog[open]'));
+  const typing = !!ae && (tag === 'TEXTAREA' || tag === 'SELECT' || ae.isContentEditable || (tag === 'INPUT' && !/^(button|checkbox|radio|range|color|file|submit|reset)$/.test(ae.type)) || !!ae.closest('dialog[open]')) || !!(e.target.closest && e.target.closest('dialog[open]'));   // (the key's own target counts too: a dialog that closes on the key has moved the focus by now)
+  // a key a dialog or field already handled (Space opening the picked lesson in Sessions, say) is not a shortcut as well
+  if (e.defaultPrevented) return;
   if (e.key === 'Escape' && !ctxMenu.hidden) { e.preventDefault(); hideCtxMenu(); return; }
   if (document.activeElement && document.activeElement.closest('.askPop')) return;   // keys typed in the popup stay in the popup
   if (e.key === 'Escape' && document.activeElement === input) { e.preventDefault(); focusBoard(); return; }
@@ -357,7 +359,7 @@ document.addEventListener('keydown', e => {
   // (before the first step exists the timeline is hidden, e.g. while the teacher is still thinking: then it is the chat's ⏸/▶, when that shows)
   const keyBtn = !$('#timeline').hidden ? $('#tlPlay') : !$('#pauseBtn').hidden ? $('#pauseBtn') : null;
   if ((k === ' ' || k === 's') && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && keyBtn) {
-    e.preventDefault(); if (ae && ae !== document.body && !ae.closest('#boardWrap')) focusBoard(); dlog(`user: ${k === ' ' ? 'space' : 'S'} on the board → ${keyBtn.id === 'tlPlay' ? 'timeline' : 'chat pause'}`, keyBtn.textContent); keyBtn.click(); return;
+    e.preventDefault(); if (ae && ae !== document.body && !ae.closest('#boardWrap')) focusBoard(); dlog(`user: ${k === ' ' ? 'space' : 'S'} on the board → ${keyBtn.id === 'tlPlay' ? 'timeline' : 'chat pause'}`, keyBtn.id === 'tlPlay' ? keyBtn.textContent : isPaused() ? '▶' : '⏸'); keyBtn.click(); return;
   }
   // Tab (outside the text fields) jumps to the chat box; Escape in the (empty or not) chat box hands the keys back to the board
   if (e.key === 'Tab' && !e.shiftKey && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); input.focus({ preventScroll: true }); return; }

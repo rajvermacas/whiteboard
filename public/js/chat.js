@@ -174,7 +174,7 @@ function updateSendBtn() {
     const held = isPaused(); pb.hidden = !scrub.playing; setIcon(pb, held ? 'play' : 'pause'); pb.classList.toggle('on', held); tip(pb, held ? 'Resume the playback' : 'Pause the playback');
   } else {
     pb.hidden = !working && !p; setIcon(pb, p ? 'play' : 'pause'); pb.classList.toggle('on', p);
-    tip(pb, p ? 'Play' : 'Pause');
+    tip(pb, (p ? 'Play' : 'Pause') + ' (Space or S)');
   }
   scheduleAutoBack();
   renderResumeBar();
