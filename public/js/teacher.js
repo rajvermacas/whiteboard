@@ -620,6 +620,7 @@ async function sendQ(q, opts, opened) {
         : code === 'not_granted' ? `The API key was rejected (${err.message}). Check ${keyNameFor(model)} in .env (just the key, nothing before it) and restart the server.`
         : code === 'no_api_key' ? `No API key on the server. Put ${keyNameFor(model)} in .env and restart.`
         : code === 'empty' ? `${modelName(model)} returned an empty answer. Try again, or pick another model.`
+        : code === 'cut_off' ? `${modelName(model)}'s answer stopped midway (the connection ended early). What arrived is shown; ask again to get the rest.`
         : code === 'stalled' ? `${modelName(model)} stopped responding mid-answer. What arrived is shown; ask again or pick another model.`
         : code === 'network' || err instanceof TypeError ? 'Cannot reach the local server. Is `npm start` still running?'
         : `Something went wrong (${code})${err.message ? ': ' + err.message : ''}`;
@@ -654,7 +655,7 @@ async function sendQ(q, opts, opened) {
 // fix = true: a tidy-up pass. Only board edits are taken (no talking, no clear, never the learner's ink), at most FIX_MAX.
 async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, onContent, fix = false, search = false }) {
   let fixes = 0;
-  let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, reasoned = 0;
+  let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, sawDone = false, reasoned = 0;
   let usage = null, firstT = 0;   // the provider's token count (last chunk) and when the reply started arriving
   // brace depth outside strings: >0 means the JSON object continues on the next line
   const depthOf = t => { let d = 0, q = false, esc = false; for (const ch of t) { if (esc) { esc = false; continue; } if (ch === '\\') { esc = true; continue; } if (ch === '"') q = !q; else if (!q) { if (ch === '{' || ch === '[') d++; else if (ch === '}' || ch === ']') d--; } } return d; };
@@ -774,7 +775,8 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       const ln = sse.slice(0, nl).trim(); sse = sse.slice(nl + 1);
       if (!ln.startsWith('data:')) continue;
       const data = ln.slice(5).trim();
-      if (!data || data === '[DONE]') continue;
+      if (data === '[DONE]') { sawDone = true; continue; }
+      if (!data) continue;
       let j; try { j = JSON.parse(data); } catch { continue; }
       if (j.error) throw Object.assign(new Error(j.error.message || 'stream error'), { code: j.error.code || j.error.type || 'stream_error' });
       if (j.model) modelApplied = j.model;
@@ -798,6 +800,8 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   if (!content.trim()) {
     throw Object.assign(new Error(''), { code: reasoned && (finish === 'length' || !finish) ? 'thinking_budget' : 'empty' });
   }
+  // a clean EOF with neither a finish reason nor [DONE] is a cut-off connection, not a finished answer (the lines that arrived are already queued)
+  if (!finish && !sawDone && !fix) { dlog('stream cut off: ended without a finish reason or [DONE]'); throw Object.assign(new Error(''), { code: 'cut_off' }); }
   // tokens/second over this reply's streaming time (a turn can stream several replies: drawing follow-up, tidy-up)
   if (turn && firstT) {
     const exact = !!(usage && usage.completion_tokens != null);
