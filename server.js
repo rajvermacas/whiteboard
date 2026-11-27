@@ -408,6 +408,19 @@ async function handleLinks(req, res) {
 // ---------- sessions: auto-saved lessons on disk (./sessions/<id>.json) ----------
 const SESS_DIR = path.join(__dirname, 'sessions');
 const validId = id => /^[\w-]{1,80}$/.test(id);
+// What the client's snapshot() sends: lesson is a plain object whose session is the id in the URL (the client saves to
+// /api/sessions/<lesson.session>), topic/source are strings if present; the rest is optional (older sessions lack tabs etc.,
+// and createdAt starts null) but when present must have the right type, and list entries must be objects (resume reads them).
+const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+const str = v => typeof v === 'string' ? v : null;
+function sessionBodyOK(d, id) {
+  if (!isObj(d) || !isObj(d.lesson) || d.lesson.session !== id) return false;
+  if (['topic', 'source'].some(k => d.lesson[k] != null && typeof d.lesson[k] !== 'string')) return false;
+  if (['chat', 'objs', 'steps', 'tabs'].some(k => d[k] != null && !(Array.isArray(d[k]) && d[k].every(isObj)))) return false;
+  if (d.chat && !d.chat.every(m => typeof m.role === 'string')) return false;
+  if (['createdAt', 'activeTab'].some(k => d[k] != null && typeof d[k] !== 'string')) return false;
+  return d.camera == null || isObj(d.camera);
+}
 function listSessions() {
   let files = [];
   try { files = fs.readdirSync(SESS_DIR).filter(f => f.endsWith('.json') && !f.endsWith('.inflight.json')); } catch { return []; }
@@ -415,9 +428,10 @@ function listSessions() {
   for (const f of files) {
     try {
       const d = JSON.parse(fs.readFileSync(path.join(SESS_DIR, f), 'utf8'));
-      out.push({ id: f.slice(0, -5), topic: (d.lesson && d.lesson.topic) || 'Untitled', source: (d.lesson && d.lesson.source) || '',
-        createdAt: d.createdAt || null, updatedAt: d.updatedAt || null,
-        objects: Array.isArray(d.objs) ? d.objs.length : 0, messages: Array.isArray(d.chat) ? d.chat.filter(m => m.role === 'user').length : 0 });
+      const D = isObj(d) ? d : {}, L = isObj(D.lesson) ? D.lesson : {};   // a bad file already on disk shows as Untitled, never breaks the list
+      out.push({ id: f.slice(0, -5), topic: str(L.topic) || 'Untitled', source: str(L.source) || '',
+        createdAt: str(D.createdAt), updatedAt: str(D.updatedAt),
+        objects: Array.isArray(D.objs) ? D.objs.length : 0, messages: Array.isArray(D.chat) ? D.chat.filter(m => isObj(m) && m.role === 'user').length : 0 });
     } catch { /* skip broken file */ }
   }
   return out.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
@@ -467,7 +481,7 @@ async function handleSessions(req, res, url) {
   }
   if (req.method === 'PUT' || req.method === 'POST') {
     let d; try { d = JSON.parse(await readBody(req, 8_000_000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
-    if (!d || typeof d !== 'object' || !d.lesson) return sendJSON(res, 400, { error: { code: 'invalid_request' } });
+    if (!sessionBodyOK(d, id)) return sendJSON(res, 400, { error: { code: 'invalid_request' } });
     let createdAt = d.createdAt;
     try { createdAt = JSON.parse(fs.readFileSync(file, 'utf8')).createdAt || createdAt; } catch {}
     const doc = { ...d, id, createdAt: createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -599,9 +613,11 @@ async function handleBoardResult(req, res) {
 // ---------- static files ----------
 function serveStatic(req, res) {
   let p; try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { return sendJSON(res, 400, { error: { code: 'bad_url' } }); }
+  if (p.includes('\0')) return sendJSON(res, 400, { error: { code: 'bad_url' } }); // fs.readFile throws synchronously on NUL
   if (p === '/') p = '/index.html';
   const file = path.normalize(path.join(PUBLIC_DIR, p));
-  if (!file.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end('Forbidden'); }
+  // directory boundary, not a bare prefix: a sibling like public-x/ also starts with the public dir's path
+  if (!file.startsWith(PUBLIC_DIR + path.sep)) { res.writeHead(403); return res.end('Forbidden'); }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Not found'); }
     res.writeHead(200, {

@@ -174,7 +174,7 @@ function tabTarget(newTab, ids) {
 function tabData(t) {
   const act = t.id === activeTab;
   return {
-    objs: act && scrub ? scrub.live.objs : [...(act ? objs : t.objs).values()].map(o => o.cmd),
+    objs: act && scrub ? scrub.live.objs : [...(act ? objs : t.objs).values()].filter(o => !o.erasing).map(o => o.cmd),
     camera: act ? (scrub ? scrub.live.camera : camera) : t.camera,
     steps: act ? steps : t.steps,
   };
