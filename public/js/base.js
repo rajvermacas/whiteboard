@@ -133,3 +133,11 @@ function roughEllipse(cx, cy, rx, ry, r, overshoot = 1.06) {
   }
   return smoothPath(pts);
 }
+// The page is going away (reload, close, navigation). Safari aborts the open fetches BEFORE pagehide, so their error
+// paths (a dropped side answer, "stream done", an error bubble) would run first and overwrite the good checkpoint
+// (inflight.js) and the saved chat with a worse one. This is set as early as beforeunload; everything that cleans up
+// after a stream, or saves, checks it. A page that stays after all (a download, a bfcache restore) lets go of it again.
+let unloading = false, unloadTimer = 0;
+window.addEventListener('beforeunload', () => { unloading = true; clearTimeout(unloadTimer); unloadTimer = setTimeout(() => { unloading = false; }, 5000); });
+window.addEventListener('pagehide', () => { unloading = true; });
+window.addEventListener('pageshow', () => { unloading = false; });

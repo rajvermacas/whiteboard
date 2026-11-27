@@ -250,7 +250,7 @@ async function askQuick(p, q) {
     else { if (maybeHandoff(item.a)) { painted = item.a.length; ad.classList.remove('thinking'); ad.innerHTML = mdToHtml(item.a); } else paint(); }
     dlog('ask popup: answered in', Math.round(performance.now() - t0), 'ms,', item.a.length, 'chars');
   } catch (e) {
-    if (ac.signal.aborted) return;
+    if (ac.signal.aborted || unloading) return;
     ad.classList.remove('thinking'); ad.classList.add('err'); ad.textContent = 'Could not answer: ' + (e.message || e);
     dlog('ask popup: failed', String(e.message || e));
   } finally {

@@ -626,6 +626,7 @@ async function sendQ(q, opts, opened) {
     if (!myAbort.signal.aborted && run.gen === gen)
       await tidyPass({ question: q, answer, model, run, turn, signal: myAbort.signal });
   } catch (err) {
+    if (unloading) return;   // Safari aborts the fetch as the page goes away: not an error, not a Stop (base.js)
     failed = true;
     if (turn.held) { dropHeld(turn); if (err.name === 'AbortError' || myAbort.signal.aborted) return; }
     if (err.name === 'AbortError' || myAbort.signal.aborted) { if (steering) am.interrupted = true; if (turn.thinking) { body.classList.remove('thinking'); body.textContent = '(stopped)'; turn.thinking = false; } }
@@ -646,6 +647,7 @@ async function sendQ(q, opts, opened) {
     }
   } finally {
     clearInterval(thinkTimer);
+    if (unloading) return;   // the checkpoint written as the page closes must still say this answer was cut off, or waiting
     if (!failed && !myAbort.signal.aborted) showHeld(true);   // still waiting its turn: the final time and tokens stay
     if (turn.counted) activeStreams = Math.max(0, activeStreams - 1);
     streaming = activeStreams > 0; turn.streamDone = true;
