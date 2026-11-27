@@ -468,7 +468,7 @@ sessDlg.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey || !lis.length) return;
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); pickSession(sessPick + (e.key === 'ArrowDown' ? 1 : -1)); return; }
   if (!li) return;
-  if (e.key === ' ' || (e.key === 'Enter' && !e.target.closest('button'))) { e.preventDefault(); dlog('user: sessions list', e.key === ' ' ? 'Space' : '↵', '→ open', li.dataset.id); li.querySelector('.info').click(); return; }
+  if ((e.key === ' ' && !e.shiftKey) || (e.key === 'Enter' && !e.target.closest('button'))) { e.preventDefault(); dlog('user: sessions list', e.key === ' ' ? 'Space' : '↵', '→ open', li.dataset.id); li.querySelector('.info').click(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); dlog('user: sessions list', e.key, '→ delete?', li.dataset.id); li.querySelector('button:last-child').click(); }
 });
 $('#sessionsBtn').onclick = openSessions;
