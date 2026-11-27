@@ -316,12 +316,14 @@ function saveSoon() {
   clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 300);
   clearTimeout(serverTimer); serverTimer = setTimeout(saveToServer, 1200);
 }
+let localSaved = true;   // did the last browser-side write fit? (an 8 MB+ session usually busts the localStorage quota)
 function saveNow() {
   if (!lesson || untouched()) return;
   try {
     localStorage.setItem(LS_CURRENT, lesson.session);
     localStorage.setItem('wbt.s.' + lesson.session, JSON.stringify(snapshot()));
-  } catch { /* storage full or blocked: the server copy still works */ }
+    localSaved = true;
+  } catch { localSaved = false; /* storage full or blocked: the server copy still works */ }
 }
 const untouched = () => lesson && lesson.autoName && !chat.some(m => m.role === 'user') && !objs.size;
 async function saveToServer(keepalive = false) {
@@ -330,9 +332,14 @@ async function saveToServer(keepalive = false) {
   const st = $('#saveState');
   try {
     const r = await fetch('/api/sessions/' + encodeURIComponent(lesson.session), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive });
-    if (!r.ok) throw new Error(r.status);
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw Object.assign(new Error(r.status), { status: r.status, limit: j.error && j.error.limit }); }
     st.textContent = 'saved'; st.title = 'Auto-saved ' + new Date().toLocaleTimeString();
-  } catch { dirty = true; st.textContent = 'saved in browser only'; st.title = 'Could not reach the server; kept in this browser for now.'; }
+  } catch (e) {
+    dirty = true;
+    const big = e.status === 413, mb = e.limit ? ` (${+(e.limit / 1e6).toFixed(2)} MB limit)` : '';
+    if (localSaved) { st.textContent = 'saved in browser only'; st.title = big ? 'This session is too big for the server to keep' + mb + '; kept in this browser only.' : 'Could not reach the server; kept in this browser for now.'; }
+    else { st.textContent = 'not saved'; st.title = big ? 'Not saved: this session is too big for the server' + mb + ' and for this browser\'s storage. Clear some of it (delete messages or drawings) to save again.' : 'Not saved: could not reach the server and this browser\'s storage is full.'; }
+  }
 }
 window.addEventListener('pagehide', () => { saveNow(); if (dirty) saveToServer(true); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { saveNow(); saveToServer(true); } });
