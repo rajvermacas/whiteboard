@@ -360,9 +360,11 @@ async function eraseIds(ids, run, animate, now = clock) {
   for (const k of refit) if (objs.has(k)) rebuild(k);
   updateEmpty(); drawSelection(); updateSelectionUI(); saveSoon();
 }
-async function clearBoard(run, animate) {
-  if (animate && !instantMode() && objs.size && run.gen === gen) {
-    const v = viewRect(), gs = [...objs.values()].map(o => o.g);
+// keepInk: the model's clear wipes the teacher's drawings only. Only what was on the board when it started goes, so a stroke drawn meanwhile stays.
+async function clearBoard(run, animate, keepInk = false) {
+  const ids = [...objs].filter(([, o]) => !(keepInk && o.cmd.cmd === 'ink')).map(([k]) => k);
+  if (animate && !instantMode() && ids.length && run.gen === gen) {
+    const v = viewRect(), gs = ids.map(k => objs.get(k).g);
     await tween(800 / speed(), t => {
       const zig = Math.abs(((t * 4) % 2) - 1);
       placeIcon(eraser, v.x + v.width * t, v.y + v.height * (0.15 + 0.7 * zig));
@@ -370,8 +372,7 @@ async function clearBoard(run, animate) {
     }, run);
     hideIcon(eraser);
   }
-  for (const o of objs.values()) o.g.remove();
-  objs.clear(); selection.clear();
+  for (const k of ids) { const o = objs.get(k); if (o) { o.g.remove(); objs.delete(k); } selection.delete(k); }
   updateEmpty(); drawSelection(); updateSelectionUI(); saveSoon();
 }
 function anchorShift(c, dx, dy) {
@@ -421,7 +422,7 @@ async function updateCmd(c, run, animate) {
 
 async function execCommand(c, run, animate) {
   switch (c.cmd) {
-    case 'clear': return clearBoard(run, animate);
+    case 'clear': return clearBoard(run, animate, c.keepInk);
     case 'wait': if (animate && run.gen === gen) await sleep(c.ms / speed()); return;
     case 'erase': {
       let ids = c.ids.slice();

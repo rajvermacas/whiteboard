@@ -32,16 +32,17 @@ function prefetchAhead(current = lastSay && (!lastSay.run || lastSay.run.gen ===
   Voice.prefetch(current && current.voice ? [current.voice, ...next] : next);
 }
 // The learner's ink is theirs: nothing the model sends may erase, move, restyle or redraw it (it may still point at it or sit near it).
-// clear wipes only the teacher's drawings. Returns the command to run on the board now on screen, or null to skip it.
+// clear wipes only the teacher's drawings (keepInk). Works on the board now loaded in the globals (runQueue switches to the turn's tab
+// first; the replay in timeline.js calls it step by step). Returns the command to run, or null to skip it.
 const isInk = id => { const o = objs.get(id); return !!o && o.cmd.cmd === 'ink'; };
 function guardInk(c) {
-  if (c.cmd === 'clear') { const ids = [...objs.keys()].filter(id => !isInk(id)); return ids.length === objs.size ? c : ids.length ? { cmd: 'erase', ids } : null; }
+  if (c.cmd === 'clear') return { ...c, keepInk: true };   // the camera and the animation stay as for a plain clear
   if (c.cmd === 'erase') {
     const ids = c.ids.filter(id => !isInk(id));
     if (c.area && c.area.length === 4) { const [x, y, w, h] = c.area, a = { x, y, width: w, height: h }; for (const [k, o] of objs) if (!isInk(k) && overlaps(a, bbOf(o), 0)) ids.push(k); }
     return ids.length ? { cmd: 'erase', ids } : null;
   }
-  if (['move', 'update', 'animate'].includes(c.cmd) || (c.id && builders[c.cmd])) return isInk(c.id) ? null : c;   // a drawing reusing an ink id would replace it
+  if (['move', 'update'].includes(c.cmd) || (c.id && builders[c.cmd])) return isInk(c.id) ? null : c;   // a drawing reusing an ink id would replace it
   return c;
 }
 async function runQueue() {
@@ -88,7 +89,7 @@ async function runQueue() {
     if (it.turn.thinking) { const bd = it.turn.el.querySelector('.body'); bd.classList.remove('thinking'); bd.textContent = ''; it.turn.thinking = false; renderTeaching(); }
     const safe = guardInk(it.cmd);
     if (!safe) { dlog('left the learner\'s ink alone, skipped', it.cmd.cmd, it.cmd.id || (it.cmd.ids || []).join()); continue; }
-    it.cmd = safe;
+    it.cmd = safe; if (it.fix) it.turn.fixes = (it.turn.fixes || 0) + 1;   // a tidy fix counts once it is actually applied
     const before = it.cmd.id;
     queueBusy = true;
     const nextSay = queue.findIndex(x => x.say != null);
@@ -740,7 +741,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
             const inkOf = id => withTab(turn.tab || activeTab, () => isInk(id));   // the answer's own board
             if (touches.some(inkOf)) { dlog('tidy: left the learner\'s ink alone', c.id); continue; }
             if (c.cmd === 'erase') c.ids = c.ids.filter(id => !inkOf(id));
-            fixes++; turn.fixes = (turn.fixes || 0) + 1; enqueue({ cmd: c, run, turn, fix: true }); continue;
+            fixes++; enqueue({ cmd: c, run, turn, fix: true }); continue;
           }
           if (turn.cmds >= limitsOf(turn).cmds) { dlog('over the per-answer command limit, skipped', it.cmd); continue; }
           const c = normalize(it); if (!c) { dlog('unknown or invalid command skipped', JSON.stringify(it).slice(0, 160)); continue; }
