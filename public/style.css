@@ -44,6 +44,13 @@ button { font: inherit; cursor: pointer; }
   .tools button { padding: 5px 7px; }
   #zoomPct { min-width: 46px; }
 }
+/* phones: the tool buttons fill the whole bar and squeeze the title to 0px, so the title gets its own row (ellipsized) and the tools the row below */
+@media (max-width: 520px) {
+  #toolbar { flex-wrap: wrap; row-gap: 2px; }
+  #toolbar .title { flex: 1 1 100%; max-width: 100%; min-height: 36px; }
+  .tools { margin-left: 0; width: 100%; flex-wrap: wrap; justify-content: flex-start; gap: 2px; }
+  .tools button { padding: 5px 6px; }
+}
 
 /* ---------- chat ---------- */
 .chatHead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid #eceef1; gap: 6px; }
