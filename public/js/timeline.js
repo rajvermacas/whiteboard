@@ -328,15 +328,17 @@ function saveNow() {
   } catch { localSaved = false; /* storage full or blocked: the server copy still works */ }
 }
 const untouched = () => lesson && lesson.autoName && !chat.some(m => m.role === 'user') && !objs.size;
+let saveCtl = null;   // the save in flight; deleting its lesson aborts it so it cannot re-create the file
 async function saveToServer(keepalive = false) {
   if (!lesson || !dirty || untouched()) return;
   dirty = false;
-  const st = $('#saveState');
+  const st = $('#saveState'), ac = saveCtl = new AbortController();
   try {
-    const r = await fetch('/api/sessions/' + encodeURIComponent(lesson.session), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive });
+    const r = await fetch('/api/sessions/' + encodeURIComponent(lesson.session), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive, signal: ac.signal });
     if (!r.ok) { const j = await r.json().catch(() => ({})); throw Object.assign(new Error(r.status), { status: r.status, limit: j.error && j.error.limit }); }
     st.textContent = 'saved'; st.title = 'Auto-saved ' + new Date().toLocaleTimeString();
   } catch (e) {
+    if (ac.signal.aborted) return;   // the lesson was deleted meanwhile
     dirty = true;
     const big = e.status === 413, mb = e.limit ? ` (${+(e.limit / 1e6).toFixed(2)} MB limit)` : '';
     if (localSaved) { st.textContent = 'saved in browser only'; st.title = big ? 'This session is too big for the server to keep' + mb + '; kept in this browser only.' : 'Could not reach the server; kept in this browser for now.'; }
@@ -350,6 +352,12 @@ function saveSettings() { try { localStorage.setItem(LS_SET, JSON.stringify(sett
 function resetBoard() {
   for (const o of objs.values()) o.g.remove();
   objs.clear(); selection.clear(); updateEmpty(); drawSelection(); updateSelectionUI();
+}
+// nothing of the lesson left: no answer playing, steps, timeline, question tree, look-back, board or chat (the caller sets `lesson`)
+function clearLesson() {
+  stopAll(); liveTurn = null; if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline();
+  clearTimeout(suggestTimer); if (suggestAbort) suggestAbort.abort();   // resetBoard re-rendered the chips: no suggestions for what was cleared
+  clearTimeout(bannerTimer); $('#backBanner').hidden = true; $('#tlLabel').textContent = '';
 }
 function applySession(d) {
   if (lesson && d.lesson && lesson.session !== d.lesson.session) inflightDrop(lesson.session);   // leaving it: nothing in progress any more
@@ -444,9 +452,17 @@ async function openSessions() {
     del.onclick = async () => {
       sessPick = Math.max(0, [...ul.children].indexOf(li) - 1);   // after deleting, the one above it is picked
       if (!confirm(`Delete “${it.topic}”? This cannot be undone.`)) return;
+      // the current lesson is cleared first: an answer still teaching stops, and no late auto-save or checkpoint can bring it back
+      if (lesson && it.id === lesson.session) {
+        // (an auto-save PUT this tab already sent is aborted; one the server has already received, or another tab's, is not covered)
+        inflightDrop(it.id); closeAllPops(); clearLesson(); lesson = null; dirty = false; clearTimeout(saveTimer); clearTimeout(serverTimer);
+        if (saveCtl) saveCtl.abort();
+        $('#saveState').textContent = ''; $('#saveState').title = '';
+        try { localStorage.removeItem(LS_CURRENT); } catch {}
+        camera = { x: 0, y: 0, scale: defaultScale() }; fit(false); renderTitle(); renderChat();
+      }
       try { await fetch('/api/sessions/' + encodeURIComponent(it.id), { method: 'DELETE' }); } catch {}
       try { localStorage.removeItem('wbt.s.' + it.id); } catch {}
-      if (lesson && it.id === lesson.session) { stopAll(); resetTabs(); resetBoard(); lesson = null; chat = []; try { localStorage.removeItem(LS_CURRENT); } catch {} renderTitle(); renderChat(); }
       openSessions();
     };
     li.append(info, open, del); li.dataset.id = it.id; ul.appendChild(li);
