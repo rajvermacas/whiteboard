@@ -336,7 +336,8 @@ function removeNow(id, withDeps = true) {
   o.g.remove(); objs.delete(id); selection.delete(id); badgesSoon();
   if (withDeps) for (const k of hardDependentsOf(id)) removeNow(k, true);
 }
-async function eraseIds(ids, run, animate) {
+// now: the learner's own erase passes the wall clock, so it is not frozen by the lesson's pause (the teacher's stays on clock)
+async function eraseIds(ids, run, animate, now = clock) {
   const all = new Set();
   const add = id => { if (!objs.has(id) || all.has(id)) return; all.add(id); hardDependentsOf(id).forEach(add); };
   ids.forEach(add);
@@ -346,11 +347,12 @@ async function eraseIds(ids, run, animate) {
     for (const id of all) { const x = bbOf(objs.get(id)); b = b ? { x: Math.min(b.x, x.x), y: Math.min(b.y, x.y), width: Math.max(b.x + b.width, x.x + x.width) - Math.min(b.x, x.x), height: Math.max(b.y + b.height, x.y + x.height) - Math.min(b.y, x.y) } : x; }
     await ensureVisible(b, run);
     const gs = [...all].map(id => objs.get(id).g);
+    for (const id of all) objs.get(id).erasing = true;   // fading out: a save or look-back snapshot taken now must not keep it
     await tween(Math.min(900, 380 + b.width) / speed(), t => {
       const zig = Math.abs(((t * 3) % 2) - 1); // zigzag across the width
       placeIcon(eraser, b.x + b.width * (t * 3 % 2 < 1 ? zig : zig), b.y + b.height * t);
       gs.forEach(g => g.style.opacity = 1 - t);
-    }, run);
+    }, run, null, now);
     hideIcon(eraser);
   }
   const refit = new Set(); for (const id of all) for (const k of dependentsOf(id)) if (!all.has(k)) refit.add(k);

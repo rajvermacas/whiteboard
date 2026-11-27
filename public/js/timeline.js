@@ -39,7 +39,7 @@ async function replay() {
 async function showAttach() {
   const ids = [...inkSinceAsk].filter(id => objs.has(id));
   const box = $('#attach');
-  if (!ids.length || penMode) { box.hidden = true; input.placeholder = 'Ask about…'; return; }
+  if (!ids.length || penMode) { box.hidden = true; $('#attachImg').removeAttribute('src'); input.placeholder = 'Ask about…'; return; }
   box.hidden = false; input.placeholder = 'Ask about your drawing…';
   try { const reg = inkRegion(ids); if (reg) $('#attachImg').src = await boardImage(reg); } catch (e) { dlog('thumbnail failed', String(e)); }
 }
@@ -124,7 +124,7 @@ function answerNo(i) { const keys = []; for (let j = 0; j <= i; j++) { const t =
 
 function enterScrub() {
   if (scrub) return;
-  scrub = { i: -1, applied: -1, token: 0, live: { objs: [...objs.values()].map(o => cloneCmd(o.cmd)), camera: { ...camera } }, playing: false };
+  scrub = { i: -1, applied: -1, token: 0, live: { objs: [...objs.values()].filter(o => !o.erasing).map(o => cloneCmd(o.cmd)), camera: { ...camera } }, playing: false };
   resetBoard();   // the live objects are saved above; showStep builds the board of the step from nothing (else later steps' drawings stay on it)
   document.body.classList.add('scrubbing');
 }
@@ -328,15 +328,17 @@ function saveNow() {
   } catch { localSaved = false; /* storage full or blocked: the server copy still works */ }
 }
 const untouched = () => lesson && lesson.autoName && !chat.some(m => m.role === 'user') && !objs.size;
+let saveCtl = null;   // the save in flight; deleting its lesson aborts it so it cannot re-create the file
 async function saveToServer(keepalive = false) {
   if (!lesson || !dirty || untouched()) return;
   dirty = false;
-  const st = $('#saveState');
+  const st = $('#saveState'), ac = saveCtl = new AbortController();
   try {
-    const r = await fetch('/api/sessions/' + encodeURIComponent(lesson.session), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive });
+    const r = await fetch('/api/sessions/' + encodeURIComponent(lesson.session), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive, signal: ac.signal });
     if (!r.ok) { const j = await r.json().catch(() => ({})); throw Object.assign(new Error(r.status), { status: r.status, limit: j.error && j.error.limit }); }
     st.textContent = 'saved'; st.title = 'Auto-saved ' + new Date().toLocaleTimeString();
   } catch (e) {
+    if (ac.signal.aborted) return;   // the lesson was deleted meanwhile
     dirty = true;
     const big = e.status === 413, mb = e.limit ? ` (${+(e.limit / 1e6).toFixed(2)} MB limit)` : '';
     if (localSaved) { st.textContent = 'saved in browser only'; st.title = big ? 'This session is too big for the server to keep' + mb + '; kept in this browser only.' : 'Could not reach the server; kept in this browser for now.'; }
@@ -351,6 +353,12 @@ function resetBoard() {
   for (const o of objs.values()) o.g.remove();
   objs.clear(); selection.clear(); updateEmpty(); drawSelection(); updateSelectionUI();
 }
+// nothing of the lesson left: no answer playing, steps, timeline, question tree, look-back, board or chat (the caller sets `lesson`)
+function clearLesson() {
+  stopAll(); liveTurn = null; if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline(); clearAttachments();
+  clearTimeout(suggestTimer); if (suggestAbort) suggestAbort.abort();   // resetBoard re-rendered the chips: no suggestions for what was cleared
+  clearTimeout(bannerTimer); $('#backBanner').hidden = true; $('#tlLabel').textContent = '';
+}
 function applySession(d) {
   if (lesson && d.lesson && lesson.session !== d.lesson.session) inflightDrop(lesson.session);   // leaving it: nothing in progress any more
   closeAllPops();
@@ -358,6 +366,7 @@ function applySession(d) {
   steps = Array.isArray(d.steps) ? d.steps : (d.objs && d.objs.length ? [{ say: '', by: 'teacher', cmds: d.objs.map(c => ({ ...c, _placed: true })), t: 'base' }] : []);
   lesson = d.lesson; sessionCreatedAt = d.createdAt || new Date().toISOString();
   chat = Array.isArray(d.chat) ? d.chat : [];
+  clearAttachments();   // after the swap, so the chips are not built from the old chat
   for (const raw of d.objs || []) {
     if (!raw || !builders[raw.cmd]) continue;
     const c = normalizeShape(raw.cmd, raw, { cmd: raw.cmd, id: raw.id });
@@ -444,9 +453,17 @@ async function openSessions() {
     del.onclick = async () => {
       sessPick = Math.max(0, [...ul.children].indexOf(li) - 1);   // after deleting, the one above it is picked
       if (!confirm(`Delete “${it.topic}”? This cannot be undone.`)) return;
+      // the current lesson is cleared first: an answer still teaching stops, and no late auto-save or checkpoint can bring it back
+      if (lesson && it.id === lesson.session) {
+        // (an auto-save PUT this tab already sent is aborted; one the server has already received, or another tab's, is not covered)
+        inflightDrop(it.id); closeAllPops(); clearLesson(); lesson = null; dirty = false; clearTimeout(saveTimer); clearTimeout(serverTimer);
+        if (saveCtl) saveCtl.abort();
+        $('#saveState').textContent = ''; $('#saveState').title = '';
+        try { localStorage.removeItem(LS_CURRENT); } catch {}
+        camera = { x: 0, y: 0, scale: defaultScale() }; fit(false); renderTitle(); renderChat();
+      }
       try { await fetch('/api/sessions/' + encodeURIComponent(it.id), { method: 'DELETE' }); } catch {}
       try { localStorage.removeItem('wbt.s.' + it.id); } catch {}
-      if (lesson && it.id === lesson.session) { stopAll(); resetTabs(); resetBoard(); lesson = null; chat = []; try { localStorage.removeItem(LS_CURRENT); } catch {} renderTitle(); renderChat(); }
       openSessions();
     };
     li.append(info, open, del); li.dataset.id = it.id; ul.appendChild(li);
@@ -468,7 +485,7 @@ sessDlg.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey || !lis.length) return;
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); pickSession(sessPick + (e.key === 'ArrowDown' ? 1 : -1)); return; }
   if (!li) return;
-  if (e.key === ' ' || (e.key === 'Enter' && !e.target.closest('button'))) { e.preventDefault(); dlog('user: sessions list', e.key === ' ' ? 'Space' : '↵', '→ open', li.dataset.id); li.querySelector('.info').click(); return; }
+  if ((e.key === ' ' && !e.shiftKey) || (e.key === 'Enter' && !e.target.closest('button'))) { e.preventDefault(); dlog('user: sessions list', e.key === ' ' ? 'Space' : '↵', '→ open', li.dataset.id); li.querySelector('.info').click(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); dlog('user: sessions list', e.key, '→ delete?', li.dataset.id); li.querySelector('button:last-child').click(); }
 });
 $('#sessionsBtn').onclick = openSessions;
