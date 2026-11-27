@@ -104,8 +104,8 @@ async function restoreInflight() {
     for (const f of d.forks || []) parkIt(f, f.why || 'look', f.say, !!f.wasPaused, !!f.holdPause);
     if (d.live) parkIt(d.live, 'reload', d.live.say, true);
     // the top fork is what ▶ plays after a reload: it holds nothing (the ones below keep their saved hold)
-    if (forks.length) forks[forks.length - 1].holdPause = false;
     parked = forks[forks.length - 1] || null;
+    if (parked) parked.holdPause = false;
     if (parked) liveTurn = parked.turn;
     renderChat();   // with the words the restored answers had said
     // each restored answer owns its bubble again, so ▶ carries on in it
