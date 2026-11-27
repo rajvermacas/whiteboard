@@ -617,7 +617,7 @@ async function sendQ(q, opts, opened) {
         { role: 'assistant', content: r1.content.slice(0, 6000) || '(no answer)' },
         { role: 'user', content: withTab(turn.tab, () => boardNow()) + 'That was too wordy for a whiteboard. Now SHOW it: add 10-25 drawing commands (icons, tokens, boxes, arrows, frames, braces, schedule, graph…) laid out with "near" next to what is already on the board. Labels of 1-4 words, no write sentences, at most one short say line. Do not repeat what you already said.' });
       drawing = true;
-      const r2 = await streamAnswer(follow, opts);
+      const r2 = await streamAnswer(follow, { ...opts, followUp: true });
       modelApplied = r2.model || modelApplied;
       answer += '\n' + r2.content;
     }
@@ -673,9 +673,9 @@ async function sendQ(q, opts, opened) {
 
 // One streamed Chat Completions call. Say lines and board commands are queued as each line completes.
 // fix = true: a tidy-up pass. Only board edits are taken (no talking, no clear, never the learner's ink), at most FIX_MAX.
-async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, onContent, fix = false, search = false }) {
+async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, onContent, fix = false, search = false, followUp = false }) {
   let fixes = 0;
-  let content = '', partial = '', jsonBuf = null, modelApplied = null, finish = null, ended = false, reasoned = 0;
+  let content = '', partial = '', jsonBuf = null, strays = 0, proseNoted = false, modelApplied = null, finish = null, ended = false, reasoned = 0;
   let usage = null, firstT = 0;   // the provider's token count (last chunk) and when the reply started arriving
   // brace depth outside strings: >0 means the JSON object continues on the next line
   const depthOf = t => { let d = 0, q = false, esc = false; for (const ch of t) { if (esc) { esc = false; continue; } if (ch === '\\') { esc = true; continue; } if (ch === '"') q = !q; else if (!q) { if (ch === '{' || ch === '[') d++; else if (ch === '}' || ch === ']') d--; } } return d; };
@@ -729,6 +729,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       const items = Array.isArray(obj) ? obj : [obj];
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
+        if (turn && (it.say != null || it.cmd || it.type || it.op)) turn.jsonSeen = true;   // a plan line alone does not count: the model may still answer in prose
         if (typeof it.plan === 'string') dlog('plan:', it.plan.slice(0, 200));
         if (!fix && it.plan && typeof it.plan === 'object' && typeof it.plan.depth === 'string') applyPlan(turn, it.plan);
         if (!fix && Array.isArray(it.next)) { const nx = it.next.map(x => clip(x, 70)).filter(Boolean).slice(0, 4); if (nx.length) turn.next = nx; }
@@ -757,6 +758,9 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     } else {
       jsonBuf = null;
       if (fix) return;
+      // once a say/cmd line has parsed (or in the forced drawing follow-up, which asks for JSON), prose is a stray; before that it is the fallback for models that ignore the format
+      if ((turn && turn.jsonSeen) || followUp) { if (++strays <= 3) dlog('dropped a plain-text line in a JSON Lines answer', JSON.stringify(line.slice(0, 60))); return; }
+      if (!proseNoted) { proseNoted = true; dlog('plain text before any JSON line: the model is not following the JSON Lines format'); }
       if (!sayable(line)) { dlog('dropped a stray line', JSON.stringify(line.slice(0, 40))); return; }   // e.g. the "}" of {"say":"…"\n}
       const t = trimSay(line.replace(/^\s*(say:|assistant:)\s*/i, '').slice(0, 1200));
       keepLine(JSON.stringify({ say: t }));
@@ -812,7 +816,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         while ((k = partial.indexOf('\n')) >= 0) { handleLine(partial.slice(0, k)); partial = partial.slice(k + 1); }
       }
     }
-    if (done) { dlog('stream end', lab(turn), bytes, 'bytes in', ((Date.now() - t0) / 1000).toFixed(1) + 's', 'finish', finish || '-'); break; }
+    if (done) { dlog('stream end', lab(turn), bytes, 'bytes in', ((Date.now() - t0) / 1000).toFixed(1) + 's', 'finish', finish || '-'); if (strays > 3) dlog('dropped', strays, 'plain-text lines in all'); break; }
   }
   if (partial.trim()) handleLine(partial);
   if (jsonBuf) { const b = jsonBuf; jsonBuf = null; try { handleLine(b); } catch {} }
