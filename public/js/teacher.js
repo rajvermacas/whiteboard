@@ -383,6 +383,10 @@ const DEPTH_LIMITS = {
   deep:    { cmds: 170, writes: 9, minPics: 6 },
 };
 const limitsOf = turn => DEPTH_LIMITS[turn.depth] || DEPTH_LIMITS.explain;
+// No plan line (the model forgot it, or a short side answer skipped it): size the "show it" follow-up by how much was
+// actually said, not by a guessed "explain". A few short sentences is a crisp answer, never forced into a big drawing.
+const SHORT_SAY = 400;
+const depthOf = turn => turn.depth || ((turn.said || 0) <= SHORT_SAY ? 'quick' : 'explain');   // turn.said: said as it streams in (turn.text is only typed later)
 function applyPlan(turn, plan) {
   const depth = ['quick', 'explain', 'deep'].includes(plan.depth) ? plan.depth : 'explain';
   turn.depth = depth;
@@ -585,8 +589,9 @@ async function sendQ(q, opts, opened) {
     modelApplied = r1.model;
     let answer = r1.content;
     // The teacher must teach by drawing. If the answer was mostly talk, ask once for the picture.
-    if ((turn.pics || 0) < limitsOf(turn).minPics && !myAbort.signal.aborted && run.gen === gen) {
-      dlog(`a ${turn.depth || 'explain'} answer had only`, turn.pics || 0, 'pictures: asking for a drawing');
+    const shape = depthOf(turn);
+    if ((turn.pics || 0) < DEPTH_LIMITS[shape].minPics && !myAbort.signal.aborted && run.gen === gen) {
+      dlog(`a ${shape} answer had only`, turn.pics || 0, 'pictures: asking for a drawing');
       if (turn.thinking) { body.textContent = '✎ Drawing…'; }
       const follow = messages.concat(
         { role: 'assistant', content: r1.content.slice(0, 6000) || '(no answer)' },
@@ -672,6 +677,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   const put = item => {
     if (fix) { enqueue(item); return; }
     if (item.say != null) {
+      if (turn) turn.said = (turn.said || 0) + item.say.length;
       flushBeat();
       beat = { say: item, cmds: [], timer: setTimeout(flushBeat, BEAT_WAIT_MS) };
       prefetchAhead(undefined, item.voice);   // voice it while its drawing streams in
