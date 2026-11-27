@@ -106,6 +106,8 @@ async function restoreInflight() {
     parked = forks[forks.length - 1] || null;
     if (parked) liveTurn = parked.turn;
     renderChat();   // with the words the restored answers had said
+    // each restored answer owns its bubble again, so ▶ carries on in it (chat[i] is the i-th bubble)
+    for (const f of forks) { const i = chat.indexOf(f.turn.msg); if (i >= 0 && msgBox.children[i]) f.turn.el = msgBox.children[i]; }
     // side answers that were waiting: they come in at a sentence once the lesson plays again
     for (const h of d.held || []) {
       if (!h.user) continue;

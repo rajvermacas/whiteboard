@@ -257,8 +257,10 @@ function continueParked() {
   liveTurn = t;                                      // pausing it again and asking forks it again
   if (!t.streamDone) abortCtl = t.abort;
   // nothing came in between (it was only set aside to look back, or to switch tabs): carry on in the same bubble.
-  // Only when a side answer sits in between does it need a new bubble saying where it picks up again
-  if (t.el && t.el.isConnected && t.el === msgBox.lastElementChild) dlog('back to', lab(t), ': same bubble (nothing in between)');
+  // Only when a side answer sits in between does it need a new bubble saying where it picks up again (a system note,
+  // like the one after a reload, or a question nobody answered yet is not an answer: it does not count)
+  let between = false; if (t.el && t.el.isConnected) for (let e = t.el.nextElementSibling; e; e = e.nextElementSibling) if (e.classList.contains('assistant')) between = true;
+  if (t.el && t.el.isConnected && !between) dlog('back to', lab(t), ': same bubble (nothing in between)');
   else {
   t.el = bubble({ role: 'assistant', text: '', meta: '', tab: t.tab, tabTitle: tabTitle(t.tab) });
   const contEl = document.createElement('span'); contEl.className = 'cont'; contEl.textContent = `↩ back to where we left off${p.say ? `: “${p.say.slice(0, 60)}${p.say.length > 60 ? '…' : ''}”` : ''}`; t.el.insertBefore(contEl, t.el.firstChild);
