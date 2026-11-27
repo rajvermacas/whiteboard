@@ -695,7 +695,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   let beat = null;
   const flushBeat = () => {
     if (!beat) return;
-    const b = beat; beat = null; clearTimeout(b.timer);
+    const b = beat; beat = null; clearTimeout(b.timer); if (turn && turn.beat === b) turn.beat = null;
     if (!b.cmds.some(x => PICTURE.has(x.cmd.cmd) && x.cmd.cmd !== 'highlight')) dlog('thin beat: a line with no new picture', JSON.stringify(b.say.say.slice(0, 60)));
     enqueue(b.say); b.cmds.forEach(enqueue);
   };
@@ -704,7 +704,8 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     if (item.say != null) {
       if (turn) turn.saidLines = (turn.saidLines || 0) + 1;
       flushBeat();
-      beat = { say: item, cmds: [], timer: setTimeout(flushBeat, BEAT_WAIT_MS) };
+      beat = { say: item, cmds: [], timer: setTimeout(flushBeat, BEAT_WAIT_MS), sayLine: turn && turn.got && turn.got[turn.got.length - 1] };
+      if (turn) turn.beat = beat;   // the unplayed beat is saved with the answer (inflight.js): its lines are already counted in turn.got
       prefetchAhead(undefined, item.voice);   // voice it while its drawing streams in
     } else if (beat) beat.cmds.push(item);
     else enqueue(item);
@@ -821,7 +822,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   }
   if (partial.trim()) handleLine(partial);
   if (jsonBuf) { const b = jsonBuf; jsonBuf = null; try { handleLine(b); } catch {} }
-  } finally { if (signal && signal.aborted) { if (beat) clearTimeout(beat.timer); beat = null; } else flushBeat(); }
+  } finally { if (signal && signal.aborted) { if (beat) clearTimeout(beat.timer); beat = null; if (turn) turn.beat = null; } else flushBeat(); }
   if (!content.trim()) {
     throw Object.assign(new Error(''), { code: reasoned && finish === 'length' ? 'thinking_budget' : !finish && !ended && !fix ? 'cut_off' : 'empty' });
   }
