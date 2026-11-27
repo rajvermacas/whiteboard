@@ -76,7 +76,7 @@ window.Voice = (() => {
     try {
       for (let i = 0; i < 900; i++) {
         const r = await fetch('/api/tts/status'); const j = await r.json();
-        if (j.state === 'ready') { serverState = 'ready'; setStatus('ready', ''); break; }
+        if (j.state === 'ready') { serverState = 'ready'; failStreak = 0; narrErr = false; setStatus('ready', ''); break; }   // a healthy server check also clears a narration error
         if (j.state === 'unavailable' || j.state === 'error') {
           serverState = 'unavailable'; log('server voice unavailable:', j.error);
           if (cfg.mode === 'kokoro') setStatus('error', j.state === 'unavailable'
@@ -172,7 +172,7 @@ window.Voice = (() => {
       log(e.timeout ? 'kokoro audio not ready after ' + limit + 'ms: this line stays silent' : 'kokoro failed: ' + e.message + ' (this line stays silent)');
       if (myEpoch !== epoch) return none;   // stopped, Off or replaced meanwhile: a cancelled line is not a failure
       // one failure may be a blip; two in a row say the voice is down, so say so (the lesson still goes on in silence)
-      if (++failStreak >= 2 && !narrErr) { narrErr = true; setStatus('error', 'Narration failed: the voice server keeps returning errors (' + e.message + '). The lesson goes on without sound.'); }
+      if (++failStreak >= 2 && !narrErr) { narrErr = true; setStatus('error', e.timeout ? 'Narration failed: the voice is taking too long to make audio. The lesson goes on without sound.' : 'Narration failed: could not make audio for recent lines (' + e.message + '). The lesson goes on without sound.'); }
       return silent(h.text);
     }
     if (myEpoch !== epoch) return none;
@@ -231,7 +231,7 @@ window.Voice = (() => {
   function describe() {
     if (cfg.mode === 'off') return 'Narration is off.';
     if (serverState === 'unavailable') return `Kokoro · ${voiceName()} is not available on this computer, so the lesson has no sound.`;
-    if (narrErr) return `Kokoro · ${voiceName()} is not answering, so recent lines had no sound.`;
+    if (narrErr) return `Kokoro · ${voiceName()} had no sound for recent lines.`;
     return serverState === 'ready' ? `Speaking with Kokoro · ${voiceName()}, generated on this computer.` : `Kokoro · ${voiceName()} on this computer, getting ready…`;
   }
   async function preview() {
