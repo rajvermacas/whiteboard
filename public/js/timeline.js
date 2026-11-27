@@ -39,7 +39,7 @@ async function replay() {
 async function showAttach() {
   const ids = [...inkSinceAsk].filter(id => objs.has(id));
   const box = $('#attach');
-  if (!ids.length || penMode) { box.hidden = true; input.placeholder = 'Ask about…'; return; }
+  if (!ids.length || penMode) { box.hidden = true; $('#attachImg').removeAttribute('src'); input.placeholder = 'Ask about…'; return; }
   box.hidden = false; input.placeholder = 'Ask about your drawing…';
   try { const reg = inkRegion(ids); if (reg) $('#attachImg').src = await boardImage(reg); } catch (e) { dlog('thumbnail failed', String(e)); }
 }
@@ -355,7 +355,7 @@ function resetBoard() {
 }
 // nothing of the lesson left: no answer playing, steps, timeline, question tree, look-back, board or chat (the caller sets `lesson`)
 function clearLesson() {
-  stopAll(); liveTurn = null; if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline();
+  stopAll(); liveTurn = null; if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline(); clearAttachments();
   clearTimeout(suggestTimer); if (suggestAbort) suggestAbort.abort();   // resetBoard re-rendered the chips: no suggestions for what was cleared
   clearTimeout(bannerTimer); $('#backBanner').hidden = true; $('#tlLabel').textContent = '';
 }
@@ -366,6 +366,7 @@ function applySession(d) {
   steps = Array.isArray(d.steps) ? d.steps : (d.objs && d.objs.length ? [{ say: '', by: 'teacher', cmds: d.objs.map(c => ({ ...c, _placed: true })), t: 'base' }] : []);
   lesson = d.lesson; sessionCreatedAt = d.createdAt || new Date().toISOString();
   chat = Array.isArray(d.chat) ? d.chat : [];
+  clearAttachments();   // after the swap, so the chips are not built from the old chat
   for (const raw of d.objs || []) {
     if (!raw || !builders[raw.cmd]) continue;
     const c = normalizeShape(raw.cmd, raw, { cmd: raw.cmd, id: raw.id });
