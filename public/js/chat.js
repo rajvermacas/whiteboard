@@ -36,9 +36,12 @@ function bubble(m) {
     a.disabled = !tabs.has(m.tab); a.onclick = () => switchTab(m.tab); d.appendChild(a);
   }
   if (m.role === 'assistant') { const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = m.meta || ''; d.appendChild(meta); }
-  msgBox.appendChild(d); scrollChat(m.role === 'user');
+  d.msgRef = m; msgBox.appendChild(d); scrollChat(m.role === 'user');
   return d;
 }
+// the bubble of an answer: t.el, or (renderChat made new bubbles since, e.g. a tab closed after a reload) the one that
+// shows its message. Relies on one bubble per message: every bubble remembers its message (msgRef)
+const bubbleOf = t => t.el && t.el.isConnected ? t.el : t.msg && [...msgBox.children].find(e => e.msgRef === t.msg) || null;
 function renderChat() {
   msgBox.textContent = '';
   if (!chat.length) {
@@ -194,10 +197,16 @@ $('#stopBtn').onclick = () => { dlog('user: ■ stop'); stopAll(true, 'stop butt
 function tip(el, text) { if (el.dataset.tip !== text) { el.dataset.tip = text; el.setAttribute('aria-label', text); el.removeAttribute('title'); } }
 tip($('#stopBtn'), 'Stop');
 $('#pauseBtn').onclick = () => { dlog('user:', scrub ? (isPaused() ? 'resume playback' : 'pause playback') : isPaused() ? '▶ play' : '⏸ pause'); if (scrub) { if (scrub.playing) setPaused(!isPaused()); return; } if (isPaused()) releasePauseHold('play'); setPaused(!isPaused()); };
-$('#resumeGo').onclick = () => { dlog('user: ▶ continue set-aside answer'); releasePauseHold('continue'); continueParked(); };
+$('#resumeGo').onclick = () => {
+  dlog('user: ▶ continue set-aside answer'); releasePauseHold('continue');
+  const fromReload = reloadPaused; continueParked();
+  if (fromReload && isPaused()) setPaused(false);   // the reload paused it, not the learner: Continue plays, as the reload note says
+};
 $('#resumeX').onclick = () => { dlog('user: ✕ drop set-aside answer', lab(parked && parked.turn)); dropParked(); };
 
+let reloadPaused = false;   // the pause came from a reload restore, not from the learner
 function setPaused(on) {
+  if (!on) reloadPaused = false;
   if (on && pausedAt == null) { pausedAt = performance.now(); Voice.pause(); dlog('paused'); }
   else if (!on && pausedAt != null) { pausedTotal += performance.now() - pausedAt; pausedAt = null; Voice.resume(); pauseWaiters.splice(0).forEach(f => f()); dlog('resumed'); }
   document.body.classList.toggle('paused', isPaused());
@@ -258,8 +267,11 @@ function continueParked() {
   liveTurn = t;                                      // pausing it again and asking forks it again
   if (!t.streamDone) abortCtl = t.abort;
   // nothing came in between (it was only set aside to look back, or to switch tabs): carry on in the same bubble.
-  // Only when a side answer sits in between does it need a new bubble saying where it picks up again
-  if (t.el && t.el.isConnected && t.el === msgBox.lastElementChild) dlog('back to', lab(t), ': same bubble (nothing in between)');
+  // Only when a side answer sits in between does it need a new bubble saying where it picks up again (a system note,
+  // like the one after a reload, or a question nobody answered yet is not an answer: it does not count)
+  const here = bubbleOf(t); if (here) t.el = here;
+  let between = false; for (let e = here && here.nextElementSibling; e; e = e.nextElementSibling) between = between || e.classList.contains('assistant');
+  if (here && !between) dlog('back to', lab(t), ': same bubble (nothing in between)');
   else {
   t.el = bubble({ role: 'assistant', text: '', meta: '', tab: t.tab, tabTitle: tabTitle(t.tab) });
   const contEl = document.createElement('span'); contEl.className = 'cont'; contEl.textContent = `↩ back to where we left off${p.say ? `: “${p.say.slice(0, 60)}${p.say.length > 60 ? '…' : ''}”` : ''}`; t.el.insertBefore(contEl, t.el.firstChild);
