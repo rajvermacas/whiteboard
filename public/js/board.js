@@ -347,6 +347,7 @@ async function eraseIds(ids, run, animate, now = clock) {
     for (const id of all) { const x = bbOf(objs.get(id)); b = b ? { x: Math.min(b.x, x.x), y: Math.min(b.y, x.y), width: Math.max(b.x + b.width, x.x + x.width) - Math.min(b.x, x.x), height: Math.max(b.y + b.height, x.y + x.height) - Math.min(b.y, x.y) } : x; }
     await ensureVisible(b, run);
     const gs = [...all].map(id => objs.get(id).g);
+    for (const id of all) objs.get(id).erasing = true;   // fading out: a save or look-back snapshot taken now must not keep it
     await tween(Math.min(900, 380 + b.width) / speed(), t => {
       const zig = Math.abs(((t * 3) % 2) - 1); // zigzag across the width
       placeIcon(eraser, b.x + b.width * (t * 3 % 2 < 1 ? zig : zig), b.y + b.height * t);
