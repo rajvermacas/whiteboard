@@ -305,7 +305,7 @@ function continueParked() {
 // lesson is set aside like a question asked while paused, the answer is shown and explained, and the teacher goes back.
 function takeSwitch() { const f = switchReq; switchReq = null; if (f) f(); }
 function requestRelease(t) {
-  if (t.releasing || !t.held) return;
+  if (t.releasing || !t.held || unloading) return;   // the page is going away: a waiting answer stays waiting in the checkpoint (base.js)
   if (!t.ready) { t.ready = true; t.readyAt = Date.now(); renderPendingPill(); }   // its answer is arriving
   // only the question at the front of the queue of the tab the teacher is in takes over (order.js); the others wait
   // their turn and are picked up when they reach it (kickHeads / scheduleAutoBack)
@@ -328,6 +328,7 @@ function requestRelease(t) {
 }
 function releaseHeld(t, idle = false) {
   if (!t.held) return;
+  if (unloading) { t.releasing = false; return; }
   if (!idle && !mayTakeOver(t)) { t.releasing = false; return; }   // no longer its turn (the teacher moved on): wait
   if (scrub || (tabAway && parked)) { t.releasing = false; setTimeout(() => requestRelease(t), 500); return; }   // looking back / at another tab: wait until live again
   // a side answer plays as soon as it is ready (in the order asked), whether the lesson is playing or paused, nested

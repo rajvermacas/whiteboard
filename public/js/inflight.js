@@ -156,9 +156,9 @@ async function continueStream(t) {
     { role: 'user', content: '[The page was reloaded while you were answering, so your answer above was cut off there. Continue it from exactly where it stopped, in the same JSON Lines format. Do not repeat any line above and do not start over. If it was already complete, reply with just {"ok":true}.]' });
   dlog('reload: asking for the rest of', lab(t), '·', t.got.length, 'lines arrived before');
   try { await streamAnswer(messages, { model, effort: eff === 'auto' ? null : eff, run: t.run, turn: t, signal: ac.signal }); }
-  catch (e) { if (!ac.signal.aborted && !unloading) dlog('reload: could not get the rest of', lab(t), e.code || '', e.message || ''); }
+  catch (e) { if (!ac.signal.aborted) dlog('reload: could not get the rest of', lab(t), e.code || '', e.message || ''); }
   finally {
-    if (unloading) return;   // the page is going away: the abort is not the end of this answer (base.js)
+    if (unloading) await afterUnload();   // the page is going away: the abort is not the end of this answer (base.js)
     if (t.counted) { activeStreams = Math.max(0, activeStreams - 1); t.counted = false; }
     streaming = activeStreams > 0; t.streamDone = true;
     if (t.held) { if (!t.held.length) dropHeld(t); else requestRelease(t); }
