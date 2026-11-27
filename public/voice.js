@@ -118,7 +118,7 @@ window.Voice = (() => {
   function configure(next) {
     cfg = { ...cfg, ...next, engine: 'server' };
     if (cfg.mode !== 'kokoro') { cfg.mode = cfg.mode === 'off' ? 'off' : 'kokoro'; }
-    if (cfg.mode === 'off') { setStatus('idle', ''); return; }
+    if (cfg.mode === 'off') { stop(); setStatus('idle', ''); return; }   // Off silences the sentence being said, like the 🔊 button
     if (serverState !== 'ready') checkServer();
   }
   const enabled = () => cfg.mode !== 'off';

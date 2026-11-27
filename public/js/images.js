@@ -20,9 +20,10 @@ function shrink(im, max, quality) {
 async function addImageFile(file) {
   if (!file || !/^image\//.test(file.type)) return false;
   if (pastedImages.length >= IMG_LIMIT) { flashImgNote(`Up to ${IMG_LIMIT} images per message.`); return true; }
-  const src = URL.createObjectURL(file);
+  const src = URL.createObjectURL(file), gen0 = imgGen;
   try {
     const im = await loadImage(src);
+    if (gen0 !== imgGen) return true;   // the lesson changed while it decoded
     const url = shrink(im, IMG_MAX, 0.88), thumb = shrink(im, THUMB_MAX, 0.8);
     fullImages.set(thumb, url);
     pastedImages.push({ url, thumb });
@@ -40,18 +41,20 @@ function addImageFiles(files) {
 // takes the waiting images for a message being sent (and clears the tray)
 function takeImages() {
   const out = pastedImages; pastedImages = []; renderImgTray();
+  for (const p of out) sentThumbs.add(p.thumb);
   return out;
 }
 
-// leaving a lesson (new session, switch): nothing attached carries over, and its full-size pictures are let go
-// (keepFull: the same lesson reloaded keeps them, its chat shows the same thumbnails)
-function clearAttachments(oldChat, keepFull) {
-  if (!keepFull) {
-    for (const p of pastedImages) fullImages.delete(p.thumb);
-    for (const m of oldChat || []) for (const t of (m && Array.isArray(m.images)) ? m.images : []) fullImages.delete(t);
-  }
+// leaving a lesson (new session, switch, delete): nothing pending carries over. Pictures already sent stay for the visit
+// (follow-ups and the thumbnails' full view); only the unsent ones are let go. imgGen drops an image still decoding.
+let imgGen = 0;
+const sentThumbs = new Set();           // thumbs already sent (the same picture can be attached again and dropped unsent)
+const freeFull = p => { if (!sentThumbs.has(p.thumb)) fullImages.delete(p.thumb); };
+function clearAttachments() {
+  imgGen++;
+  pastedImages.forEach(freeFull);
   pastedImages = []; renderImgTray();
-  inkSinceAsk.clear(); $('#attach').hidden = true; renderChips();
+  inkSinceAsk.clear(); showAttach(false); renderChips();
 }
 
 // a data: URL cannot be opened as a page of its own, so the picture goes into a blank tab
@@ -73,7 +76,7 @@ function renderImgTray() {
     const d = document.createElement('div'); d.className = 'imgItem';
     const im = document.createElement('img'); im.src = p.thumb; im.alt = `image ${i + 1}`;
     const x = document.createElement('button'); x.type = 'button'; x.textContent = '✕'; x.title = "Don't send this image";
-    x.onclick = () => { pastedImages.splice(i, 1); renderImgTray(); input.focus({ preventScroll: true }); };
+    x.onclick = () => { freeFull(p); pastedImages.splice(i, 1); renderImgTray(); input.focus({ preventScroll: true }); };
     d.append(im, x); list.appendChild(d);
   });
   tray.hidden = !pastedImages.length;

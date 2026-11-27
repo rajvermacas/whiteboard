@@ -213,7 +213,7 @@ async function newSession() {
   if (lesson) inflightDrop(lesson.session);
   closeAllPops();
   if (lesson && !untouched()) { saveNow(); await saveToServer(); }
-  stopAll(); liveTurn = null; if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); clearAttachments(chat); chat = []; steps = []; updateTimeline();
+  clearLesson();
   lesson = { topic: 'New session', autoName: true, plan: null, session: 'wbt-' + uuid() };
   sessionCreatedAt = new Date().toISOString();
   camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
@@ -254,7 +254,7 @@ $('#topicForm').addEventListener('submit', async e => {
   if (topicIsNew || !lesson) {
     // the current lesson is already auto-saved; start a fresh one
     if (lesson) { saveNow(); await saveToServer(); }
-    stopAll(); if (scrub) exitScrub(); resetBoard(); chat = []; steps = []; updateTimeline();
+    clearLesson();
     lesson = { ...next, plan: null, session: 'wbt-' + uuid() };
     sessionCreatedAt = new Date().toISOString();
     camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);
