@@ -408,6 +408,16 @@ async function handleLinks(req, res) {
 // ---------- sessions: auto-saved lessons on disk (./sessions/<id>.json) ----------
 const SESS_DIR = path.join(__dirname, 'sessions');
 const validId = id => /^[\w-]{1,80}$/.test(id);
+// What the client's snapshot() sends: lesson is a plain object (topic/source/session strings if present); the rest is optional
+// (older sessions lack tabs etc., and createdAt starts null), but when present must have the right type.
+const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+function sessionBodyOK(d) {
+  if (!isObj(d) || !isObj(d.lesson)) return false;
+  if (['topic', 'source', 'session'].some(k => d.lesson[k] != null && typeof d.lesson[k] !== 'string')) return false;
+  if (['chat', 'objs', 'steps', 'tabs'].some(k => d[k] != null && !Array.isArray(d[k]))) return false;
+  if (['createdAt', 'activeTab'].some(k => d[k] != null && typeof d[k] !== 'string')) return false;
+  return d.camera == null || isObj(d.camera);
+}
 function listSessions() {
   let files = [];
   try { files = fs.readdirSync(SESS_DIR).filter(f => f.endsWith('.json') && !f.endsWith('.inflight.json')); } catch { return []; }
@@ -415,9 +425,10 @@ function listSessions() {
   for (const f of files) {
     try {
       const d = JSON.parse(fs.readFileSync(path.join(SESS_DIR, f), 'utf8'));
-      out.push({ id: f.slice(0, -5), topic: (d.lesson && d.lesson.topic) || 'Untitled', source: (d.lesson && d.lesson.source) || '',
-        createdAt: d.createdAt || null, updatedAt: d.updatedAt || null,
-        objects: Array.isArray(d.objs) ? d.objs.length : 0, messages: Array.isArray(d.chat) ? d.chat.filter(m => m.role === 'user').length : 0 });
+      const L = d && typeof d.lesson === 'object' && d.lesson || {}, str = v => typeof v === 'string' ? v : null;   // a bad file already on disk shows as Untitled, never breaks the list
+      out.push({ id: f.slice(0, -5), topic: str(L.topic) || 'Untitled', source: str(L.source) || '',
+        createdAt: str(d.createdAt), updatedAt: str(d.updatedAt),
+        objects: Array.isArray(d.objs) ? d.objs.length : 0, messages: Array.isArray(d.chat) ? d.chat.filter(m => m && m.role === 'user').length : 0 });
     } catch { /* skip broken file */ }
   }
   return out.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
@@ -467,7 +478,7 @@ async function handleSessions(req, res, url) {
   }
   if (req.method === 'PUT' || req.method === 'POST') {
     let d; try { d = JSON.parse(await readBody(req, 8_000_000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
-    if (!d || typeof d !== 'object' || !d.lesson) return sendJSON(res, 400, { error: { code: 'invalid_request' } });
+    if (!sessionBodyOK(d)) return sendJSON(res, 400, { error: { code: 'invalid_request' } });
     let createdAt = d.createdAt;
     try { createdAt = JSON.parse(fs.readFileSync(file, 'utf8')).createdAt || createdAt; } catch {}
     const doc = { ...d, id, createdAt: createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
