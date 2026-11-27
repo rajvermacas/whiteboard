@@ -352,9 +352,11 @@ function resetBoard() {
   objs.clear(); selection.clear(); updateEmpty(); drawSelection(); updateSelectionUI();
 }
 function applySession(d) {
-  if (lesson && d.lesson && lesson.session !== d.lesson.session) inflightDrop(lesson.session);   // leaving it: nothing in progress any more
+  const leaving = !(lesson && d.lesson && lesson.session === d.lesson.session);
+  if (lesson && d.lesson && leaving) inflightDrop(lesson.session);   // leaving it: nothing in progress any more
   closeAllPops();
   stopAll(); liveTurn = null; scrub = null; document.body.classList.remove('scrubbing'); resetTabs(); resetBoard(); resetTree();
+  clearAttachments(chat, !leaving);
   steps = Array.isArray(d.steps) ? d.steps : (d.objs && d.objs.length ? [{ say: '', by: 'teacher', cmds: d.objs.map(c => ({ ...c, _placed: true })), t: 'base' }] : []);
   lesson = d.lesson; sessionCreatedAt = d.createdAt || new Date().toISOString();
   chat = Array.isArray(d.chat) ? d.chat : [];

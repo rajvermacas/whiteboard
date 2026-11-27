@@ -213,7 +213,7 @@ async function newSession() {
   if (lesson) inflightDrop(lesson.session);
   closeAllPops();
   if (lesson && !untouched()) { saveNow(); await saveToServer(); }
-  stopAll(); liveTurn = null; if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); chat = []; steps = []; updateTimeline();
+  stopAll(); liveTurn = null; if (scrub) exitScrub(); resetTabs(); resetBoard(); resetTree(); clearAttachments(chat); chat = []; steps = []; updateTimeline();
   lesson = { topic: 'New session', autoName: true, plan: null, session: 'wbt-' + uuid() };
   sessionCreatedAt = new Date().toISOString();
   camera = { x: 0, y: 0, scale: defaultScale() }; fit(false);

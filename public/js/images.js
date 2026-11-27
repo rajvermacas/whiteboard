@@ -43,6 +43,17 @@ function takeImages() {
   return out;
 }
 
+// leaving a lesson (new session, switch): nothing attached carries over, and its full-size pictures are let go
+// (keepFull: the same lesson reloaded keeps them, its chat shows the same thumbnails)
+function clearAttachments(oldChat, keepFull) {
+  if (!keepFull) {
+    for (const p of pastedImages) fullImages.delete(p.thumb);
+    for (const m of oldChat || []) for (const t of (m && Array.isArray(m.images)) ? m.images : []) fullImages.delete(t);
+  }
+  pastedImages = []; renderImgTray();
+  inkSinceAsk.clear(); $('#attach').hidden = true; renderChips();
+}
+
 // a data: URL cannot be opened as a page of its own, so the picture goes into a blank tab
 function showImage(url) {
   const w = window.open('', '_blank'); if (!w) return;
