@@ -104,6 +104,9 @@ function updateEmpty() { $('#emptyHint').style.display = objs.size || scrub ? 'n
 // Learner edits are recorded as 'you' steps so playback always matches the live board.
 // ======================================================================
 const cloneCmd = c => JSON.parse(JSON.stringify(c));
+// replay: a teacher step never touches the learner's ink (lessons saved before that rule hold teacher clears); learner steps stay exact
+const replayCmd = (st, c) => st.by === 'teacher' ? guardInk(cloneCmd(c)) : cloneCmd(c);
+const replayRun = async (st, c, run, animate) => { const x = replayCmd(st, c); if (x) await execCommand(x, run, animate); };
 function trimSteps() {
   let total = steps.reduce((n, st) => n + st.cmds.length, 0);
   while (total > 5000 && steps.length > 2) { const a = steps.shift(); steps[0].cmds = a.cmds.concat(steps[0].cmds); total = steps.reduce((n, st) => n + st.cmds.length, 0); }
@@ -151,7 +154,7 @@ async function showStep(i, animate) {
   const last = navSteps().pop(), reach = j => j === last ? steps.length - 1 : j;
   const target = animate ? i - 1 : reach(i);
   if (target < scrub.applied) { resetBoard(); scrub.applied = -1; }
-  for (let j = scrub.applied + 1; j <= target; j++) for (const c of steps[j].cmds) await execCommand(cloneCmd(c), run, false);
+  for (let j = scrub.applied + 1; j <= target; j++) for (const c of steps[j].cmds) await replayRun(steps[j], c, run, false);
   scrub.applied = target; scrub.i = i;
   updateEmpty(); updateTimeline(); showCaption(steps[i].say);
   if (!animate) return;
@@ -161,13 +164,13 @@ async function showStep(i, animate) {
   const started = narration ? await narration : null;
   beginPace(started && started.duration ? started.duration : steps[i].say.length / SPEAK_CPS);
   const cmds = steps[i].cmds;
-  for (let j = 0; j < cmds.length; j++) { if (run.gen !== gen) break; setPaceShare(cmds.length - j); await execCommand(cloneCmd(cmds[j]), run, true); paceShare = null; }
+  for (let j = 0; j < cmds.length; j++) { if (run.gen !== gen) break; setPaceShare(cmds.length - j); await replayRun(steps[i], cmds[j], run, true); paceShare = null; }
   if (!scrub || scrub.token !== token) { replaying = false; updateSendBtn(); return; } // a newer jump took over
-  if (run.gen === gen) { if (started) await started.done; for (let j = i + 1; j <= reach(i); j++) for (const c of steps[j].cmds) await execCommand(cloneCmd(c), run, false); scrub.applied = reach(i); }
+  if (run.gen === gen) { if (started) await started.done; for (let j = i + 1; j <= reach(i); j++) for (const c of steps[j].cmds) await replayRun(steps[j], c, run, false); scrub.applied = reach(i); }
   else { // stopped mid-step: finish the step instantly so the board is consistent
     const r2 = { gen };
     resetBoard(); scrub.applied = -1;
-    for (let j = 0; j <= reach(i); j++) for (const c of steps[j].cmds) await execCommand(cloneCmd(c), r2, false);
+    for (let j = 0; j <= reach(i); j++) for (const c of steps[j].cmds) await replayRun(steps[j], c, r2, false);
     scrub.applied = reach(i);
   }
   replaying = false; updateSendBtn();
