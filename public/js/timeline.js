@@ -97,7 +97,7 @@ function inkRegion(ids) {
   return r;
 }
 
-function updateEmpty() { $('#emptyHint').style.display = objs.size ? 'none' : ''; }
+function updateEmpty() { $('#emptyHint').style.display = objs.size || scrub ? 'none' : ''; }   // not while looking back: the board is only empty until its step is drawn
 
 // ======================================================================
 // steps & timeline: every say line starts a step; its drawing commands belong to it.
@@ -125,7 +125,7 @@ function answerNo(i) { const keys = []; for (let j = 0; j <= i; j++) { const t =
 function enterScrub() {
   if (scrub) return;
   scrub = { i: -1, applied: -1, token: 0, live: { objs: [...objs.values()].map(o => cloneCmd(o.cmd)), camera: { ...camera } }, playing: false };
-  setSelection([]);
+  resetBoard();   // the live objects are saved above; showStep builds the board of the step from nothing (else later steps' drawings stay on it)
   document.body.classList.add('scrubbing');
 }
 function exitScrub(keepCamera = false) {
@@ -147,7 +147,9 @@ async function showStep(i, animate) {
   enterScrub();
   gen++; if (isPaused()) setPaused(false); Voice.stop(); narrationDone = Promise.resolve(); finishTyping();
   const run = { gen }, token = ++scrub.token;
-  const target = animate ? i - 1 : i;
+  // the last step also shows the learner's own edits that came after it, so it matches the live board
+  const last = navSteps().pop(), reach = j => j === last ? steps.length - 1 : j;
+  const target = animate ? i - 1 : reach(i);
   if (target < scrub.applied) { resetBoard(); scrub.applied = -1; }
   for (let j = scrub.applied + 1; j <= target; j++) for (const c of steps[j].cmds) await execCommand(cloneCmd(c), run, false);
   scrub.applied = target; scrub.i = i;
@@ -161,12 +163,12 @@ async function showStep(i, animate) {
   const cmds = steps[i].cmds;
   for (let j = 0; j < cmds.length; j++) { if (run.gen !== gen) break; setPaceShare(cmds.length - j); await execCommand(cloneCmd(cmds[j]), run, true); paceShare = null; }
   if (!scrub || scrub.token !== token) { replaying = false; updateSendBtn(); return; } // a newer jump took over
-  if (run.gen === gen) { if (started) await started.done; scrub.applied = i; }
+  if (run.gen === gen) { if (started) await started.done; for (let j = i + 1; j <= reach(i); j++) for (const c of steps[j].cmds) await execCommand(cloneCmd(c), run, false); scrub.applied = reach(i); }
   else { // stopped mid-step: finish the step instantly so the board is consistent
     const r2 = { gen };
     resetBoard(); scrub.applied = -1;
-    for (let j = 0; j <= i; j++) for (const c of steps[j].cmds) await execCommand(cloneCmd(c), r2, false);
-    scrub.applied = i;
+    for (let j = 0; j <= reach(i); j++) for (const c of steps[j].cmds) await execCommand(cloneCmd(c), r2, false);
+    scrub.applied = reach(i);
   }
   replaying = false; updateSendBtn();
 }
