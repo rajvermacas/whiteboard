@@ -33,7 +33,7 @@ function inflightSnapshot() {
     for (const it of queue) if (it.turn === lt) items.push(itemOut(it));
     if (items.length || !lt.streamDone) out.live = { turn: turnOut(lt), items: items.filter(Boolean), say: lastSay && lastSay.turn === lt ? lastSay.say : '' };
   }
-  for (const f of forks) if (forkLeft(f)) out.forks.push({ turn: turnOut(f.turn), items: (f.turn.parkedQ || []).map(itemOut).filter(Boolean), why: f.why, wasPaused: !!f.wasPaused, say: f.say || '' });
+  for (const f of forks) if (forkLeft(f)) out.forks.push({ turn: turnOut(f.turn), items: (f.turn.parkedQ || []).map(itemOut).filter(Boolean), why: f.why, wasPaused: !!f.wasPaused, holdPause: !!f.holdPause, say: f.say || '' });
   for (const t of pendingHeld) if (t.heldUser) out.held.push({ turn: turnOut(t), items: (t.held || []).map(itemOut).filter(Boolean), user: t.heldUser.msg, am: t.msg });
   // the questions above those saved, even when their answers are done: they only show in the tree (nothing to replay)
   const saved = new Set([out.live, ...out.forks, ...out.held].filter(Boolean).map(x => x.turn.key));
@@ -93,18 +93,18 @@ async function restoreInflight() {
     if (d.live || (d.forks || []).length || (d.held || []).length) { setPaused(true); appPaused = true; }
     const resume = [], nodes = [];   // nodes: every restored question, put in the tree below once each knows its parent
     // answers set aside, oldest first, then the answer that was playing on top: it is the one ▶ carries on with
-    const parkIt = (s, why, say, wasPaused) => {
+    const parkIt = (s, why, say, wasPaused, holdPause) => {
       const t = turnIn(s.turn, findMsg(s.turn.key));
       t.parkedQ = itemsIn(t, s.items);
       t.streamDone = !!s.turn.streamDone;
-      forks.push({ turn: t, why, wasPaused, abort: null, say: say || '' });
+      forks.push({ turn: t, why, wasPaused, holdPause: !!holdPause, abort: null, say: say || '' });
       nodes.push(t);
       if (!t.streamDone) resume.push(t);
     };
-    for (const f of d.forks || []) parkIt(f, f.why || 'look', f.say, !!f.wasPaused);
+    for (const f of d.forks || []) parkIt(f, f.why || 'look', f.say, !!f.wasPaused, !!f.holdPause);
     if (d.live) parkIt(d.live, 'reload', d.live.say, true);
-    // a question asked while paused: its answer plays first, then the answer set aside stays paused (not the one on top: ▶ plays it)
-    for (const f of forks) f.holdPause = f.why === 'question' && f.wasPaused && f !== forks[forks.length - 1];
+    // the top fork is what ▶ plays after a reload: it holds nothing (the ones below keep their saved hold)
+    if (forks.length) forks[forks.length - 1].holdPause = false;
     parked = forks[forks.length - 1] || null;
     if (parked) liveTurn = parked.turn;
     renderChat();   // with the words the restored answers had said

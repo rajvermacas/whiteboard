@@ -199,8 +199,8 @@ tip($('#stopBtn'), 'Stop');
 $('#pauseBtn').onclick = () => { dlog('user:', scrub ? (isPaused() ? 'resume playback' : 'pause playback') : isPaused() ? '▶ play' : '⏸ pause'); if (scrub) { if (scrub.playing) setPaused(!isPaused()); return; } if (isPaused()) releasePauseHold('play'); setPaused(!isPaused()); };
 $('#resumeGo').onclick = () => {
   dlog('user: ▶ continue set-aside answer'); releasePauseHold('continue');
-  const fromReload = appPaused; continueParked();
-  if (fromReload && isPaused()) setPaused(false);   // the app paused it, not the learner: Continue plays, as the reload note says
+  const fromApp = appPaused; continueParked();
+  if (fromApp && isPaused()) setPaused(false);   // the app paused it, not the learner: Continue plays, as the reload note says
 };
 $('#resumeX').onclick = () => { dlog('user: ✕ drop set-aside answer', lab(parked && parked.turn)); dropParked(); };
 
@@ -222,7 +222,11 @@ let liveTurn = null;
 function parkLive(why = 'look') {   // why: 'question' (a side question) or 'look' (looking back)
   const t = liveTurn, wasPaused = isPaused();
   const busy = t && !forks.some(f => f.turn === t) && (!t.streamDone || queue.length || queueBusy || Voice.speaking());
-  if (!busy) { if (streamingLive() || queueRunning) stopAll(false, 'set aside: nothing left', true); setPaused(false); return; }   // keeps the answers waiting to come in
+  if (!busy) {
+    if (streamingLive() || queueRunning) stopAll(false, 'set aside: nothing left', true);
+    if (wasPaused && why === 'question' && parked && forkLeft(parked)) parked.holdPause = true;   // a follow-up asked while an answer waits paused: it plays now, then that answer stays paused again
+    setPaused(false); return;   // keeps the answers waiting to come in
+  }
   t.parkedQ = queue.splice(0);
   const cut = lastSay && lastSay.turn === t && (queueBusy || Voice.speaking() || (t.parkedQ.length && t.parkedQ[0].say == null));
   // the sentence that was cut short is said again. Set aside by a question, from its start (after "back to …");
@@ -247,6 +251,7 @@ const forkLeft = f => (f.turn.parkedQ && f.turn.parkedQ.length) || !f.turn.strea
 const pauseHeldFirst = () => [...pendingHeld].filter(t => t.pausedAsk && !t.dropped).sort((a, b) => (a.seq || 0) - (b.seq || 0))[0] || null;
 const pauseHold = () => !!pauseHeldFirst();
 function releasePauseHold(why) {
+  if (!appPaused) for (const f of forks) f.holdPause = false;   // ▶ pressed by the learner (not the reload / hold pause): the set-aside answer goes on after the side answer
   const n = [...pendingHeld].filter(t => t.pausedAsk).length; if (!n) return;
   for (const t of pendingHeld) t.pausedAsk = false;
   dlog('▶ pressed:', n, 'question(s) asked while paused no longer hold the lesson (' + why + ')');
@@ -486,8 +491,8 @@ function renderResumeBar() {
   bar.hidden = !show;
   if (show && waitingFor && pendingHeld.has(waitingFor)) { $('#resumeText').textContent = `⏳ Waiting for “${clip(waitingFor.q.replace(/^what is inside /, ''), 40)}” first · ▶ Continue goes back now to “${parked.say || 'the previous answer'}”`; return; }
   // not paused (a side answer plays, or looks like it is about to): the set-aside answer waits, it is not "paused"
-  const how = autoBack && !parked.holdPause ? '↩ Going back to' : isPaused() || scrub || tabAway ? '⏸ Paused at' : '⏳ Waiting (set aside) at';
-  if (show) $('#resumeText').textContent = `${how}: “${parked.say || 'the previous answer'}”${forks.length > 1 ? ` (+${forks.length - 1} more)` : ''}`;
+  const how = () => autoBack && !parked.holdPause ? '↩ Going back to' : isPaused() || scrub || tabAway ? '⏸ Paused at' : '⏳ Set aside at';   // parked is only read when shown
+  if (show) $('#resumeText').textContent = `${how()}: “${parked.say || 'the previous answer'}”${forks.length > 1 ? ` (+${forks.length - 1} more)` : ''}`;
 }
 // Once the side answer is done (and nothing is paused or being looked back at), go back to where it forked.
 let autoBack = null, sendsPending = 0, waitingFor = null;   // waitingFor: the question the teacher waits on this tab for
