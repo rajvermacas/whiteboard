@@ -90,7 +90,7 @@ async function restoreInflight() {
     inflightSent = Math.max(inflightSent, d.at || 0);
     const findMsg = key => key && chat.find(m => m.role === 'assistant' && m.key === key);
     // paused first: nothing restored may start playing before the learner presses ▶
-    if (d.live || (d.forks || []).length || (d.held || []).length) { setPaused(true); reloadPaused = true; }
+    if (d.live || (d.forks || []).length || (d.held || []).length) { setPaused(true); appPaused = true; }
     const resume = [], nodes = [];   // nodes: every restored question, put in the tree below once each knows its parent
     // answers set aside, oldest first, then the answer that was playing on top: it is the one ▶ carries on with
     const parkIt = (s, why, say, wasPaused) => {
@@ -103,6 +103,8 @@ async function restoreInflight() {
     };
     for (const f of d.forks || []) parkIt(f, f.why || 'look', f.say, !!f.wasPaused);
     if (d.live) parkIt(d.live, 'reload', d.live.say, true);
+    // a question asked while paused: its answer plays first, then the answer set aside stays paused (not the one on top: ▶ plays it)
+    for (const f of forks) f.holdPause = f.why === 'question' && f.wasPaused && f !== forks[forks.length - 1];
     parked = forks[forks.length - 1] || null;
     if (parked) liveTurn = parked.turn;
     renderChat();   // with the words the restored answers had said
