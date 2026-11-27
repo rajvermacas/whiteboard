@@ -383,6 +383,13 @@ const DEPTH_LIMITS = {
   deep:    { cmds: 170, writes: 9, minPics: 6 },
 };
 const limitsOf = turn => DEPTH_LIMITS[turn.depth] || DEPTH_LIMITS.explain;
+// No plan line (the model forgot it, or a short side answer skipped it): judge the "show it" follow-up by what was said
+// and drawn, not by a guessed "explain". A side/aside/steer answer (turn.light) or a main answer that already drew
+// something, in at most SHORT_SAYS say lines (each is capped at ~26 words, so about two lines of talk), is crisp: never
+// forced into a big drawing. A main answer with no picture still gets exactly one drawing request ("teach by drawing").
+// The command limits (limitsOf) still fall back to explain on purpose: they are only ceilings, so they are not relaxed.
+const SHORT_SAYS = 3;
+const shapeOf = turn => turn.depth || (((turn.light || turn.pics) && (turn.saidLines || 0) <= SHORT_SAYS) ? 'quick' : 'explain');   // turn.saidLines: counted as lines stream in (turn.text is only typed later)
 function applyPlan(turn, plan) {
   const depth = ['quick', 'explain', 'deep'].includes(plan.depth) ? plan.depth : 'explain';
   turn.depth = depth;
@@ -502,7 +509,7 @@ async function sendQ(q, opts, opened) {
   if (image) { const im = document.createElement('img'); im.src = image; im.className = 'thumb'; im.alt = 'your sketch'; ub.appendChild(im); }
   const am = { role: 'assistant', text: '', drew: [], meta: '', ...tabTag };
   if (!held) chat.push(am);
-  const turn = { msg: am, q: opts.topic || q, from: held ? null : askedIn, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36), tab: tabId, ask: q, aside: !!opts.aside, intro: opts.intro || null, got: [] };
+  const turn = { msg: am, q: opts.topic || q, from: held ? null : askedIn, text: '', drew: new Set(), el: bubble(am), thinking: true, cmds: 0, key: 't' + Date.now().toString(36), tab: tabId, ask: q, aside: !!opts.aside, light: !!(opts.aside || opts.side || opts.steer), intro: opts.intro || null, got: [] };
   am.key = turn.key;   // links the chat message to its answer (a reload finds it again)
   // its place in the order (order.js): a question belongs to the answer that was playing when it was asked; a steer
   // takes the place of the answer it steers (and the questions waiting inside that one move to it)
@@ -585,8 +592,9 @@ async function sendQ(q, opts, opened) {
     modelApplied = r1.model;
     let answer = r1.content;
     // The teacher must teach by drawing. If the answer was mostly talk, ask once for the picture.
-    if ((turn.pics || 0) < limitsOf(turn).minPics && !myAbort.signal.aborted && run.gen === gen) {
-      dlog(`a ${turn.depth || 'explain'} answer had only`, turn.pics || 0, 'pictures: asking for a drawing');
+    const shape = shapeOf(turn);   // decided once, before the follow-up: its own say lines cannot change it
+    if ((turn.pics || 0) < (DEPTH_LIMITS[shape] || DEPTH_LIMITS.explain).minPics && !myAbort.signal.aborted && run.gen === gen) {
+      dlog(`a ${shape} answer had only`, turn.pics || 0, 'pictures: asking for a drawing');
       if (turn.thinking) { body.textContent = '✎ Drawing…'; }
       const follow = messages.concat(
         { role: 'assistant', content: r1.content.slice(0, 6000) || '(no answer)' },
@@ -672,6 +680,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   const put = item => {
     if (fix) { enqueue(item); return; }
     if (item.say != null) {
+      if (turn) turn.saidLines = (turn.saidLines || 0) + 1;
       flushBeat();
       beat = { say: item, cmds: [], timer: setTimeout(flushBeat, BEAT_WAIT_MS) };
       prefetchAhead(undefined, item.voice);   // voice it while its drawing streams in
