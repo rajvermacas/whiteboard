@@ -11,6 +11,7 @@ window.Voice = (() => {
   let ctx = null, current = null, epoch = 0, speakingNow = false, lastSource = '';
   const cache = new Map(), listeners = new Set();
   let status = { state: 'idle', text: '' };
+  let failStreak = 0, narrErr = false;   // lines in a row that failed to synthesize; narrErr: the status shows that failure
   // pause: the learner froze the lesson. Audio is suspended, and every timer below counts only unpaused time.
   let paused = false, resumeWaiters = [];
   const whenResumed = () => paused ? new Promise(r => resumeWaiters.push(r)) : Promise.resolve();
@@ -118,7 +119,7 @@ window.Voice = (() => {
   function configure(next) {
     cfg = { ...cfg, ...next, engine: 'server' };
     if (cfg.mode !== 'kokoro') { cfg.mode = cfg.mode === 'off' ? 'off' : 'kokoro'; }
-    if (cfg.mode === 'off') { stop(); setStatus('idle', ''); return; }   // Off silences the sentence being said, like the 🔊 button
+    if (cfg.mode === 'off') { stop(); failStreak = 0; narrErr = false; setStatus('idle', ''); return; }   // Off silences the sentence being said, like the 🔊 button
     if (serverState !== 'ready') checkServer();
   }
   const enabled = () => cfg.mode !== 'off';
@@ -169,9 +170,13 @@ window.Voice = (() => {
     try { buf = await withTimeout(h.audio, limit); }
     catch (e) {
       log(e.timeout ? 'kokoro audio not ready after ' + limit + 'ms: this line stays silent' : 'kokoro failed: ' + e.message + ' (this line stays silent)');
-      return myEpoch === epoch ? silent(h.text) : none;
+      if (myEpoch !== epoch) return none;   // stopped, Off or replaced meanwhile: a cancelled line is not a failure
+      // one failure may be a blip; two in a row say the voice is down, so say so (the lesson still goes on in silence)
+      if (++failStreak >= 2 && !narrErr) { narrErr = true; setStatus('error', 'Narration failed: the voice server keeps returning errors (' + e.message + '). The lesson goes on without sound.'); }
+      return silent(h.text);
     }
     if (myEpoch !== epoch) return none;
+    failStreak = 0; if (narrErr) { narrErr = false; setStatus('ready', ''); }   // it spoke again: clear the error
     await whenResumed();
     if (myEpoch !== epoch) return none;
     let c = ensureCtx();
@@ -226,6 +231,7 @@ window.Voice = (() => {
   function describe() {
     if (cfg.mode === 'off') return 'Narration is off.';
     if (serverState === 'unavailable') return `Kokoro · ${voiceName()} is not available on this computer, so the lesson has no sound.`;
+    if (narrErr) return `Kokoro · ${voiceName()} is not answering, so recent lines had no sound.`;
     return serverState === 'ready' ? `Speaking with Kokoro · ${voiceName()}, generated on this computer.` : `Kokoro · ${voiceName()} on this computer, getting ready…`;
   }
   async function preview() {
