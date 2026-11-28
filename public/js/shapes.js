@@ -187,6 +187,7 @@ const builders = {
     addStroke(g, parts, `M${f1(h1[0])} ${f1(h1[1])} L${f1(p2[0])} ${f1(p2[1])} L${f1(h2[0])} ${f1(h2[1])}`, c.color, { width: c.width || 2.8 });
     if (c.label) {
       const mx = 0.25 * p1[0] + 0.5 * q[0] + 0.25 * p2[0], my = 0.25 * p1[1] + 0.5 * q[1] + 0.25 * p2[1];
+      if (geo.loop) { addText(g, parts, mx + 12, my + 7, c.label, { size: 20, color: c.color, anchor: 'start' }); return; }
       const dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.hypot(dx, dy) || 1;
       let nx = -dy / len, ny = dx / len; if (ny > 0) { nx = -nx; ny = -ny; }
       addText(g, parts, mx + nx * 14, my + ny * 14, c.label, { size: 20, color: c.color, anchor: Math.abs(dy) > Math.abs(dx) ? 'start' : 'middle' });
@@ -408,7 +409,9 @@ const builders = {
   frame(c, g, parts, r) {
     let b = null;
     if (c.around.length) {
-      const things = c.around.filter(id => objs.has(id) && !['arrow', 'line', 'highlight', 'brace', 'frame'].includes(objs.get(id).cmd.cmd));
+      // arrows are left out (they reach other things), except a loop from a drawing back to itself, which is part of it
+      const isLoop = o => o.cmd.cmd === 'arrow' && !Array.isArray(o.cmd.from) && String(o.cmd.from) === String(o.cmd.to);
+      const things = c.around.filter(id => objs.has(id) && (isLoop(objs.get(id)) || !['arrow', 'line', 'highlight', 'brace', 'frame'].includes(objs.get(id).cmd.cmd)));
       b = unionBox(things.length ? things : c.around); if (!b) return false;
     } else b = { x: c.x, y: c.y, width: c.w, height: c.h };
     const p = c.pad, x = b.x - p, w = b.width + 2 * p;
@@ -522,6 +525,11 @@ function edgePoint(box, toward) {
 }
 function arrowGeometry(c) {
   const a = endRef(c.from), b = endRef(c.to); if (!a || !b) return null;
+  // an arrow from a drawing back to itself ("repeat"): a loop out of its right side, not a dot at its centre
+  if (!Array.isArray(c.from) && String(c.from) === String(c.to)) {
+    const bx = a.box, x = bx.x + bx.width + 9, cy = bx.y + bx.height / 2, s = Math.min(bx.height * 0.25, 40);
+    return Object.assign([[x, cy - s], [x + 120, cy], [x, cy + s]], { loop: true });
+  }
   const ca = centerOf(a), cb = centerOf(b);
   const p1 = a.box ? edgePoint(a.box, cb) : ca, p2 = b.box ? edgePoint(b.box, ca) : cb;
   const dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.hypot(dx, dy) || 1, k = clamp(num(c.curve, 0), -1, 1) * len * 0.5;
