@@ -26,7 +26,7 @@ function providerName(id) { const m = modelInfo(id); return m ? (m.providerName 
 // the env var that holds the key for a model (used in error messages)
 function keyNameFor(id) { const s = String(id); return s.startsWith('og:') ? 'OPENGATEWAY_API_KEY' : s.startsWith('or:') ? 'OPENROUTER_API_KEY' : 'OPENCODE_API_KEY'; }
 // header chip: provider · model · reasoning level
-function renderModelLabel() { const e = currentEffort(); $('#modelLabel').textContent = [providerName(settings.model), modelName(settings.model) || '…', EFFORT_LABEL[e] || e].filter(Boolean).join(' · '); }
+function renderModelLabel() { const e = currentEffort(); $('#modelLabel').textContent = [providerName(settings.model), modelName(settings.model) || '…', EFFORT_LABEL[e] || e].filter(Boolean).join(' · '); renderModelCur(); }
 function renderEffort() {
   const seg = $('#effortSeg'); seg.textContent = '';
   const ef = effortsOf(settings.model), cur = currentEffort();
@@ -64,8 +64,18 @@ const modelRows = () => [...$('#modelList').querySelectorAll('.mRow')];
 function pickModel(id) {
   if (!id) return;
   settings.model = id; saveSettings(); renderEffort(); renderModelLabel();
-  $('#modelSearch').value = ''; modelQuery = ''; fillModelSelect(); showCurrentModel();
+  $('#modelSearch').value = ''; modelQuery = ''; fillModelSelect();
+  openModelDrop(false); $('#modelCur').focus({ preventScroll: true });
 }
+// the model and voice pickers stay closed, showing the current choice: a click opens the list, a pick closes it
+function setDrop(btn, box, open) { box.hidden = !open; btn.setAttribute('aria-expanded', String(open)); }
+function renderModelCur() { const m = modelInfo(settings.model); $('#modelCur .pcName').textContent = m ? m.name : settings.model || '…'; $('#modelCur .pcSub').textContent = m ? providerName(settings.model) : ''; }
+function openModelDrop(open) {
+  setDrop($('#modelCur'), $('#modelDrop'), open);
+  if (!open && modelQuery) { $('#modelSearch').value = ''; modelQuery = ''; fillModelSelect(); }   // reopened, it shows every model
+  if (open) { openVoiceDrop(false); showCurrentModel(); $('#modelSearch').focus({ preventScroll: true }); }
+}
+$('#modelCur').onclick = () => openModelDrop($('#modelDrop').hidden);
 function setModelActive(i, scroll = true) {
   const rows = modelRows(); if (!rows.length) { modelActive = -1; return; }
   modelActive = clamp(i, 0, rows.length - 1);
@@ -113,7 +123,7 @@ $('#modelSearch').onkeydown = e => {
   else if (e.key === 'Escape') {
     e.preventDefault(); e.stopPropagation();
     if (e.target.value) { e.target.value = ''; modelQuery = ''; fillModelSelect(); showCurrentModel(); }
-    else { $('#modelPop').hidden = true; focusBoard(); }
+    else { openModelDrop(false); $('#modelCur').focus({ preventScroll: true }); }
   }
 };
 $('#copyLogBtn').onclick = async () => {
@@ -131,10 +141,16 @@ $('#copyLogBtn').onclick = async () => {
 };
 $('#modelBtn').onclick = e => {
   e.stopPropagation(); const pop = $('#modelPop'); pop.hidden = !pop.hidden;
-  if (!pop.hidden) showCurrentVoice();
-  if (!pop.hidden && !MCP_MODE) { showCurrentModel(); $('#modelSearch').focus({ preventScroll: true }); }
+  if (!pop.hidden) { openModelDrop(false); openVoiceDrop(false); if (!MCP_MODE) $('#modelCur').focus({ preventScroll: true }); }
 };
 document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e.target.closest('#modelPop') && !e.target.closest('#modelBtn')) $('#modelPop').hidden = true; });
+// a click elsewhere in the panel closes an open list. On click, not pointerdown: closing a list moves what is below
+// it, and the click would then land on something else.
+document.addEventListener('click', e => {
+  if ($('#modelPop').hidden) return;
+  if (!e.target.closest('#modelPick') && !$('#modelDrop').hidden) openModelDrop(false);
+  if (!e.target.closest('#kokoroRow') && !$('#voiceList').hidden) openVoiceDrop(false);
+});
 
 // ======================================================================
 // narration settings
@@ -161,13 +177,25 @@ function renderVoiceStatus(st) {
   $('#voiceStatus').textContent = Voice.describe();
 }
 Voice.onStatus(renderVoiceStatus);
-// the voice list: the same in-page list as the model picker, grouped by accent; ↑/↓ pick, ↵ or Space plays a preview
+// the voice list: the same in-page list as the model picker, grouped by accent; ↑/↓ pick, ↵ or Esc closes, Space plays a preview
 const voiceRows = () => [...$('#voiceList').querySelectorAll('.mRow')];
+const VOICE_GROUPS = [['American', 'US'], ['British', 'UK'], ['Maya 2 · natural Hindi and Hinglish', 'Maya']];
+const voiceInfo = () => Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK|Maya), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; });
+function renderVoiceCur() {
+  const id = voiceCfg().voice, v = voiceInfo().find(x => x.id === id), g = v && VOICE_GROUPS.find(x => x[1] === v.acc);
+  $('#voiceCur .pcName').textContent = v ? v.name : id;
+  $('#voiceCur .pcSub').textContent = v ? `${g[1] === 'Maya' ? 'Maya 2' : g[0]} · ${v.kind}` : 'not a voice this app has';
+}
+function openVoiceDrop(open) {
+  setDrop($('#voiceCur'), $('#voiceList'), open);
+  if (open) { openModelDrop(false); showCurrentVoice(); $('#voiceList').focus({ preventScroll: true }); }
+}
+$('#voiceCur').onclick = () => openVoiceDrop($('#voiceList').hidden);
 function fillVoiceList() {
   const box = $('#voiceList'), cur = voiceCfg().voice; box.textContent = '';
-  const groups = [['American', 'US'], ['British', 'UK'], ['Maya 2 · natural Hindi and Hinglish', 'Maya']];
-  for (const [label, tag] of groups) {
-    const list = Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK|Maya), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; }).filter(v => v.acc === tag);
+  renderVoiceCur();
+  for (const [label, tag] of VOICE_GROUPS) {
+    const list = voiceInfo().filter(v => v.acc === tag);
     if (!list.length) continue;
     const h = document.createElement('div'); h.className = 'mGroup'; h.textContent = label; box.appendChild(h);
     for (const v of list) {
@@ -176,7 +204,7 @@ function fillVoiceList() {
       const n = document.createElement('span'); n.className = 'mName'; n.textContent = v.name;
       const k = document.createElement('span'); k.className = 'mId'; k.textContent = v.kind;
       o.append(n, k); o.title = `${v.name} (${label}, ${v.kind.replace(/ · /g, ', ')})`;
-      o.onclick = () => { setVoice({ voice: v.id }); box.focus({ preventScroll: true }); };
+      o.onclick = () => { setVoice({ voice: v.id }); openVoiceDrop(false); $('#voiceCur').focus({ preventScroll: true }); };
       box.appendChild(o);
     }
   }
@@ -190,7 +218,8 @@ $('#voiceList').onkeydown = e => {
   const rows = voiceRows(), i = rows.findIndex(r => r.classList.contains('on'));
   const to = e.key === 'ArrowDown' ? i + 1 : e.key === 'ArrowUp' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : null;
   if (to !== null) { e.preventDefault(); e.stopPropagation(); const r = rows[clamp(to, 0, rows.length - 1)]; setVoice({ voice: r.dataset.id }); voiceRows().find(x => x.dataset.id === r.dataset.id).scrollIntoView({ block: 'nearest' }); return; }
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); $('#voicePreview').click(); }
+  if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); openVoiceDrop(false); $('#voiceCur').focus({ preventScroll: true }); }
+  else if (e.key === ' ') { e.preventDefault(); e.stopPropagation(); $('#voicePreview').click(); }
 };
 (() => {
   $('#voiceModeSeg').querySelectorAll('button').forEach(b => { b.onclick = () => { const m = b.dataset.m; setVoice({ mode: m, lastMode: m === 'off' ? voiceCfg().lastMode : m }); }; });
