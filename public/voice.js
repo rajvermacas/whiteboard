@@ -241,7 +241,7 @@ window.Voice = (() => {
   async function preview() {
     stop();
     const name = voiceName().split(' (')[0];
-    return play(isHindi() ? prepare(`Namaste, main ${name} hoon.`, `नमस्ते, मैं ${name} हूँ। चलिए whiteboard पे साथ में कुछ नया सीखते हैं।`)
+    return play(isHindi() ? prepare(`Namaste, main ${name} hoon.`, `नमस्ते, मैं ${name} हूँ। चलिए व्हाइटबोर्ड पे साथ में कुछ नया सीखते हैं।`)
       : prepare(`Hi, I'm ${name}. Let's learn something together on the whiteboard.`));
   }
 

@@ -153,12 +153,13 @@ function objLine(o, full = false) {
   bits.push(`box x${r(bb.x)} y${r(bb.y)} w${r(bb.width)} h${r(bb.height)}`);
   return bits.filter(Boolean).join(' · ');
 }
-// Hinglish lessons: the chat shows Roman Hinglish, and a Hindi voice reads the "hi" copy of each line, where the
-// Hindi words are in Devanagari (a Hindi voice cannot tell Roman "hai" or "pe" from English words)
+// Hinglish lessons: the chat shows Roman Hinglish, and a Hindi voice reads the "hi" copy of each line, written all
+// in Devanagari (a Hindi voice cannot tell Roman "hai" or "pe" from English words, and English words left in English
+// letters go through the English phonemizer and come out in an American accent)
 const HINGLISH = `LANGUAGE: HINGLISH. Teach in Hinglish: everyday Hindi mixed with English, the way Indian teachers and students talk ("Ab dekhte hain ki cache kaise kaam karta hai"). Keep technical terms, names, numbers and units in English.
-Every spoken line has two fields with the SAME sentence, word for word: "say" in Roman letters (shown in the chat) and "hi" for the voice, with every Hindi word in Devanagari and every English word left in English letters:
-{"say":"Ab dekhte hain ki cache kaise kaam karta hai.","hi":"अब देखते हैं कि cache कैसे काम करता है।"}
-Never translate an English word into Hindi in "hi", and never leave a Hindi word in Roman letters there. Board labels, headings and captions stay in short English. The examples below are in English: speak them in Hinglish.
+Every spoken line has two fields with the SAME sentence, word for word: "say" in Roman letters (shown in the chat) and "hi" for the voice, ALL in Devanagari: Hindi words in Hindi spelling, and English words written in Devanagari the way an Indian teacher says them (cache → कैश, CPU → सीपीयू, data → डेटा, API → एपीआई, vs → वर्सेस), numbers as spoken words (10 → दस, 3.5 → तीन दशमलव पाँच):
+{"say":"Ab dekhte hain ki CPU ko data kaise milta hai.","hi":"अब देखते हैं कि सीपीयू को डेटा कैसे मिलता है।"}
+Never translate an English word into a Hindi word in "hi" (data stays डेटा, not आँकड़े), and never leave Roman letters or digits there. Board labels, headings and captions stay in short English. The examples below are in English: speak them in Hinglish.
 `;
 function systemPrompt() {
   return `You are a great teacher at a whiteboard. The board SHOWS the idea (pictures, not text); your voice EXPLAINS it: the reasoning, the why, the cause and effect, while the pen draws. A learner should come away actually understanding, not just having seen a diagram.
