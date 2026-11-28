@@ -141,8 +141,13 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // ======================================================================
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
 function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro', enVoice: v.enVoice, hiVoice: v.hiVoice }; }
+const teachLang = () => settings.lang === 'hinglish' ? 'hinglish' : 'en';
+const isHindiVoice = id => /^h[fm]_/.test(id || '');
 function applyVoice() {
   const v = voiceCfg();
+  // the language follows the voice family (a Hindi voice saved before the Language setting, or with it out of step,
+  // would otherwise get Roman Hinglish read with English sounds, since the prompt would not ask for the hi copy)
+  if (isHindiVoice(v.voice) !== (teachLang() === 'hinglish')) { settings.lang = isHindiVoice(v.voice) ? 'hinglish' : 'en'; saveSettings(); dlog('language set to', settings.lang, 'to match the voice', v.voice); }
   Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });
   $('#voiceModeSeg').querySelectorAll('button').forEach(b => { const on = b.dataset.m === v.mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   fillVoiceList();
@@ -155,8 +160,6 @@ function applyVoice() {
 }
 // teaching language: Hinglish lessons are read by a Hindi voice, so switching picks one (and switching back
 // returns to the English voice used before)
-const teachLang = () => settings.lang === 'hinglish' ? 'hinglish' : 'en';
-const isHindiVoice = id => /^h[fm]_/.test(id || '');
 function setLang(l) {
   if (l === teachLang()) return;
   const v = voiceCfg(); settings.lang = l;
