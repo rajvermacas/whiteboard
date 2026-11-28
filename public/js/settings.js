@@ -142,7 +142,7 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
 function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro', enVoice: v.enVoice, hiVoice: v.hiVoice }; }
 const teachLang = () => settings.lang === 'hinglish' ? 'hinglish' : 'en';
-const isHindiVoice = id => /^h[fm]_/.test(id || '');
+const isHindiVoice = id => /^(h[fm]|my)_/.test(id || '');
 function applyVoice() {
   const v = voiceCfg();
   // the language follows the voice family (a Hindi voice saved before the Language setting, or with it out of step,
@@ -163,7 +163,7 @@ function applyVoice() {
 function setLang(l) {
   if (l === teachLang()) return;
   const v = voiceCfg(); settings.lang = l;
-  if (l === 'hinglish' && !isHindiVoice(v.voice)) setVoice({ voice: v.hiVoice || 'hf_alpha', enVoice: v.voice });
+  if (l === 'hinglish' && !isHindiVoice(v.voice)) setVoice({ voice: v.hiVoice || 'my_ishwari', enVoice: v.voice });
   else if (l === 'en' && isHindiVoice(v.voice)) setVoice({ voice: v.enVoice || 'af_heart', hiVoice: v.voice });
   else { saveSettings(); applyVoice(); }
 }
@@ -181,9 +181,9 @@ Voice.onStatus(renderVoiceStatus);
 const voiceRows = () => [...$('#voiceList').querySelectorAll('.mRow')];
 function fillVoiceList() {
   const box = $('#voiceList'), cur = voiceCfg().voice; box.textContent = '';
-  const groups = [['American', 'US'], ['British', 'UK'], ['Hindi · for Hinglish', 'Hindi']];
+  const groups = [['American', 'US'], ['British', 'UK'], ['Maya 2 · natural Hindi, for Hinglish', 'Maya'], ['Kokoro Hindi · faster, for Hinglish', 'Hindi']];
   for (const [label, tag] of groups) {
-    const list = Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK|Hindi), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; }).filter(v => v.acc === tag);
+    const list = Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK|Hindi|Maya), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; }).filter(v => v.acc === tag);
     if (!list.length) continue;
     const h = document.createElement('div'); h.className = 'mGroup'; h.textContent = label; box.appendChild(h);
     for (const v of list) {
