@@ -10,7 +10,7 @@ let inflightLast = '', inflightReady = false, inflightSent = 0;
 const inflightUrl = id => '/api/sessions/' + encodeURIComponent(id) + '/inflight';
 
 // ---- what is saved ----
-const itemOut = it => it.say != null ? { say: it.say, repeat: it.repeat || undefined } : it.cmd ? { cmd: it.cmd, fix: it.fix || undefined } : null;
+const itemOut = it => it.say != null ? { say: it.say, hi: it.hi || undefined, repeat: it.repeat || undefined } : it.cmd ? { cmd: it.cmd, fix: it.fix || undefined } : null;
 // the answer's latest lines, whole lines only, at most `max` characters
 function lastLines(lines, max) {
   const out = []; let n = 0;
@@ -36,7 +36,7 @@ function inflightSnapshot() {
   if (lt && lt.key && !forks.some(f => f.turn === lt)) {
     const items = [];
     // the sentence being said (or the drawing being drawn) when the page went away is said / drawn again
-    if (lastSay && lastSay.turn === lt && (queueBusy || Voice.speaking() || typers.size)) items.push({ say: lastSay.say, repeat: true });
+    if (lastSay && lastSay.turn === lt && (queueBusy || Voice.speaking() || typers.size)) items.push({ say: lastSay.say, hi: lastSay.hi, repeat: true });
     if (currentItem && currentItem.turn === lt && currentItem.cmd && queueBusy) items.push(itemOut(currentItem));
     for (const it of queue) if (it.turn === lt) items.push(itemOut(it));
     if (items.length || !lt.streamDone) out.live = { turn: turnOut(lt), items: items.filter(Boolean), say: lastSay && lastSay.turn === lt ? lastSay.say : '' };
@@ -82,7 +82,7 @@ function turnIn(s, msg) {
 }
 // the saved beat goes after the saved queue: the lines the continuation brings in come after it
 const itemsIn = (t, list) => [...(Array.isArray(list) ? list : []), ...(t.savedBeat || [])].map(x => !x ? null
-  : x.say != null ? { say: String(x.say), repeat: !!x.repeat, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(String(x.say)) : null }
+  : x.say != null ? { say: String(x.say), hi: typeof x.hi === 'string' ? x.hi : undefined, repeat: !!x.repeat, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(String(x.say), typeof x.hi === 'string' ? x.hi : undefined) : null }
   : x.cmd && typeof x.cmd === 'object' && x.cmd.cmd ? { cmd: x.cmd, turn: t, run: t.run, fix: !!x.fix } : null).filter(Boolean);
 // a restored question's place in the tree, as it was (addToTree works it out from what is happening now)
 function restoreNode(t, parent) {

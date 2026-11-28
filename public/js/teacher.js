@@ -64,7 +64,7 @@ async function runQueue() {
     try {
     if (it.say != null) {
       lastSay = it;
-      if (!it.repeat) recordSay(it.turn, it.say);   // a sentence said again after coming back belongs to its step already
+      if (!it.repeat) recordSay(it.turn, it.say, it.hi);   // a sentence said again after coming back belongs to its step already
       if (EMBED) liveCaption(it.say);
       if (it.voice && Voice.enabled()) {
         // one narrated sentence at a time: wait until the previous one (and the drawing after it) is done
@@ -153,6 +153,13 @@ function objLine(o, full = false) {
   bits.push(`box x${r(bb.x)} y${r(bb.y)} w${r(bb.width)} h${r(bb.height)}`);
   return bits.filter(Boolean).join(' · ');
 }
+// Hinglish lessons: the chat shows Roman Hinglish, and a Hindi voice reads the "hi" copy of each line, where the
+// Hindi words are in Devanagari (a Hindi voice cannot tell Roman "hai" or "pe" from English words)
+const HINGLISH = `LANGUAGE: HINGLISH. Teach in Hinglish: everyday Hindi mixed with English, the way Indian teachers and students talk ("Ab dekhte hain ki cache kaise kaam karta hai"). Keep technical terms, names, numbers and units in English.
+Every spoken line has two fields with the SAME sentence, word for word: "say" in Roman letters (shown in the chat) and "hi" for the voice, with every Hindi word in Devanagari and every English word left in English letters:
+{"say":"Ab dekhte hain ki cache kaise kaam karta hai.","hi":"अब देखते हैं कि cache कैसे काम करता है।"}
+Never translate an English word into Hindi in "hi", and never leave a Hindi word in Roman letters there. Board labels, headings and captions stay in short English. The examples below are in English: speak them in Hinglish.
+`;
 function systemPrompt() {
   return `You are a great teacher at a whiteboard. The board SHOWS the idea (pictures, not text); your voice EXPLAINS it: the reasoning, the why, the cause and effect, while the pen draws. A learner should come away actually understanding, not just having seen a diagram.
 
@@ -161,7 +168,7 @@ What is on the board right now (every drawing, where it is), the lesson in progr
 
 OUTPUT: JSON Lines only, one object per line, nothing else (no markdown, no code fences, no prose outside JSON).
 Spoken line: {"say":"one short sentence"}   It is spoken while the drawing commands right after it are drawn, so it must explain exactly those.
-Board commands (each line has "cmd"). Place things with "near" instead of guessing coordinates: "near":{"of":"<id>","side":"right|left|below|above","gap":70}. Give x,y only for the very first object of a new area (use the free space listed above).
+${teachLang() === 'hinglish' ? HINGLISH : ''}Board commands (each line has "cmd"). Place things with "near" instead of guessing coordinates: "near":{"of":"<id>","side":"right|left|below|above","gap":70}. Give x,y only for the very first object of a new area (use the free space listed above).
 
 Pictures, best first:
 {"cmd":"icon","id":"gpu","name":"gpu","label":"GPU","near":{"of":"q","side":"right"}}   icons: ${window.WB_ICONS ? WB_ICONS.names.join(', ') : 'gpu, server, database, person, document'} (plus common synonyms). Use them for every real-world thing.
@@ -738,7 +745,9 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
         if (it.say != null) {
           const t = trimSay(str(it.say, 1200)); if (t.length < String(it.say).trim().length) dlog('shortened a long spoken line');
-          if (!fix) put({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
+          const hi = typeof it.hi === 'string' && sayable(it.hi) ? trimSay(str(it.hi, 1500)) : undefined;   // Hinglish: the same line for the Hindi voice
+          if (!hi && !fix && teachLang() === 'hinglish') dlog('a Hinglish line came without its hi copy: the Hindi voice reads the Roman words');
+          if (!fix) put({ say: t, hi, turn, run, voice: Voice.enabled() ? Voice.prepare(t, hi) : null });
         }
         if (it.cmd || it.type || it.op) {
           if (fix) {

@@ -130,10 +130,13 @@ window.Voice = (() => {
   // question). Only the line about to play and the next few (prefetch) are made, and a line that must play now
   // jumps to the front.
   const wantQ = []; let inflight = 0; const MAX_INFLIGHT = 1;   // one at a time: a line that must play next waits for at most one other
-  function prepare(text) {
-    const clean = speakable(text);
-    return { text: clean, raw: text, audio: null, started: false };
+  // spoken: what a Hindi voice says instead of the words shown (a Hinglish line, with its Hindi in Devanagari).
+  // Which of the two is sent is decided when the line is voiced, by the voice in use then (it may change meanwhile).
+  const isHindi = () => cfg.voice[0] === 'h';
+  function prepare(text, spoken) {
+    return { text: speakable(text), spoken: spoken ? speakable(spoken) : '', raw: text, audio: null, started: false };
   }
+  const textFor = h => h.spoken && isHindi() ? h.spoken : h.text;
   function want(h, urgent) {
     if (!h || !h.text || cfg.mode !== 'kokoro' || h.started) return;
     if (!h.audio) { h.audio = new Promise((res, rej) => { h.res = res; h.rej = rej; }); h.audio.catch(() => {}); }
@@ -145,7 +148,7 @@ window.Voice = (() => {
   function pump() {
     while (inflight < MAX_INFLIGHT && wantQ.length) {
       const h = wantQ.shift(); h.started = true; inflight++;
-      synthKokoro(h.text).then(h.res, h.rej).finally(() => { inflight--; pump(); });
+      synthKokoro(textFor(h)).then(h.res, h.rej).finally(() => { inflight--; pump(); });
     }
   }
   // the next lines in the order they will be said: voice them ahead (and before anything prefetched earlier)
@@ -224,6 +227,7 @@ window.Voice = (() => {
     ['af_bella', 'Bella (US, female)'], ['af_heart', 'Heart (US, female)'], ['af_nicole', 'Nicole (US, female, soft)'], ['af_sarah', 'Sarah (US, female)'],
     ['am_michael', 'Michael (US, male)'], ['am_fenrir', 'Fenrir (US, male)'], ['am_puck', 'Puck (US, male)'],
     ['bf_emma', 'Emma (UK, female)'], ['bf_isabella', 'Isabella (UK, female)'], ['bm_george', 'George (UK, male)'], ['bm_fable', 'Fable (UK, male)'],
+    ['hf_alpha', 'Alpha (Hindi, female)'], ['hf_beta', 'Beta (Hindi, female)'], ['hm_omega', 'Omega (Hindi, male)'], ['hm_psi', 'Psi (Hindi, male)'],
   ];
   const voiceName = () => (VOICES.find(v => v[0] === cfg.voice) || [, cfg.voice])[1];
 
@@ -236,7 +240,9 @@ window.Voice = (() => {
   }
   async function preview() {
     stop();
-    return play(prepare(`Hi, I'm ${voiceName().split(' (')[0]}. Let's learn something together on the whiteboard.`));
+    const name = voiceName().split(' (')[0];
+    return play(isHindi() ? prepare(`Namaste, main ${name} hoon.`, `नमस्ते, मैं ${name} हूँ। चलिए whiteboard पे साथ में कुछ नया सीखते हैं।`)
+      : prepare(`Hi, I'm ${name}. Let's learn something together on the whiteboard.`));
   }
 
   return {
