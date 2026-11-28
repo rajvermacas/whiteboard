@@ -65,7 +65,7 @@ function normalizeShape(t, raw, c = { cmd: t, id: str(raw.id, 40) }) {
     case 'bars': c.values = (Array.isArray(raw.values) ? raw.values : [0]).slice(0, 14); c.labels = Array.isArray(raw.labels) ? raw.labels.slice(0, 14) : null; c.w = raw.w != null ? num(raw.w, 240, 60, 2000) : null; c.h = raw.h != null ? num(raw.h, 150, 40, 1200) : null; c.label = label; break;
     case 'plot': c.w = raw.w != null ? num(raw.w, 280, 60, 2000) : null; c.h = raw.h != null ? num(raw.h, 170, 40, 1200) : null; c.fn = str(raw.fn, 20) || null; c.points = Array.isArray(raw.points) ? raw.points.slice(0, 200).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]) : null; c.marks = Array.isArray(raw.marks) ? raw.marks.slice(0, 10) : null; c.domain = Array.isArray(raw.domain) ? raw.domain.slice(0, 2) : null; c.label = label; break;
     case 'line': c.points = (Array.isArray(raw.points) ? raw.points : []).slice(0, 120).filter(Array.isArray).map(p => [num(p[0], 0), num(p[1], 0)]); if (c.points.length < 2) return null; c.smooth = !!raw.smooth; c.width = num(raw.width, 3, 1, 14); c.dash = !!raw.dash; c.color = col(raw.color, '#1f2328'); break;
-    case 'arrow': c.from = Array.isArray(raw.from) ? [num(raw.from[0], 0), num(raw.from[1], 0)] : str(raw.from, 40); c.to = Array.isArray(raw.to) ? [num(raw.to[0], 0), num(raw.to[1], 0)] : str(raw.to, 40); c.label = label; c.curve = num(raw.curve, 0, -1, 1); c.dash = !!raw.dash; c.width = raw.width != null ? num(raw.width, 2.8, 1, 10) : null; break;
+    case 'arrow': c.from = Array.isArray(raw.from) ? [num(raw.from[0], 0), num(raw.from[1], 0)] : str(raw.from, 40); c.to = Array.isArray(raw.to) ? [num(raw.to[0], 0), num(raw.to[1], 0)] : str(raw.to, 40); c.label = label; c.curve = num(raw.curve, 0, -ARROW_CURVE_MAX, ARROW_CURVE_MAX); c.dash = !!raw.dash; c.width = raw.width != null ? num(raw.width, 2.8, 1, 10) : null; break;
     case 'sequence': {
       c.actors = (Array.isArray(raw.actors) ? raw.actors : []).slice(0, 6).map(a => a && typeof a === 'object' ? { name: clip(a.name ?? a.label, 18), icon: a.icon ? str(a.icon, 20) : null } : { name: clip(a, 18), icon: null });
       c.messages = (Array.isArray(raw.messages) ? raw.messages : []).slice(0, 20).map(m => Array.isArray(m) ? { from: clip(m[0], 18), to: clip(m[1], 18), label: clip(m[2], 26) || null, dash: !!m[3] } : m && typeof m === 'object' ? { from: clip(m.from, 18), to: clip(m.to, 18), label: clip(m.label, 26) || null, dash: !!m.dash } : null).filter(Boolean);
@@ -314,6 +314,7 @@ async function drawObject(c, run, animate) {
   if (BOXLIKE.has(c.cmd) && (c.x == null || c.y == null)) {
     const b = allBounds(); c.x = c.x ?? (b ? b.x : 0); c.y = c.y ?? (b ? b.y + b.height + 70 : 0); c._placed = false;
   }
+  if (c.cmd === 'arrow') routeArrow(c);
   let built = buildGroup(c); if (!built) return;
   if (BOXLIKE.has(c.cmd) && !c._placed) {
     // shift right or down (whichever is shorter) until it no longer overlaps anything
@@ -405,7 +406,18 @@ async function moveCmd(c, run, animate) {
     const b = bbOf(o); await ensureVisible({ x: Math.min(b.x, b.x + dx), y: Math.min(b.y, b.y + dy), width: b.width + Math.abs(dx), height: b.height + Math.abs(dy) }, run);
     await tween(650 / speed(), t => { setOffset(c.id, dx * t, dy * t); rebuildDependents(c.id); drawSelection(); }, run, easeInOut);
   }
-  commitMove(c.id, dx, dy); drawSelection(); saveSoon();
+  commitMove(c.id, dx, dy);
+  // moved onto another drawing: shift on (right or down, whichever is shorter) until it is clear, as a new one does
+  if (BOXLIKE.has(o.cmd.cmd)) for (let i = 0; i < 25; i++) {
+    const bb = bbOf(o); let hit = null;
+    for (const [k, p] of objs) if (k !== c.id && (BOXLIKE.has(p.cmd.cmd) || p.cmd.cmd === 'brace') && overlaps(bb, bbOf(p))) { hit = bbOf(p); break; }
+    if (!hit) break;
+    const ex = hit.x + hit.width + 34 - bb.x, ey = hit.y + hit.height + 34 - bb.y;
+    commitMove(c.id, ex <= ey ? ex : 0, ex <= ey ? 0 : ey);
+  }
+  // its arrows may now run through something else: bend them round it
+  for (const k of dependentsOf(c.id)) { const d = objs.get(k); if (d && d.cmd.cmd === 'arrow') { const was = d.cmd.curve; routeArrow(d.cmd); if (d.cmd.curve !== was) rebuild(k); } }
+  drawSelection(); saveSoon();
 }
 async function updateCmd(c, run, animate) {
   const o = objs.get(c.id); if (!o) return;
@@ -413,6 +425,7 @@ async function updateCmd(c, run, animate) {
   const merged = normalizeShape(o.cmd.cmd, { ...o.cmd, ...fields, cmd: o.cmd.cmd, id: c.id, _placed: true, _seed: hashStr(JSON.stringify(fields)).toString(36).slice(0, 6) });
   if (!merged) return;
   merged.id = c.id;
+  if (merged.cmd === 'arrow' && !('curve' in fields)) routeArrow(merged);   // a curve the teacher set on purpose is kept
   if (animate && !instantMode() && run.gen === gen) { await ensureVisible(bbOf(o), run); await tween(220 / speed(), t => { o.g.style.opacity = 1 - t; }, run); }
   const built = buildGroup(merged); if (!built) return;
   layerObj.insertBefore(built.g, o.g); o.g.remove();

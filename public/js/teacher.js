@@ -54,9 +54,8 @@ async function runQueue() {
     if (switchReq && queue[0] && queue[0].say != null) { await within(narrationDone, 8000); takeSwitch(); continue; }
     const it = queue.shift(); if (!it) continue;
     // the view follows the answer; an answer whose tab was closed is dropped (never drawn on another board), and
-    // tidy-up fixes for a tab that is no longer on screen are left out
     if (it.turn && it.turn.tab && it.turn.tab !== activeTab) {
-      if (!tabs.has(it.turn.tab) || it.fix) { dlog('dropped a line for a tab not on screen', it.fix ? '(tidy fix)' : '(tab closed)'); continue; }
+      if (!tabs.has(it.turn.tab)) { dlog('dropped a line for a tab not on screen (tab closed)'); continue; }
       switchTabNow(it.turn.tab, 'follow');   // between items: nothing is animating
     }
     if (it.say != null) prefetchAhead(it);
@@ -90,7 +89,7 @@ async function runQueue() {
     if (it.turn.thinking) { const bd = it.turn.el.querySelector('.body'); bd.classList.remove('thinking'); bd.textContent = ''; it.turn.thinking = false; renderTeaching(); }
     const safe = guardInk(it.cmd);
     if (!safe) { dlog('left the learner\'s ink alone, skipped', it.cmd.cmd, it.cmd.id || (it.cmd.ids || []).join()); continue; }
-    it.cmd = safe; if (it.fix) it.turn.fixes = (it.turn.fixes || 0) + 1;   // a tidy fix counts once it is actually applied
+    it.cmd = safe;
     const before = it.cmd.id;
     queueBusy = true;
     const nextSay = queue.findIndex(x => x.say != null);
@@ -205,7 +204,7 @@ HOW TO TEACH HERE: SHOW IT ON THE BOARD, EXPLAIN IT IN YOUR VOICE
    Pick the tool that makes each idea obvious at a glance, e.g. protocol or request/response → sequence; anything over time → schedule; a system → icons + arrows inside frames.
 1. Every idea becomes a picture. Ask "what does this look like?" and draw that: things → icons or boxes; sequences, tokens, slots, queues → tokens; what happens over time → schedule (or several snapshots side by side); cause and movement → arrows; parts of a whole → frame; sizes and counts → brace, bars; structure → graph, tree, network.
 2. Draw the concrete example itself (the actual tokens, requests, numbers, names), never a description of it.
-3. Board text is labels only: 1-4 words or a number. At most 3 write commands per answer (a heading and short captions); in deep, one heading per part plus 2 captions. The explaining happens in your voice, not in board text. No sentences, definitions, legends or bullet lists on the board.
+3. Board text is labels only: 1-4 words or a number, at most 30 characters (arrow labels 22, a sub line 26, a token 14); longer text is cut off with … on the board. At most 3 write commands per answer (a heading and short captions); in deep, one heading per part plus 2 captions. The explaining happens in your voice, not in board text. No sentences, definitions, legends or bullet lists on the board.
 4. BEATS: the answer is a chain of beats. A beat = one spoken line + the 2-4 board commands right after it. The line is ONE idea in one short sentence (10-18 words, never more than 20); a sentence with two ideas ("X, because Y, so Z") is two or three beats, each with its own drawing. While the line is spoken, its commands draw exactly what it says, so a learner with the sound off could still follow the lesson from the board alone. Every beat must put something NEW on the board that carries its idea: a picture, data, an arrow, or an update that changes data already drawn. A beat whose only command is a write, a highlight or nothing is not allowed; a heading always goes together with the first picture of its part. Before writing each line, ask: "what does the learner SEE change while I say this?" If the answer is nothing, draw it or cut the sentence.
    Say what the drawing means and why, not what it is ("each row mixes all four inputs, so every output sees the whole token", not "this is the matrix"). Narrate what the pen is drawing right now: never talk ahead about something drawn later, or back about something drawn earlier without updating or highlighting it in the same beat (plus at least one new mark that shows the new point). A shape the sentence names (1×2, 3×4) is the shape drawn and highlighted with it, not a bigger picture it is part of (to point at one row of a matrix, tint that row with highlightRows, or draw the row on its own).
    TURN EVERY CLAIM INTO A PICTURE (the claim is what the drawing shows, not a caption):
@@ -301,20 +300,17 @@ function buildMessages(question, selIds, inkIds = [], image = null, steer = fals
 // ======================================================================
 // sending a question: one streamed call that talks and draws
 // ======================================================================
-// ======================================================================
-// look & tidy: after an answer is drawn, the teacher looks at a picture of it and fixes what is unclear
-// ======================================================================
+// the area around some drawings (the MCP look tool's picture)
 function regionAround(ids, grow) {
   const r = unionBox(ids); if (!r) return null;
   const area = { x: r.x - grow, y: r.y - grow, width: r.width + 2 * grow, height: r.height + 2 * grow };
   const near = [...objs.keys()].filter(k => overlaps(area, bbOf(objs.get(k)), 0));
   return unionBox(ids.concat(near));
 }
-// Cheap geometric checks the picture review is told about: overlaps, arrows through drawings, cut labels.
+// Cheap geometric checks reported to an MCP client after each draw: overlaps, arrows through drawings, cut labels.
 function layoutIssues(ids) {
   const out = [], mine = new Set(ids), solid = [...objs.values()].filter(o => BOXLIKE.has(o.cmd.cmd));
   const shrink = (b, m) => ({ x: b.x + m, y: b.y + m, width: Math.max(0, b.width - 2 * m), height: Math.max(0, b.height - 2 * m) });
-  const inside = (p, b) => p[0] > b.x && p[0] < b.x + b.width && p[1] > b.y && p[1] < b.y + b.height;
   for (let i = 0; i < solid.length; i++) for (let j = i + 1; j < solid.length; j++) {
     const a = solid[i], b = solid[j];
     if (!mine.has(a.cmd.id) && !mine.has(b.cmd.id)) continue;
@@ -322,13 +318,8 @@ function layoutIssues(ids) {
   }
   for (const id of ids) {
     const o = objs.get(id); if (!o || o.cmd.cmd !== 'arrow') continue;
-    const geo = arrowGeometry(o.cmd); if (!geo) continue;
-    const [p1, q, p2] = geo, hit = new Set();
-    for (let k = 2; k <= 18; k++) {
-      const t = k / 20, u = 1 - t, p = [u * u * p1[0] + 2 * u * t * q[0] + t * t * p2[0], u * u * p1[1] + 2 * u * t * q[1] + t * t * p2[1]];
-      for (const s of solid) if (s.cmd.id !== o.cmd.from && s.cmd.id !== o.cmd.to && inside(p, shrink(bbOf(s), 6))) hit.add(s.cmd.id);
-    }
-    if (hit.size) out.push(`arrow ${id} passes through ${[...hit].map(h => `${h} (${nameOf(h)})`).join(', ')}`);
+    const hit = arrowHits(o.cmd);
+    if (hit.length) out.push(`arrow ${id} passes through ${hit.map(h => `${h} (${nameOf(h)})`).join(', ')}`);
   }
   for (const id of ids) {
     const c = objs.get(id) && objs.get(id).cmd; if (!c) continue;
@@ -337,62 +328,6 @@ function layoutIssues(ids) {
   }
   return out.slice(0, 14);
 }
-async function waitForBoard(run, signal) {
-  const t0 = Date.now();
-  while ((queue.length || queueBusy) && run.gen === gen && !signal.aborted && Date.now() - t0 < 300000) await sleep(150);
-}
-async function tidyPass({ question, answer, model, run, turn, signal }) {
-  await waitForBoard(run, signal);
-  if (run.gen !== gen || signal.aborted) return;
-  const offTab = () => turn.tab && turn.tab !== activeTab;
-  if (offTab()) { dlog('tidy: skipped, its tab is not on screen'); return; }
-  const ids = [...turn.drew].filter(id => objs.has(id) && objs.get(id).cmd.cmd !== 'ink');
-  if (!ids.length) return;
-  const issues = layoutIssues(ids);
-  if (ids.length < 3 && !issues.length) return;           // a tiny edit: nothing worth reviewing
-  const vm = (modelInfo(model) || {}).vision ? model : ((models.find(m => m.id === 'deepseek-v4.1-flash' && m.vision) || models.find(m => m.vision) || {}).id);
-  if (!vm && !issues.length) return;
-  const status = document.createElement('div'); status.className = 'tidy'; status.textContent = '👀 Checking the drawing…';
-  turn.el.appendChild(status); scrollChat();
-  const region = regionAround(ids, 120);
-  let image = null;
-  if (vm && region) { try { image = await boardImage(region); } catch (e) { dlog('tidy: picture failed', String(e)); } }
-  if (offTab()) { status.remove(); dlog('tidy: skipped, the view moved to another tab'); return; }
-  const r = n => Math.round(n);
-  const text = boardNow() + `REVIEW YOUR BOARD. ${image ? `The attached picture shows what you just drew (board area x ${r(region.x)}..${r(region.x + region.width)}, y ${r(region.y)}..${r(region.y + region.height)}). Look at it the way the learner sees it.` : 'You cannot see a picture this time: use the checks below and the object list.'}
-Objects you drew in this answer: ${ids.join(', ')}.
-Automatic checks found:
-${issues.length ? issues.map(s => '- ' + s).join('\n') : '- nothing obvious'}
-
-Fix only real problems: drawings that overlap or touch, arrows that cross other drawings or point at the wrong thing, labels that are cut off or unreadable, a cramped or messy layout, something in the picture that is wrong or confusing, or a missing arrow or label the explanation needs.
-Reply with JSON Lines of fix commands only:
-- move: {"cmd":"move","id":"x","dx":0,"dy":120}  (arrows, frames, braces and highlights follow automatically)
-- update: change fields of one object, e.g. a shorter "label", or "curve":0.4 to bend an arrow around something
-- erase: a duplicate or wrong drawing
-- at most 3 new small drawings (arrow, highlight, brace) if the explanation needs them
-At most ${FIX_MAX} lines. No say lines, no plan, no write, no clear. Never touch ink objects (the learner's sketches). Leave what is fine alone.
-If the board already looks clear, reply with exactly {"ok":true}`;
-  const msgs = [
-    { role: 'system', content: systemPrompt() },
-    { role: 'user', content: question },
-    { role: 'assistant', content: answer.slice(0, 6000) || '(drew only)' },
-    { role: 'user', content: image ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }] : text },
-  ];
-  const useModel = vm || model;
-  const before = turn.fixes || 0;
-  try {
-    await streamAnswer(msgs, { model: useModel, effort: useModel === settings.model ? (currentEffort() === 'auto' ? null : currentEffort()) : (defaultEffort(useModel) === 'auto' ? null : defaultEffort(useModel)), run, turn, signal, fix: true });
-    await waitForBoard(run, signal);
-  } catch (e) {
-    if (e.name !== 'AbortError' && !signal.aborted) dlog('tidy: review failed', e.code || '', e.message);
-    status.remove(); return;
-  }
-  const n = (turn.fixes || 0) - before;
-  dlog('tidy:', issues.length, 'issues found,', n, 'fixes applied');
-  status.textContent = n ? `✨ Tidied ${n} thing${n === 1 ? '' : 's'} on the board` : '✓ Drawing checked';
-  setTimeout(() => status.remove(), 4000);
-}
-
 // ======================================================================
 // depth: the model decides from the meaning of the question how much to teach ({"plan":{"depth":…}}).
 // The app never inspects the question's words; it only sizes its limits to the model's own decision.
@@ -625,10 +560,7 @@ async function sendQ(q, opts, opened) {
       modelApplied = r2.model || modelApplied;
       answer += '\n' + r2.content;
     }
-    turn.answered = true;   // every line of the answer is in (the tidy-up below only adjusts the board)
-    // look at what was drawn and fix what is unclear (best effort; never fails the answer)
-    if (!myAbort.signal.aborted && run.gen === gen)
-      await tidyPass({ question: q, answer, model, run, turn, signal: myAbort.signal });
+    turn.answered = true;   // every line of the answer is in
   } catch (err) {
     // Safari aborts the fetch as the page goes away: not an error, not a Stop (base.js). If the page stays after all, it was a cut
     if (unloading) { await afterUnload(); if (err.name !== 'AbortError' && !myAbort.signal.aborted) err = Object.assign(new Error(''), { code: 'cut_off' }); }
@@ -664,7 +596,7 @@ async function sendQ(q, opts, opened) {
       if (turn.next) am.next = turn.next;
       if (turn.depth) am.depth = turn.depth;
       const st = turn.stats, speed = st && st.ms > 0 && st.tok > 0 ? `${st.est ? '≈' : ''}${Math.round(st.tok / (st.ms / 1000))} tok/s` : '';
-      am.meta = `${modelApplied || model || 'model'}${effort ? ' · ' + effort : ''} · ${Math.round((Date.now() - t0) / 1000)}s${speed ? ' · ' + speed : ''}${turn.fixes ? ` · tidied ${turn.fixes}` : ''}`;
+      am.meta = `${modelApplied || model || 'model'}${effort ? ' · ' + effort : ''} · ${Math.round((Date.now() - t0) / 1000)}s${speed ? ' · ' + speed : ''}`;
       const meta = turn.el.querySelector('.meta'); if (meta) meta.textContent = am.meta;
       if (final && turn.thinking && !failed) { body.classList.remove('thinking'); body.textContent = am.drew.length ? '(drew on the board)' : '(no answer)'; turn.thinking = false; }
       renderChips(); saveSoon();
@@ -677,9 +609,7 @@ async function sendQ(q, opts, opened) {
 }
 
 // One streamed Chat Completions call. Say lines and board commands are queued as each line completes.
-// fix = true: a tidy-up pass. Only board edits are taken (no talking, no clear, never the learner's ink), at most FIX_MAX.
-async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, onContent, fix = false, search = false, followUp = false }) {
-  let fixes = 0;
+async function streamAnswer(messages, { model, effort, run, turn, signal, onReasoning, onContent, search = false, followUp = false }) {
   let content = '', partial = '', jsonBuf = null, strays = 0, proseNoted = false, modelApplied = null, finish = null, ended = false, reasoned = 0;
   let usage = null, firstT = 0;   // the provider's token count (last chunk) and when the reply started arriving
   // brace depth outside strings: >0 means the JSON object continues on the next line
@@ -704,7 +634,6 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     enqueue(b.say); b.cmds.forEach(enqueue);
   };
   const put = item => {
-    if (fix) { enqueue(item); return; }
     if (item.say != null) {
       if (turn) turn.saidLines = (turn.saidLines || 0) + 1;
       flushBeat();
@@ -714,7 +643,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     } else if (beat) beat.cmds.push(item);
     else enqueue(item);
   };
-  const keepLine = l => { if (fix || !turn || !turn.got) return; turn.got.push(l); if (turn.got.length > INFLIGHT_LINES) turn.got.splice(0, turn.got.length - INFLIGHT_LINES); };
+  const keepLine = l => { if (!turn || !turn.got) return; turn.got.push(l); if (turn.got.length > INFLIGHT_LINES) turn.got.splice(0, turn.got.length - INFLIGHT_LINES); };
   const handleLine = rawLine => {
     let line = rawLine.trim();
     if (!line || /^```/.test(line)) return;
@@ -737,23 +666,14 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         if (!it || typeof it !== 'object') continue;
         if (turn && (it.say != null || it.cmd || it.type || it.op)) turn.jsonSeen = true;   // a plan line alone does not count: the model may still answer in prose
         if (typeof it.plan === 'string') dlog('plan:', it.plan.slice(0, 200));
-        if (!fix && it.plan && typeof it.plan === 'object' && typeof it.plan.depth === 'string') applyPlan(turn, it.plan);
-        if (!fix && Array.isArray(it.next)) { const nx = it.next.map(x => clip(x, 70)).filter(Boolean).slice(0, 4); if (nx.length) turn.next = nx; }
+        if (it.plan && typeof it.plan === 'object' && typeof it.plan.depth === 'string') applyPlan(turn, it.plan);
+        if (Array.isArray(it.next)) { const nx = it.next.map(x => clip(x, 70)).filter(Boolean).slice(0, 4); if (nx.length) turn.next = nx; }
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
         if (it.say != null) {
           const t = trimSay(str(it.say, 1200)); if (t.length < String(it.say).trim().length) dlog('shortened a long spoken line');
-          if (!fix) put({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
+          put({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
         }
         if (it.cmd || it.type || it.op) {
-          if (fix) {
-            const c = normalize(it);
-            if (!c || c.cmd === 'clear' || c.cmd === 'wait' || c.cmd === 'write' || fixes >= FIX_MAX) { dlog('tidy: skipped', JSON.stringify(it).slice(0, 120)); continue; }
-            const touches = c.cmd === 'erase' ? c.ids : ['move', 'update'].includes(c.cmd) ? [c.id] : [];
-            const inkOf = id => withTab(turn.tab || activeTab, () => isInk(id));   // the answer's own board
-            if (touches.some(inkOf)) { dlog('tidy: left the learner\'s ink alone', c.id); continue; }
-            if (c.cmd === 'erase') c.ids = c.ids.filter(id => !inkOf(id));
-            fixes++; enqueue({ cmd: c, run, turn, fix: true }); continue;
-          }
           if (turn.cmds >= limitsOf(turn).cmds) { dlog('over the per-answer command limit, skipped', it.cmd); continue; }
           const c = normalize(it); if (!c) { dlog('unknown or invalid command skipped', JSON.stringify(it).slice(0, 160)); continue; }
           if (c.cmd === 'write' && (turn.writes = (turn.writes || 0) + 1) > limitsOf(turn).writes) { dlog('too much writing: skipped', c.text); continue; }
@@ -763,7 +683,6 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
       }
     } else {
       jsonBuf = null;
-      if (fix) return;
       // once a say/cmd line has parsed (or in the forced drawing follow-up, which asks for JSON), prose is a stray; before that it is the fallback for models that ignore the format
       if ((turn && turn.jsonSeen) || followUp) { if (++strays <= 3) dlog('dropped a plain-text line in a JSON Lines answer', JSON.stringify(line.slice(0, 60))); return; }
       if (!proseNoted) { proseNoted = true; dlog('plain text before any JSON line: the model is not following the JSON Lines format'); }
@@ -787,7 +706,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   let sse = '', bytes = 0;
   const t0 = Date.now();
   try {
-  dlog('stream start', lab(turn), model, effort || 'auto', search ? '· with web search' : '', fix ? '· tidy' : '');
+  dlog('stream start', lab(turn), model, effort || 'auto', search ? '· with web search' : '');
   for (;;) {
     // no bytes for 120 s means the model stalled (reasoning models still stream while thinking)
     let stallTimer;
@@ -828,9 +747,9 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
   if (jsonBuf) { const b = jsonBuf; jsonBuf = null; try { handleLine(b); } catch {} }
   } finally { if (signal && signal.aborted) { if (beat) clearTimeout(beat.timer); beat = null; if (turn) turn.beat = null; } else flushBeat(); }
   if (!content.trim()) {
-    throw Object.assign(new Error(''), { code: reasoned && finish === 'length' ? 'thinking_budget' : !finish && !ended && !fix ? 'cut_off' : 'empty' });
+    throw Object.assign(new Error(''), { code: reasoned && finish === 'length' ? 'thinking_budget' : !finish && !ended ? 'cut_off' : 'empty' });
   }
-  // tokens/second over this reply's streaming time (a turn can stream several replies: drawing follow-up, tidy-up)
+  // tokens/second over this reply's streaming time (a turn can stream several replies: the drawing follow-up)
   if (turn && firstT) {
     const exact = !!(usage && usage.completion_tokens != null);
     const st = turn.stats || (turn.stats = { tok: 0, ms: 0, est: false });
@@ -839,6 +758,6 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
     if (!exact) st.est = true;
   }
   // a clean EOF with neither a finish reason nor [DONE] is a cut-off connection, not a finished answer (the lines that arrived are already queued)
-  if (!finish && !ended && !fix) { dlog('stream cut off: ended without a finish reason or [DONE]'); throw Object.assign(new Error(''), { code: 'cut_off' }); }
+  if (!finish && !ended) { dlog('stream cut off: ended without a finish reason or [DONE]'); throw Object.assign(new Error(''), { code: 'cut_off' }); }
   return { content, model: modelApplied };
 }
