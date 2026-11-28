@@ -140,17 +140,29 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // narration settings
 // ======================================================================
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
-function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro' }; }
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro', enVoice: v.enVoice, hiVoice: v.hiVoice }; }
 function applyVoice() {
   const v = voiceCfg();
   Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });
   $('#voiceModeSeg').querySelectorAll('button').forEach(b => { const on = b.dataset.m === v.mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   fillVoiceList();
+  $('#langSeg').querySelectorAll('button').forEach(b => { const on = b.dataset.l === teachLang(); b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   $('#voiceSpeed').value = String(v.speed); $('#voiceSpeedVal').textContent = v.speed.toFixed(2) + '×';
   $('#kokoroRow').hidden = v.mode !== 'kokoro';
   $('#muteBtn').textContent = v.mode === 'off' ? '🔇' : '🔊';
   $('#muteBtn').setAttribute('aria-pressed', v.mode !== 'off');
   renderVoiceStatus(Voice.status());
+}
+// teaching language: Hinglish lessons are read by a Hindi voice, so switching picks one (and switching back
+// returns to the English voice used before)
+const teachLang = () => settings.lang === 'hinglish' ? 'hinglish' : 'en';
+const isHindiVoice = id => /^h[fm]_/.test(id || '');
+function setLang(l) {
+  if (l === teachLang()) return;
+  const v = voiceCfg(); settings.lang = l;
+  if (l === 'hinglish' && !isHindiVoice(v.voice)) setVoice({ voice: v.hiVoice || 'hf_alpha', enVoice: v.voice });
+  else if (l === 'en' && isHindiVoice(v.voice)) setVoice({ voice: v.enVoice || 'af_heart', hiVoice: v.voice });
+  else { saveSettings(); applyVoice(); }
 }
 function setVoice(patch) { settings.voice = { ...voiceCfg(), ...patch }; saveSettings(); applyVoice(); }
 function renderVoiceStatus(st) {
@@ -164,9 +176,9 @@ Voice.onStatus(renderVoiceStatus);
 const voiceRows = () => [...$('#voiceList').querySelectorAll('.mRow')];
 function fillVoiceList() {
   const box = $('#voiceList'), cur = voiceCfg().voice; box.textContent = '';
-  const groups = [['American', 'US'], ['British', 'UK']];
+  const groups = [['American', 'US'], ['British', 'UK'], ['Hindi · for Hinglish', 'Hindi']];
   for (const [label, tag] of groups) {
-    const list = Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; }).filter(v => v.acc === tag);
+    const list = Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK|Hindi), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; }).filter(v => v.acc === tag);
     if (!list.length) continue;
     const h = document.createElement('div'); h.className = 'mGroup'; h.textContent = label; box.appendChild(h);
     for (const v of list) {
@@ -198,6 +210,7 @@ $('#voiceList').onkeydown = e => {
     try { const r = await Voice.preview(); b.textContent = '🔊 playing'; await r.done; } catch (e) { dlog('preview failed', String(e)); }
     b.textContent = '▶ Preview voice'; renderVoiceStatus(Voice.status());
   };
+  $('#langSeg').querySelectorAll('button').forEach(b => { b.onclick = () => setLang(b.dataset.l); });
   $('#voiceSpeed').oninput = e => setVoice({ speed: Number(e.target.value) });
   $('#muteBtn').onclick = () => { const v = voiceCfg(); if (v.mode === 'off') setVoice({ mode: v.lastMode || 'kokoro' }); else { Voice.stop(); setVoice({ mode: 'off', lastMode: v.mode }); } };
   document.addEventListener('pointerdown', () => Voice.unlock(), { capture: true });
@@ -310,7 +323,7 @@ const MCP_METHODS = {
     let n = 0;
     for (const st of parts.slice(0, 40)) {
       if (!st || typeof st !== 'object') continue;
-      if (st.say) { const t = trimSay(str(st.say, 1200)); enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null }); }
+      if (st.say) { const t = trimSay(str(st.say, 1200)), hi = typeof st.hi === 'string' ? trimSay(str(st.hi, 1500)) : undefined; enqueue({ say: t, hi, turn, run, voice: Voice.enabled() ? Voice.prepare(t, hi) : null }); }
       for (const raw of Array.isArray(st.commands) ? st.commands : []) {
         if (++n > 300) { errors.push('more than 300 commands in one call: the rest were skipped'); break; }
         const c = normalize(raw);

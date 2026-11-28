@@ -236,7 +236,7 @@ function parkLive(why = 'look') {   // why: 'question' (a side question) or 'loo
   if (cut) {
     const pos = Voice.position(), mine = pos && lastSay.voice && pos.h === lastSay.voice;
     if (why === 'look' && lastSay.voice && !mine && !Voice.speaking() && queueBusy) dlog('set aside after its sentence was said: it is not said again');
-    else t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? (why === 'look' && mine ? lastSay.voice : Voice.prepare(lastSay.say)) : null, from: why === 'look' && mine ? Math.max(0, pos.at - 0.3) : 0 });
+    else t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? (why === 'look' && mine ? lastSay.voice : Voice.prepare(lastSay.say, lastSay.hi)) : null, from: why === 'look' && mine ? Math.max(0, pos.at - 0.3) : 0 });
   }
   if (currentItem && currentItem.cmd && currentItem.turn === t) currentItem.keep = true;
   forks.push({ turn: t, why, wasPaused, holdPause: false, abort: t.abort, say: lastSay && lastSay.turn === t ? lastSay.say : '' }); parked = forks[forks.length - 1];

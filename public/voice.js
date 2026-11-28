@@ -130,8 +130,9 @@ window.Voice = (() => {
   // question). Only the line about to play and the next few (prefetch) are made, and a line that must play now
   // jumps to the front.
   const wantQ = []; let inflight = 0; const MAX_INFLIGHT = 1;   // one at a time: a line that must play next waits for at most one other
-  function prepare(text) {
-    const clean = speakable(text);
+  // spoken: what the voice says when it differs from the words shown (a Hinglish line, with its Hindi in Devanagari)
+  function prepare(text, spoken) {
+    const clean = speakable(spoken && isHindi() ? spoken : text);
     return { text: clean, raw: text, audio: null, started: false };
   }
   function want(h, urgent) {
@@ -224,7 +225,9 @@ window.Voice = (() => {
     ['af_bella', 'Bella (US, female)'], ['af_heart', 'Heart (US, female)'], ['af_nicole', 'Nicole (US, female, soft)'], ['af_sarah', 'Sarah (US, female)'],
     ['am_michael', 'Michael (US, male)'], ['am_fenrir', 'Fenrir (US, male)'], ['am_puck', 'Puck (US, male)'],
     ['bf_emma', 'Emma (UK, female)'], ['bf_isabella', 'Isabella (UK, female)'], ['bm_george', 'George (UK, male)'], ['bm_fable', 'Fable (UK, male)'],
+    ['hf_alpha', 'Alpha (Hindi, female)'], ['hf_beta', 'Beta (Hindi, female)'], ['hm_omega', 'Omega (Hindi, male)'], ['hm_psi', 'Psi (Hindi, male)'],
   ];
+  const isHindi = () => cfg.voice[0] === 'h';
   const voiceName = () => (VOICES.find(v => v[0] === cfg.voice) || [, cfg.voice])[1];
 
   // Which voice is (or will be) speaking, in plain words for the settings panel.
@@ -236,7 +239,9 @@ window.Voice = (() => {
   }
   async function preview() {
     stop();
-    return play(prepare(`Hi, I'm ${voiceName().split(' (')[0]}. Let's learn something together on the whiteboard.`));
+    const name = voiceName().split(' (')[0];
+    return play(isHindi() ? prepare(`Namaste, main ${name} hoon.`, `नमस्ते, मैं ${name} हूँ। चलिए whiteboard पे साथ में कुछ नया सीखते हैं।`)
+      : prepare(`Hi, I'm ${name}. Let's learn something together on the whiteboard.`));
   }
 
   return {
