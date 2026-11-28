@@ -181,13 +181,15 @@ Answer short and direct: usually 2 to 6 sentences, a short list only when it tru
 You cannot draw here, but the teacher can. When the learner asks for a drawing, diagram, picture, visual or worked explanation on the board (for example "draw it", "show me with a diagram", "explain it on the board", "visualise this"), do not answer it yourself: hand it to the teacher by replying with exactly one JSON line and nothing else:
 {"handoff":"<the question for the teacher, as the learner asking it in the first person (\"Draw …\", \"Show me …\"), written to stand on its own: name the drawings it is about and what the learner wants explained or drawn, including anything from this popup's thread it depends on>","note":"<one short sentence to the learner saying what the teacher will draw>"}
 Write both in the language of the learner's question. Hand off only when the learner asks for something to be drawn or shown on the board. Otherwise answer in text, never write drawing commands or board code, and if the question really needs a full drawn explanation, give the short answer and add one line saying they can ask "draw it" here to have the teacher draw it.
-If the board is empty, say so briefly and answer from the lesson and chat if you can. Follow-up questions in this popup continue the same thread. Answer in the language of the learner's question.`;
+If the board is empty, say so briefly and answer from the lesson and chat if you can. Follow-up questions in this popup continue the same thread. Answer in the language of the learner's question.
+When a WEB SEARCH CONTEXT block is given with the question, use it for anything current or recent, prefer it over memory, and cite the sources you used as Markdown links like [site](https://…) at the end of the sentence.`;
 const ASK_SYSTEM = `You answer a learner's quick question about one or more drawings on a teaching whiteboard, in a small popup next to them. The drawings, what they connect to, what is near them and what the teacher said while drawing them are given below; use them to know exactly what the learner is pointing at, and use the drawing's own names, numbers and labels.
 Answer short and direct: usually 2 to 5 sentences, a short list only when it truly helps. Lead with the answer itself, no preamble, no restating the question. Use Markdown where it helps (**bold** for the key term, short - lists); no tables or images. For maths use inline LaTeX between single dollar signs, like $W_1 x + b$.
 You cannot draw here, but the teacher can. When the learner asks for a drawing, diagram, picture, visual or worked explanation on the board (for example "draw it", "show me with a diagram", "explain it on the board", "visualise this"), do not answer it yourself: hand it to the teacher by replying with exactly one JSON line and nothing else:
 {"handoff":"<the question for the teacher, as the learner asking it in the first person (\"Draw …\", \"Show me …\"), written to stand on its own: name the drawings and what the learner wants explained or drawn, including anything from this popup's thread it depends on>","note":"<one short sentence to the learner saying what the teacher will draw>"}
 Write both in the language of the learner's question. Hand off only when the learner asks for something to be drawn or shown on the board. Otherwise answer in text, never write drawing commands or board code, and if the question really needs a full drawn explanation, give the short answer and add one line saying they can ask "draw it" here to have the teacher draw it.
-Follow-up questions in this popup continue the same thread about the same drawings. Answer in the language of the learner's question.`;
+Follow-up questions in this popup continue the same thread about the same drawings. Answer in the language of the learner's question.
+When a WEB SEARCH CONTEXT block is given with the question, use it for anything current or recent, prefer it over memory, and cite the sources you used as Markdown links like [site](https://…) at the end of the sentence.`;
 
 // the popup model's hand-off: {"handoff": "...", "note": "..."} (optionally in a code fence); null when it answered
 function parseHandoff(text) {
@@ -239,9 +241,13 @@ async function askQuick(p, q) {
   dlog('ask popup: asking', JSON.stringify(clip(q, 120)), '· about', p.board ? 'the whole board' : ids.join(','), '· model', model, eff, '· follow-up', p.thread.length - 1);
   const t0 = performance.now();
   let painted = 0;
+  const dots = text => { ad.innerHTML = '<span class="apDots"></span>'; ad.firstChild.textContent = text; ad.firstChild.insertAdjacentHTML('beforeend', '<i>.</i><i>.</i><i>.</i>'); };
   const paint = () => { if (maybeHandoff(item.a)) return; painted = item.a.length; ad.classList.remove('thinking'); ad.innerHTML = mdToHtml(item.a); const nearEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40; if (nearEnd) log.scrollTop = log.scrollHeight; };
   try {
-    await streamText(model, eff === 'auto' ? null : eff, (lesson ? lesson.session : 'wbt') + '-ask', messages, ac.signal, delta => {
+    const session = (lesson ? lesson.session : 'wbt') + '-ask';
+    const searched = await popupSearch(messages, model, session, ac.signal, dots, qd);
+    if (searched) dots('thinking');
+    await streamText(model, eff === 'auto' ? null : eff, session, messages, ac.signal, searched, delta => {
       item.a += delta; if (item.a.length - painted > 6 || /[\s$.*]$/.test(delta)) paint();
     });
     const h = parseHandoff(item.a);
@@ -297,9 +303,37 @@ function mdToHtml(src) {
   flushPara(); flushList();
   return out.join('').replace(/\u0000(\d+)\u0000/g, (m, i) => keep[+i]);
 }
-// a streamed answer from /api/chat, handing each piece of text to onDelta (thinking is not shown)
-async function streamText(model, effort, session, messages, signal, onDelta) {
-  const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal, body: JSON.stringify({ model, effort, session, messages }) });
+// web search for a popup question: the server's planner decides whether it needs current information (/api/search
+// "plan"), then searches ("run"); the answer then gets the results from /api/chat (search: true). A note under the
+// question says what was searched. Fails fast: a failed plan or search throws and the popup shows the error.
+async function popupSearch(messages, model, session, signal, status, qd) {
+  const slim = messages.filter(m => m.role !== 'system');
+  const post = async step => {
+    const r = await fetch('/api/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal, body: JSON.stringify({ model, session, messages: slim, step }) });
+    if (!r.ok) throw new Error(`web search ${step}: HTTP ${r.status}`);
+    const j = await r.json(); if (j.error) throw new Error(`web search ${step}: ${j.error}`);
+    return j;
+  };
+  const t0 = performance.now(), plan = await post('plan');
+  dlog('ask popup: web search plan', plan.enabled ? `${plan.search ? 'search' : 'no search'} via ${plan.via || '-'} ${JSON.stringify(plan.queries || [])}` : 'off');
+  if (!plan.enabled || !plan.search || !(plan.queries || []).length) return false;
+  status(`🔎 searching the web: “${clip(plan.queries[0], 60)}”`);
+  const r = await post('run');
+  const failed = (r.results || []).filter(x => x.error);
+  if (failed.length && failed.length === (r.results || []).length) throw new Error('web search failed: ' + failed.map(x => x.error).join('; '));
+  const hits = (r.results || []).flatMap(x => x.hits || []);
+  const host = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+  dlog('ask popup: web search', (r.results || []).map(x => `“${x.q}” ${x.engine || ''} ${x.error ? 'failed: ' + x.error : (x.hits || []).length + ' results'}`).join(' | '), Math.round(performance.now() - t0) + 'ms');
+  const note = document.createElement('div'); note.className = 'apSearchNote';
+  note.textContent = hits.length ? `🔎 searched the web: ${[...new Set(hits.map(h => host(h.url)).filter(Boolean))].slice(0, 3).join(', ')}${hits.length > 3 ? ` (${hits.length} results)` : ''}` : '🔎 searched the web: nothing useful found';
+  note.title = (r.results || []).map(x => `“${x.q}” (${x.engine || 'search'})\n${(x.hits || []).map(h => `• ${h.title}\n  ${h.url}`).join('\n')}`).join('\n\n');
+  qd.after(note);
+  return hits.length > 0;
+}
+// a streamed answer from /api/chat, handing each piece of text to onDelta (thinking is not shown); search: the
+// server adds the web results it found for this question
+async function streamText(model, effort, session, messages, signal, search, onDelta) {
+  const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal, body: JSON.stringify({ model, effort, session, messages, search: search || undefined }) });
   if (!res.ok || !res.body) { let msg = 'HTTP ' + res.status; try { const j = await res.json(); msg = (j.error && j.error.message) || msg; } catch {} throw new Error(msg); }
   const reader = res.body.getReader(), dec = new TextDecoder(); let sse = '';
   for (;;) {
