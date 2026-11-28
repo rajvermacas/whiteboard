@@ -354,7 +354,7 @@ async function streamText(model, effort, session, messages, signal, search, onDe
 const KEYS = [
   ['Lesson', [['Play / pause', ['Space'], ['S']], ['Previous step', ['←'], ['A']], ['Next step', ['→'], ['D']], ['Teach slower', ['J']], ['Normal speed', ['K']], ['Teach faster', ['L']]]],
   ['Board', [['Draw on the board yourself (on / off)', ['W']], ['Zoom to fit everything', ['T']], ['Full screen', ['F']], ['Erase the selected drawing', ['Delete']], ['Clear the selection', ['Esc']]]],
-  ['Session', [['New session', ['N']], ['Open sessions', ['O']], ['Rename this session', ['R']], ['Jump to the chat box', ['Tab']], ['Back to the board from chat', ['Esc']]]],
+  ['Session', [['New session', ['N']], ['Open sessions', ['O']], ['Rename this session', ['R']], ['Speak a question (hold, let go to send)', ['E']], ['Jump to the chat box', ['Tab']], ['Back to the board from chat', ['Esc']]]],
   ['Mouse', [['Pan', ['Scroll']], ['Zoom', [/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl', 'Scroll']], ['Explain what is inside a drawing', ['Double-click']], ['Ask about a drawing, or the whole board', ['Right-click']]]],
   ['Help', [['Show these shortcuts', ['?']]]],
 ];
@@ -409,6 +409,8 @@ document.addEventListener('keydown', e => {
   if (k === 'o' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: O → open sessions'); $('#sessionsBtn').click(); return; }
   // R renames this session (the same as clicking its title)
   if (k === 'r' && !typing && plain && !e.repeat && lesson) { e.preventDefault(); dlog('user: R → rename session'); $('#topicBtn').click(); return; }
+  // E (held): speak a question with Hex; letting go sends it (dictate.js)
+  if (k === 'e' && !typing && plain) { e.preventDefault(); if (!e.repeat) dictateDown('E'); return; }
   // T zooms to fit everything on the board, the same as ⤢ Fit
   // W: the learner's pen on / off (the ✏️ Draw button)
   if (k === 'w' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: W → draw', penMode ? 'off' : 'on'); $('#penBtn').click(); return; }
