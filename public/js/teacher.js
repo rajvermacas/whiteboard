@@ -161,6 +161,11 @@ Every spoken line has two fields with the SAME sentence, word for word: "say" in
 {"say":"Ab dekhte hain ki CPU ko data kaise milta hai.","hi":"अब देखते हैं कि सीपीयू को डेटा कैसे मिलता है।"}
 Never translate an English word into a Hindi word in "hi" (data stays डेटा, not आँकड़े), and never leave Roman letters or digits there. Board labels, headings and captions stay in short English. The examples below are in English: speak them in Hinglish.
 `;
+// said again at the very end: in a long prompt whose examples are all English "say" lines, the model otherwise drops "hi"
+const HINGLISH_LAST = `
+
+LAST AND MOST IMPORTANT: this lesson is in HINGLISH. Every spoken line has BOTH "say" (Roman Hinglish) and "hi" (the same sentence all in Devanagari, English words spelled as an Indian teacher says them). A line without "hi" is read in the wrong accent. Example:
+{"say":"Model text ko numbers mein badalta hai.","hi":"मॉडल टेक्स्ट को नंबर्स में बदलता है।"}`;
 function systemPrompt() {
   return `You are a great teacher at a whiteboard. The board SHOWS the idea (pictures, not text); your voice EXPLAINS it: the reasoning, the why, the cause and effect, while the pen draws. A learner should come away actually understanding, not just having seen a diagram.
 
@@ -269,7 +274,7 @@ EXAMPLE of the balance wanted (a different topic; notice every beat is one short
 {"say":"A cache is a bet on reuse: win it often, and slow storage feels fast."}
 {"cmd":"frame","id":"fall","around":["fc","disk","slots"],"label":"the bet"}
 {"cmd":"highlight","id":"hl2","target":"hr","style":"circle","color":"#2a8a3e"}
-{"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}`;
+{"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}${teachLang() === 'hinglish' ? HINGLISH_LAST : ''}`;
 }
 // The parts of the prompt that change between calls (board, outline, selection, session name) go at the start of the
 // latest user message, not in the system prompt: providers cache a prompt by its unchanged beginning, so the long
