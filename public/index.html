@@ -77,13 +77,17 @@
         <span id="tlLabel"></span>
         <button id="tlLive" hidden title="Back to the live board">Live ●</button>
       </div>
+      <button id="chatShowBtn" hidden title="Show the chat (C)" aria-label="Show chat" aria-controls="chat" aria-expanded="false">⟨ 💬 <span class="lbl">Chat</span></button>
       <div id="emptyHint">Ask a question → the teacher talks in the chat and draws here at the same time. Double-click any drawing to open up what is inside it.</div>
     </section>
 
     <aside id="chat">
       <div class="chatHead">
         <button id="modelBtn" title="Model and reasoning">⚙ <span id="modelLabel">model</span></button>
-        <button id="clearChatBtn" title="Clear chat">Clear chat</button>
+        <span class="chatHeadR">
+          <button id="clearChatBtn" title="Clear chat">Clear chat</button>
+          <button id="chatHideBtn" title="Hide the chat, so the board fills the window (C)" aria-label="Hide chat" aria-controls="chat" aria-expanded="true">⟩</button>
+        </span>
       </div>
       <div id="modelPop" hidden>
         <div id="modelPick">

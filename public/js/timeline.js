@@ -27,6 +27,21 @@ function exitFullscreen() {
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) $('#app').classList.remove('fs'); setTimeout(applyCamera, 60); });
 new ResizeObserver(() => applyCamera()).observe(svg);
 
+// collapse the chat (⟩ in its header, or C): the board takes the whole width; ⟨ 💬 Chat on the board brings it back. Remembered per browser.
+function setChatHidden(hide) {
+  $('#app').classList.toggle('chatHidden', hide);
+  $('#chatShowBtn').hidden = !hide;
+  $('#chatHideBtn').setAttribute('aria-expanded', String(!hide));
+  $('#chatShowBtn').setAttribute('aria-expanded', String(!hide));
+  if (hide) $('#modelPop').hidden = true;
+  try { localStorage.setItem('wbt.chatHidden', hide ? '1' : '0'); } catch {}
+  dlog('chat', hide ? 'hidden' : 'shown');
+}
+function chatHidden() { return $('#app').classList.contains('chatHidden'); }
+$('#chatHideBtn').onclick = () => { setChatHidden(true); focusBoard(); };
+$('#chatShowBtn').onclick = () => setChatHidden(false);
+try { if (localStorage.getItem('wbt.chatHidden') === '1') setChatHidden(true); } catch {}
+
 async function replay() {
   const nav = navSteps(); if (!nav.length) return;
   if (liveBusy()) parkLive();

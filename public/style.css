@@ -59,6 +59,16 @@ button { font: inherit; cursor: pointer; }
 /* ---------- chat ---------- */
 .chatHead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid #eceef1; gap: 6px; }
 .chatHead button { border: 1px solid #e3e6ea; background: #fff; border-radius: 999px; padding: 4px 10px; font-size: 12px; color: #444c56; max-width: 70%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chatHeadR { display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }
+.chatHeadR button { max-width: none; }
+#chatHideBtn { font-size: 14px; line-height: 1; padding: 3px 9px; }
+/* chat collapsed (⟩ or C): the board takes the whole width; the ⟨ 💬 Chat tab on the board brings it back */
+#app.chatHidden #chat { display: none; }
+#app.chatHidden #boardWrap { flex: 1 1 auto; }
+#chatShowBtn { position: absolute; top: 12px; right: 12px; z-index: 4; border: 1px solid #e3e6ea; background: #fff; border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; color: #444c56; box-shadow: 0 2px 10px rgba(0,0,0,.08); cursor: pointer; }
+#chatShowBtn:hover { background: #f3f4f6; }
+#chatShowBtn[hidden], .embed #chatShowBtn { display: none; }
+#app.chatHidden #pendingPill { top: 54px; }
 #modelPop { position: absolute; top: 40px; left: 10px; right: 10px; z-index: 5; background: #fff; border: 1px solid #e3e6ea; border-radius: 12px; padding: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.12); font-size: 13px; }
 #modelPop label { display: flex; flex-direction: column; gap: 4px; }
 #modelPop select { font: inherit; padding: 6px; border-radius: 8px; border: 1px solid #d0d5db; }

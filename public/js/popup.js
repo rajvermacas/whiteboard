@@ -353,7 +353,7 @@ async function streamText(model, effort, session, messages, signal, search, onDe
 // the shortcuts card (⌨ in the top bar, or ?): one list, so the card and the keys below stay in step
 const KEYS = [
   ['Lesson', [['Play / pause', ['Space'], ['S']], ['Previous step', ['←'], ['A']], ['Next step', ['→'], ['D']], ['Teach slower', ['J']], ['Normal speed', ['K']], ['Teach faster', ['L']]]],
-  ['Board', [['Draw on the board yourself (on / off)', ['W']], ['Zoom to fit everything', ['T']], ['Full screen', ['F']], ['Erase the selected drawing', ['Delete']], ['Clear the selection', ['Esc']]]],
+  ['Board', [['Draw on the board yourself (on / off)', ['W']], ['Zoom to fit everything', ['T']], ['Full screen', ['F']], ['Hide / show the chat', ['C']], ['Erase the selected drawing', ['Delete']], ['Clear the selection', ['Esc']]]],
   ['Session', [['New session', ['N']], ['Open sessions', ['O']], ['Rename this session', ['R']], ['Speak a question (hold, let go to send)', ['E']], ['Jump to the chat box', ['Tab']], ['Back to the board from chat', ['Esc']]]],
   ['Mouse', [['Pan', ['Scroll']], ['Zoom', [/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl', 'Scroll']], ['Explain what is inside a drawing', ['Double-click']], ['Ask about a drawing, or the whole board', ['Right-click']]]],
   ['Help', [['Show these shortcuts', ['?']]]],
@@ -398,11 +398,13 @@ document.addEventListener('keydown', e => {
     e.preventDefault(); if (ae && ae !== document.body && !ae.closest('#boardWrap')) focusBoard(); dlog(`user: ${k === ' ' ? 'space' : 'S'} on the board → ${keyBtn.id === 'tlPlay' ? 'timeline' : 'chat pause'}`, keyBtn.id === 'tlPlay' ? keyBtn.textContent : isPaused() ? '▶' : '⏸'); keyBtn.click(); return;
   }
   // Tab (outside the text fields) jumps to the chat box; Escape in the (empty or not) chat box hands the keys back to the board
-  if (e.key === 'Tab' && !typing && plain) { e.preventDefault(); input.focus({ preventScroll: true }); return; }
+  if (e.key === 'Tab' && !typing && plain) { e.preventDefault(); if (chatHidden()) setChatHidden(false); input.focus({ preventScroll: true }); return; }
   // F toggles full screen (not while typing in the chat box or a field)
   if (!typing && plain && !e.repeat && (e.key === 'f' || e.key === 'F')) {
     e.preventDefault(); dlog('user: F → full screen', !$('#app').classList.contains('fs')); $('#fsBtn').click(); return;
   }
+  // C hides / shows the chat column, so the board can fill the window
+  if (k === 'c' && !typing && plain && !e.repeat && !document.body.classList.contains('embed')) { e.preventDefault(); setChatHidden(!chatHidden()); return; }
   // N starts a new session, the same as ＋ New
   if (k === 'n' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: N → new session'); $('#newBtn').click(); return; }
   // O opens the sessions list, the same as the Sessions button
