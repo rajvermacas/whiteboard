@@ -60,7 +60,15 @@ let abortCtl = null, lastUserCamera = 0, autoId = 0;
 // lesson freezes mid-stroke and resumes exactly there. The model's text keeps arriving in the background.
 let pausedAt = null, pausedTotal = 0;
 const pauseWaiters = [];
-const clock = () => (pausedAt ?? performance.now()) - pausedTotal;
+// Lesson speed: the lesson clock runs lessonRate× real time (J / K / L), so the pen, the pacing, the typing and the
+// breaths between lines all speed up or slow down together; the voice plays at the same rate (Voice.setRate).
+let lessonRate = 1, rateAt = { real: 0, virt: 0 };
+const LESSON_SPEED_MIN = 0.5, LESSON_SPEED_MAX = 2, LESSON_SPEED_STEP = 0.1;
+const realClock = () => (pausedAt ?? performance.now()) - pausedTotal;
+const clock = () => rateAt.virt + (realClock() - rateAt.real) * lessonRate;
+function setClockRate(r) { rateAt = { real: realClock(), virt: clock() }; lessonRate = r; }
+// wait ms of lesson time: stands still while paused, and follows a speed change made while waiting
+function lsleep(ms) { const until = clock() + ms; return new Promise(res => { const tick = () => clock() >= until ? res() : setTimeout(tick, 30); tick(); }); }
 const isPaused = () => pausedAt != null;
 const whilePaused = () => pausedAt == null ? Promise.resolve() : new Promise(r => pauseWaiters.push(r));
 let activeStreams = 0;          // answers whose model stream is open (a paused, set-aside answer may keep streaming)

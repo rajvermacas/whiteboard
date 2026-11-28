@@ -409,9 +409,7 @@ async function resumeSession(id) {
 }
 async function loadAll() {
   try { Object.assign(settings, JSON.parse(localStorage.getItem(LS_SET) || '{}')); } catch {}
-  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'kokoro', voice: 'af_heart', speed: 0.85, engine: 'server' };
-  // default speaking speed is 0.85× (v1): move the old 1× default over once; a speed picked later is kept
-  if (!settings.speedV1) { if (!settings.voice.speed || settings.voice.speed === 1) settings.voice.speed = 0.85; settings.speedV1 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
+  if (!settings.voice || typeof settings.voice !== 'object') settings.voice = { mode: 'kokoro', voice: 'af_heart', engine: 'server' };
   // narration is on by default (v4): switch it on once for everyone (Kokoro, Bella); 🔊 / ⚙ turn it off and that is kept
   if (!settings.voiceV4) { settings.voice = { ...settings.voice, mode: 'kokoro', voice: settings.voice.voice || 'af_heart' }; settings.voiceV3 = settings.voiceV4 = true; try { localStorage.setItem(LS_SET, JSON.stringify(settings)); } catch {} }
   if (!settings.efforts || typeof settings.efforts !== 'object') settings.efforts = {};

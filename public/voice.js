@@ -7,7 +7,12 @@
  */
 window.Voice = (() => {
   'use strict';
-  let cfg = { mode: 'kokoro', voice: 'af_heart', speed: 0.85, engine: 'server' };
+  let cfg = { mode: 'kokoro', voice: 'af_heart', engine: 'server' };
+  // Lesson speed: at 1× Kokoro speaks at BASE_SPEED. A new line is made at BASE_SPEED × rate (Kokoro's own pace sounds
+  // most natural); a line made at another rate, a Maya line (one speed only), or a sentence the speed changes in the
+  // middle of is time-stretched (pitch kept) so it plays at the lesson rate.
+  const BASE_SPEED = 0.85;
+  let rate = 1;
   let serverState = 'unknown';         // unknown | loading | ready | unavailable
   let ctx = null, current = null, epoch = 0, speakingNow = false, lastSource = '';
   const cache = new Map(), listeners = new Set();
@@ -94,8 +99,8 @@ window.Voice = (() => {
     } catch (e) { log('status check failed', String(e)); }
     polling = false;
   }
-  async function synth(text) {
-    const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: cfg.voice, speed: cfg.speed }) });
+  async function synth(text, speed) {
+    const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: cfg.voice, speed }) });
     if (r.status === 501) { serverState = 'unavailable'; checkServer(); throw new Error(engine() + ' is not available on the server'); }
     if (!r.ok) throw new Error('server voice error ' + r.status);
     const genMs = Number(r.headers.get('X-Gen-Ms') || 0);
@@ -105,14 +110,46 @@ window.Voice = (() => {
     if (genMs && buf.duration > 0.8) log(engine() + ' generated', buf.duration.toFixed(1) + 's audio in', (genMs / 1000).toFixed(1) + 's');
     return buf;
   }
+  // resolves to {buf, g}: g is the lesson rate the audio was made for (its length at 1× is buf.duration × g)
   function synthKokoro(text) {
-    const key = `${cfg.voice}|${cfg.speed}|${text}`;
+    const speed = isMaya() ? 1 : Math.round(Math.min(2, Math.max(0.5, BASE_SPEED * rate)) * 1000) / 1000;   // the server's range
+    const g = isMaya() ? 1 : speed / BASE_SPEED;
+    const key = `${cfg.voice}|${speed}|${text}`;
     if (cache.has(key)) return cache.get(key);
-    const p = synth(text);
+    const p = synth(text, speed).then(buf => ({ buf, g }));
     p.catch(() => cache.delete(key));
     cache.set(key, p);
     if (cache.size > 300) cache.delete(cache.keys().next().value);
     return p;
+  }
+  // WSOLA time-stretch: play buf `factor`× faster (factor < 1 slower) without changing its pitch. Each 32 ms frame is
+  // taken near where it should be, at the offset that lines up best with where the previous frame would carry on.
+  const stretched = new WeakMap();
+  function stretchBuf(buf, factor) {
+    if (Math.abs(factor - 1) < 0.01) return buf;
+    const key = Math.round(factor * 1000);
+    let m = stretched.get(buf); if (!m) stretched.set(buf, m = new Map());
+    if (m.has(key)) return m.get(key);
+    const sr = buf.sampleRate, N = Math.round(sr * 0.032) & ~1, Hs = N >> 1, Ha = Hs * factor, tol = Math.round(sr * 0.008);
+    const inLen = buf.length, outLen = Math.max(1, Math.ceil(inLen / factor));
+    const out = new AudioBuffer({ numberOfChannels: buf.numberOfChannels, length: outLen, sampleRate: sr });
+    const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+    const x = buf.getChannelData(0), last = Math.max(0, inLen - N);
+    const chans = Array.from({ length: buf.numberOfChannels }, (_, k) => [buf.getChannelData(k), out.getChannelData(k)]);
+    let prev = 0;
+    for (let k = 0, o = 0; o < outLen; k++, o += Hs) {
+      let pos = Math.min(last, Math.round(k * Ha));
+      if (k > 0) {
+        const nat = prev + Hs, lo = Math.max(0, pos - tol), hi = Math.min(last, pos + tol), n = Math.min(N, inLen - nat);
+        let best = -Infinity;
+        for (let d = lo; d <= hi; d += 2) { let s = 0; for (let i = 0; i < n; i += 4) s += x[d + i] * x[nat + i]; if (s > best) { best = s; pos = d; } }
+      }
+      const n = Math.min(N, outLen - o, inLen - pos);
+      for (const [src, dst] of chans) for (let i = 0; i < n; i++) dst[o + i] += win[i] * src[pos + i];
+      prev = pos;
+    }
+    m.set(key, out);
+    return out;
   }
   const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), { timeout: true })), ms))]);
   // a line that cannot be spoken: no other voice steps in, the lesson keeps its pace in silence
@@ -172,8 +209,8 @@ window.Voice = (() => {
     if (!h.started) want(h, true);
     // wait for Kokoro (longer while the model is still loading); never switch to another voice
     const limit = status.state === 'loading' || serverState !== 'ready' ? 300000 : Math.max(60000, h.text.length * 400);
-    let buf;
-    try { buf = await withTimeout(h.audio, limit); }
+    let buf, g;
+    try { ({ buf, g } = await withTimeout(h.audio, limit)); }
     catch (e) {
       log(e.timeout ? 'kokoro audio not ready after ' + limit + 'ms: this line stays silent' : 'kokoro failed: ' + e.message + ' (this line stays silent)');
       if (myEpoch !== epoch) return none;   // stopped, Off or replaced meanwhile: a cancelled line is not a failure
@@ -195,18 +232,47 @@ window.Voice = (() => {
     }
     if (status.state === 'info') setStatus('ready', '');
     if (myEpoch !== epoch) return none;
-    const src = c.createBufferSource(); src.buffer = buf; src.connect(c.destination);
     let doneResolve; const done = new Promise(r => { doneResolve = r; });
-    const finish = () => { if (current && current.src === src) { current = null; speakingNow = false; } doneResolve(); };
-    src.onended = finish;
     from = Math.min(Math.max(0, from || 0), Math.max(0, buf.duration - 0.05));
-    current = { src, h, c, t0: c.currentTime - from, stop: () => { try { src.stop(); } catch {} speakingNow = false; doneResolve(); } };
+    current = { h, c, buf, g, done: doneResolve, stop() { try { this.src.stop(); } catch {} speakingNow = false; doneResolve(); } };
     speakingNow = true;
-    src.start(0, from);
+    startAt(current, from);
     lastSource = isMaya() ? 'maya-server' : 'kokoro-server';
-    activeTimeout((buf.duration - from + 1.5) * 1000, finish);   // never wait forever for onended
-    return { duration: buf.duration - from, done };
+    // the duration is in lesson time (its length at 1×): the caller paces drawing and typing on the lesson clock
+    return { duration: (buf.duration - from) * g, done };
   }
+  // (re)start the current line at `from` seconds into its audio, at the lesson rate
+  function startAt(cur, from) {
+    const k = rate / cur.g, src = cur.c.createBufferSource();
+    src.buffer = stretchBuf(cur.buf, k); src.connect(cur.c.destination);
+    const finish = () => { if (current === cur && cur.src === src) { current = null; speakingNow = false; cur.done(); } };
+    src.onended = finish;
+    Object.assign(cur, { src, k, from, t0: cur.c.currentTime });
+    src.start(0, from / k);
+    activeTimeout(((cur.buf.duration - from) / k + 1.5) * 1000, finish);   // never wait forever for onended
+  }
+  // how far into its audio the current line is (the audio clock stands still while paused)
+  const at = cur => cur.from + (cur.c.currentTime - cur.t0) * cur.k;
+  // a held J / L sends a step every ~30 ms: the line is restarted (and stretched) once the steps stop for a moment
+  let rateTimer = null;
+  function setRate(r) {
+    if (r === rate) return;
+    rate = r;
+    clearTimeout(rateTimer); rateTimer = setTimeout(restartAtRate, 120);
+  }
+  function restartAtRate() {
+    const cur = current;
+    if (!cur || cur.k === rate / cur.g) return;
+    // its audio context was closed (Safari rebuilt it): that line cannot play on, so it ends here
+    if (cur.c.state === 'closed') { log('speed change: the line\'s audio context is closed, it ends here'); current = null; speakingNow = false; cur.done(); return; }
+    const pos = at(cur), old = cur.src;
+    old.onended = null; try { old.stop(); } catch {}
+    if (pos >= cur.buf.duration - 0.02) { current = null; speakingNow = false; cur.done(); return; }
+    startAt(cur, pos);
+    // the drawing of this line keeps to where the voice really is (the clock changed speed up to 120 ms earlier)
+    resyncers.forEach(f => f((cur.buf.duration - pos) * cur.g));
+  }
+  const resyncers = new Set();
 
   function pause() {
     if (paused) return; paused = true;
@@ -218,7 +284,7 @@ window.Voice = (() => {
     resumeWaiters.splice(0).forEach(f => f());
   }
   // how far into its line the voice is (the clock stands still while paused)
-  function position() { return current && current.h ? { h: current.h, at: current.c.currentTime - current.t0 } : null; }
+  function position() { return current && current.h ? { h: current.h, at: at(current) } : null; }
   function stop() {
     epoch++;
     wantQ.length = 0;            // lines not started yet are voiced again when (if) they are played
@@ -238,10 +304,10 @@ window.Voice = (() => {
   // Which voice is (or will be) speaking, in plain words for the settings panel.
   function describe() {
     if (cfg.mode === 'off') return 'Narration is off.';
-    const e = engine(), fixed = isMaya() ? ' Maya speaks at one speed.' : '';
+    const e = engine();
     if (serverState === 'unavailable') return `${e} · ${voiceName()} is not available on this computer, so the lesson has no sound.`;
     if (narrErr) return `${e} · ${voiceName()} had no sound for recent lines.`;
-    return serverState === 'ready' ? `Speaking with ${e} · ${voiceName()}, generated on this computer.${fixed}` : `${e} · ${voiceName()} on this computer, getting ready…`;
+    return serverState === 'ready' ? `Speaking with ${e} · ${voiceName()}, generated on this computer.` : `${e} · ${voiceName()} on this computer, getting ready…`;
   }
   // The preview plays on its own audio context: a paused lesson holds every line on the lesson's context until it
   // goes on (so a preview would wait forever), and the paused sentence must stay as it is. Call it from the click
@@ -255,7 +321,7 @@ window.Voice = (() => {
     if (!paused) stop();   // a lesson that is talking makes way; a paused one keeps its sentence
     const name = voiceName().split(' (')[0];
     const text = speakable(isMaya() ? `Namaste, main ${name} hoon. Chaliye whiteboard pe saath mein kuch naya seekhte hain.` : `Hi, I'm ${name}. Let's learn something together on the whiteboard.`);
-    const buf = await withTimeout(synthKokoro(text), 120000);
+    const got = await withTimeout(synthKokoro(text), 120000), buf = stretchBuf(got.buf, rate / got.g);   // at the lesson speed
     const src = pvSrc = pv.createBufferSource(); src.buffer = buf; src.connect(pv.destination);
     const done = new Promise(r => { src.onended = r; setTimeout(r, (buf.duration + 1.5) * 1000); });
     src.start(0);
@@ -263,13 +329,14 @@ window.Voice = (() => {
   }
 
   return {
-    configure, enabled, unlock, prepare, prefetch, play, stop, position, pause, resume, speakable, describe, preview,
+    configure, enabled, unlock, prepare, prefetch, play, stop, position, pause, resume, speakable, describe, preview, setRate,
     speaking: () => speakingNow,
     status: () => status,
     device: () => 'server',
     audioState: () => (ctx ? ctx.state : 'none'),
     source: () => lastSource,
     onStatus: f => { listeners.add(f); return () => listeners.delete(f); },
+    onResync: f => { resyncers.add(f); return () => resyncers.delete(f); },   // f(lesson seconds left in the line being said)
     VOICES,
   };
 })();

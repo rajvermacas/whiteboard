@@ -171,6 +171,8 @@ function showPart(p) {
 let pace = null, paceShare = null;
 const SPEAK_CPS = 14;                     // speaking pace used when narration is off (characters per second)
 function beginPace(seconds) { pace = seconds > 0.3 ? { until: clock() + seconds * 1000 } : null; }
+// a speed change restarts the voice mid-line: the sentence's drawing window ends when the voice now will
+Voice.onResync(left => { if (pace) pace.until = clock() + left * 1000; });
 function setPaceShare(remainingCmds) {
   const left = pace ? pace.until - clock() : 0;
   paceShare = left > 200 ? left / Math.max(1, remainingCmds) : null;
@@ -222,7 +224,7 @@ function zoomAt(factor, px, py) {
   camera.x = bx - sx / camera.scale; camera.y = by - sy / camera.scale;
   applyCamera();
 }
-function animateCamera(target, ms, run) {
+function animateCamera(target, ms, run, now = () => performance.now()) {
   const from = { ...camera }, tab = activeTab;
   const lerp = (a, b, t) => a + (b - a) * t;
   return tween(ms, t => {
@@ -230,7 +232,7 @@ function animateCamera(target, ms, run) {
     // interpolate scale geometrically for a smooth zoom feel
     camera.scale = from.scale * Math.pow(target.scale / from.scale, t);
     camera.x = lerp(from.x, target.x, t); camera.y = lerp(from.y, target.y, t); applyCamera();
-  }, run || { gen }, easeInOut, () => performance.now());
+  }, run || { gen }, easeInOut, now);
 }
 function cameraFor(b, pad = 60, maxScale = null) {
   const { W, H } = viewSize();
@@ -252,7 +254,7 @@ async function ensureVisible(b, run) {
     if (b.x < x + mm) x = b.x - mm; else if (b.x + b.width > x + vw - mm) x = b.x + b.width - vw + mm;
     if (b.y < y + mm) y = b.y - mm; else if (b.y + b.height > y + vh - mm) y = b.y + b.height - vh + mm;
   }
-  await animateCamera({ x, y, scale: s }, 420, run);
+  await animateCamera({ x, y, scale: s }, 420, run, clock);   // the teacher's camera follows the lesson speed
 }
 function allBounds() {
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
@@ -423,7 +425,7 @@ async function updateCmd(c, run, animate) {
 async function execCommand(c, run, animate) {
   switch (c.cmd) {
     case 'clear': return clearBoard(run, animate, c.keepInk);
-    case 'wait': if (animate && run.gen === gen) await sleep(c.ms / speed()); return;
+    case 'wait': if (animate && run.gen === gen) await lsleep(c.ms / speed()); return;
     case 'erase': {
       let ids = c.ids.slice();
       if (c.area && c.area.length === 4) { const [x, y, w, h] = c.area, a = { x, y, width: w, height: h }; for (const [k, o] of objs) if (overlaps(a, bbOf(o), 0)) ids.push(k); }

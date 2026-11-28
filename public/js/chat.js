@@ -618,10 +618,10 @@ function typeInto(turn, text, cps) {
   turn.typing = true; typers.add(turn); updateSendBtn();
   const body = turn.el.querySelector('.body');
   if (turn.thinking) { body.textContent = ''; body.classList.remove('thinking'); turn.thinking = false; renderTeaching(); }
-  let acc = 0, last = performance.now();
+  let acc = 0, last = clock();   // lesson time: the typing keeps up with the lesson speed
   const tick = () => {
     if (!turn.pendingType) { turn.typing = false; typers.delete(turn); updateSendBtn(); return; }
-    const now = performance.now(), dt = (now - last) / 1000; last = now;
+    const now = clock(), dt = (now - last) / 1000; last = now;
     if (isPaused()) { turn.timer = setTimeout(tick, 100); return; }
     turn.typeLeft -= dt;
     acc += turn.typeLeft > 0 ? turn.pendingType.length * Math.min(1, dt / (turn.typeLeft + dt)) : turn.pendingType.length;

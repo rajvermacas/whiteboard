@@ -31,6 +31,11 @@
         <button id="zoomIn" title="Zoom in">+</button>
       </span>
       <button id="penBtn" title="Draw on the board yourself (W)" aria-pressed="false">✏️ <span class="lbl">Draw</span></button>
+      <span class="zoom" id="speedCtl" role="group" aria-label="Lesson speed">
+        <button id="speedDown" title="Teach slower (J)" aria-label="Teach slower">−</button>
+        <button id="speedVal" title="Lesson speed: back to normal (K)">1×</button>
+        <button id="speedUp" title="Teach faster (L)" aria-label="Teach faster">+</button>
+      </span>
       <button id="muteBtn" title="Narration on/off">🔊</button>
       <button id="keysBtn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" aria-haspopup="dialog"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M6.5 13.6h.01M17.5 13.6h.01M9.5 14h5"/></svg></button>
       <button id="fsBtn" title="Full screen (F)">⛶</button>
@@ -39,6 +44,7 @@
 
   <main id="main">
     <section id="boardWrap">
+      <div id="speedFlash" aria-live="polite" hidden></div>
       <svg id="board" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse">
@@ -104,9 +110,6 @@
           <div id="voiceList" class="pickList" role="listbox" tabindex="0" aria-labelledby="voiceHead" hidden></div>
         </div>
         <button id="voicePreview" type="button" class="linkish">▶ Preview voice</button>
-        <label id="voiceSpeedRow">Speaking speed <span id="voiceSpeedVal"></span>
-          <input type="range" id="voiceSpeed" min="0.7" max="1.3" step="0.05">
-        </label>
         <p class="note" id="voiceStatus"></p>
         <hr>
         <button id="copyLogBtn" type="button" class="linkish">Copy debug log</button>

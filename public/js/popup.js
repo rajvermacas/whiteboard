@@ -352,7 +352,7 @@ async function streamText(model, effort, session, messages, signal, search, onDe
 
 // the shortcuts card (⌨ in the top bar, or ?): one list, so the card and the keys below stay in step
 const KEYS = [
-  ['Lesson', [['Play / pause', ['Space'], ['S']], ['Previous step', ['←'], ['A']], ['Next step', ['→'], ['D']]]],
+  ['Lesson', [['Play / pause', ['Space'], ['S']], ['Previous step', ['←'], ['A']], ['Next step', ['→'], ['D']], ['Teach slower', ['J']], ['Normal speed', ['K']], ['Teach faster', ['L']]]],
   ['Board', [['Draw on the board yourself (on / off)', ['W']], ['Zoom to fit everything', ['T']], ['Full screen', ['F']], ['Erase the selected drawing', ['Delete']], ['Clear the selection', ['Esc']]]],
   ['Session', [['New session', ['N']], ['Open sessions', ['O']], ['Rename this session', ['R']], ['Jump to the chat box', ['Tab']], ['Back to the board from chat', ['Esc']]]],
   ['Mouse', [['Pan', ['Scroll']], ['Zoom', [/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl', 'Scroll']], ['Explain what is inside a drawing', ['Double-click']], ['Ask about a drawing, or the whole board', ['Right-click']]]],
@@ -372,7 +372,7 @@ $('#keysDlg').addEventListener('close', () => focusBoard());
 
 document.addEventListener('keydown', e => {
   // the shortcuts work everywhere except where text is typed (the chat box, the popup, the model search, dialogs' fields);
-  // a focused button, checkbox or slider does not count, so clicking ⛶ or ✏️ Draw leaves Space, A/S/D, F, N, O, R, T, W and the arrows working
+  // a focused button, checkbox or slider does not count, so clicking ⛶ or ✏️ Draw leaves Space, A/S/D, F, J/K/L, N, O, R, T, W and the arrows working
   const ae = document.activeElement, tag = ae && ae.tagName;
   const typing = !!ae && (tag === 'TEXTAREA' || tag === 'SELECT' || ae.isContentEditable || (tag === 'INPUT' && !/^(button|checkbox|radio|range|color|file|submit|reset)$/.test(ae.type)) || !!ae.closest('dialog[open]')) || !!(e.target.closest && e.target.closest('dialog[open]'));   // (the key's own target counts too: a dialog that closes on the key has moved the focus by now)
   // a key a dialog or field already handled (Space opening the picked lesson in Sessions, say) is not a shortcut as well
@@ -413,6 +413,9 @@ document.addEventListener('keydown', e => {
   // W: the learner's pen on / off (the ✏️ Draw button)
   if (k === 'w' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: W → draw', penMode ? 'off' : 'on'); $('#penBtn').click(); return; }
   if (k === 't' && !typing && plain && !e.repeat) { e.preventDefault(); dlog('user: T → fit'); $('#fitBtn').click(); return; }
+  // J / K / L: the lesson slower (held: keeps slowing), back to 1×, faster
+  if ((k === 'j' || k === 'l') && !typing && plain) { e.preventDefault(); speedBy(k === 'j' ? -1 : 1); return; }
+  if (k === 'k' && !typing && plain && !e.repeat) { e.preventDefault(); setLessonSpeed(1, 'K'); return; }
   // ? shows the shortcuts card
   if (e.key === '?' && !typing && mods && !e.repeat) { e.preventDefault(); openKeys(); return; }
   // ← / A go back a step, → / D go forward one
