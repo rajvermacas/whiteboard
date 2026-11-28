@@ -230,7 +230,6 @@ window.Voice = (() => {
     ['af_bella', 'Bella (US, female)'], ['af_heart', 'Heart (US, female)'], ['af_nicole', 'Nicole (US, female, soft)'], ['af_sarah', 'Sarah (US, female)'],
     ['am_michael', 'Michael (US, male)'], ['am_fenrir', 'Fenrir (US, male)'], ['am_puck', 'Puck (US, male)'],
     ['bf_emma', 'Emma (UK, female)'], ['bf_isabella', 'Isabella (UK, female)'], ['bm_george', 'George (UK, male)'], ['bm_fable', 'Fable (UK, male)'],
-    ['hf_alpha', 'Alpha (Hindi, female)'], ['hf_beta', 'Beta (Hindi, female)'], ['hm_omega', 'Omega (Hindi, male)'], ['hm_psi', 'Psi (Hindi, male)'],
     ['my_ishwari', 'Ishwari (Maya, female)'], ['my_vrinda', 'Vrinda (Maya, female)'], ['my_nivedita', 'Nivedita (Maya, female)'],
     ['my_ritvik', 'Ritvik (Maya, male)'], ['my_abhay', 'Abhay (Maya, male)'], ['my_shaunak', 'Shaunak (Maya, male)'],
   ];
@@ -247,7 +246,7 @@ window.Voice = (() => {
   async function preview() {
     stop();
     const name = voiceName().split(' (')[0];
-    return play(cfg.voice[0] === 'h' || isMaya() ? prepare(`Namaste, main ${name} hoon. Chaliye whiteboard pe saath mein kuch naya seekhte hain.`)
+    return play(isMaya() ? prepare(`Namaste, main ${name} hoon. Chaliye whiteboard pe saath mein kuch naya seekhte hain.`)
       : prepare(`Hi, I'm ${name}. Let's learn something together on the whiteboard.`));
   }
 

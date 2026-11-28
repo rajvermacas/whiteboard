@@ -13,7 +13,6 @@
   },
   "license": "MIT",
   "dependencies": {
-    "kokoro-js": "1.2.1",
-    "phonemizer": "1.2.1"
+    "kokoro-js": "1.2.1"
   }
 }
