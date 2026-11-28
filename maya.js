@@ -62,6 +62,11 @@ function start() {
   m.ready.catch(() => {});
   return m.ready;
 }
+// Is a line Hindi / Hinglish or English? Devanagari is Hindi; Roman text is Hinglish when everyday Hindi words carry
+// it ("Agar cache miss hua, to CPU ko RAM tak jaana padta hai"). Words that are also English (to, me, the, do, main, tab, hi, par)
+// do not count. This only decides how numbers and abbreviations are spelled out; the voice and accent stay the same.
+const HINDI_WORDS = new Set('hai hain hota hoti hote ka ki ke ko mein mai se aur ya ye yeh yah wo woh vo jo nahi nahin na kya kyun kyon kaise kab kahan kaun karta karti karte karna karo kiya kiye kar ho hua hui hue raha rahi rahe tha thi jaata jata jaati jati jaate jate jaana jana apna apne apni hum tum aap unka unke uska uske iska iske isme usme ek bhi sirf agar lekin magar pe tak wala wali wale chalo dekho dekhte dekhiye samjho samajh samajhte abhi phir matlab yaani yani isliye kyunki kyonki sab kuch bahut zyada jyada thoda chahiye milta milti lagta lagti lagte banta banti bante deta deti dete leta leti lete sakta sakti sakte wahi yahi waha yaha'.split(' '));
+const isHindiLine = text => /[\u0900-\u097F]/.test(text) || (text.toLowerCase().match(/[a-z]+/g) || []).filter(w => HINDI_WORDS.has(w)).length >= 2;
 // voice: a Maya voice id from the app, "my_ishwari"; text: the line as written (Roman Hinglish, English or Hindi)
 async function speak(text, voice) {
   const name = nameOf(voice); if (!name) throw new Error('unknown Maya voice ' + voice);
@@ -70,9 +75,8 @@ async function speak(text, voice) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => fail(`Maya took over ${LINE_MS / 1000}s for one line`), LINE_MS);
     m.pending.set(id, { resolve, reject, timer });
-    // a line with Devanagari is read as Hindi (its English words included); Roman text (Hinglish or English) as English
-    try { m.proc.stdin.write(JSON.stringify({ id, text, voice: name, lang: /[\u0900-\u097F]/.test(text) ? 'hi' : 'en' }) + '\n'); }
+    try { m.proc.stdin.write(JSON.stringify({ id, text, voice: name, norm: isHindiLine(text) ? 'hi' : 'en' }) + '\n'); }
     catch (e) { m.pending.delete(id); clearTimeout(timer); reject(e); }
   });
 }
-module.exports = { start, speak, status, installed, hasVoice };
+module.exports = { start, speak, status, installed, hasVoice, isHindiLine };
