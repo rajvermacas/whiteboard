@@ -31,6 +31,7 @@
         <button id="zoomIn" title="Zoom in">+</button>
       </span>
       <button id="penBtn" title="Draw on the board yourself (W)" aria-pressed="false">✏️ <span class="lbl">Draw</span></button>
+      <button id="micBtn" title="Hold to speak a question with Hex, let go to send (hold E)" aria-pressed="false">🎙️ <span class="lbl">Speak</span></button>
       <span class="zoom" id="speedCtl" role="group" aria-label="Lesson speed">
         <button id="speedDown" title="Teach slower (J)" aria-label="Teach slower">−</button>
         <button id="speedVal" title="Lesson speed: back to normal (K)">1×</button>
@@ -134,6 +135,7 @@
       </div>
       <div id="imgTray" hidden><div id="imgList"></div><span class="hint">Sent with your next message</span></div>
       <div id="imgNote" hidden></div>
+      <div id="micNote" hidden></div>
       <form id="composer">
         <button id="imgBtn" class="ib" type="button" data-tip="Add an image (or paste one)" aria-label="Add an image">📎</button>
         <input id="imgFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
@@ -192,6 +194,7 @@
 <script src="js/timeline.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/images.js"></script>
+<script src="js/dictate.js"></script>
 <script src="js/teacher.js"></script>
 <script src="js/tabs.js"></script>
 <script src="js/order.js"></script>

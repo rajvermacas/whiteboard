@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const links = require('./links');   // reads links in the learner's message (LINK_FETCH=off disables)
+const hex = require('./hex');   // speak a question through the running Hex app (hold E on the board)
 const maya = require('./maya');   // Maya 2: a natural Hindi voice through mlx-audio (optional, Apple Silicon)
 
 // ---------- .env loader (tiny, no dependency) ----------
@@ -657,6 +658,12 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, 200, { ...maya.status(), engine: 'maya' });
       }
       loadTTS(); return sendJSON(res, 200, { ...ttsStatus(), engine: 'kokoro' });
+    }
+    if (url.pathname.startsWith('/api/dictation/') && req.method === 'POST') {
+      const act = url.pathname.slice('/api/dictation/'.length);
+      if (!['start', 'stop', 'cancel'].includes(act)) return sendJSON(res, 404, { error: { code: 'not_found' } });
+      try { const text = await hex[act](); return sendJSON(res, 200, act === 'stop' ? { text } : { ok: true }); }
+      catch (e) { return sendJSON(res, 502, { error: { code: 'hex_error', message: String(e.message || e) } }); }
     }
     if (url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) return await handleSessions(req, res, url);
     if (url.pathname === '/api/board/events' && req.method === 'GET') return handleBoardEvents(req, res, url);
