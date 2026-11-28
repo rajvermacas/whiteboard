@@ -78,7 +78,8 @@ async function runQueue() {
         if (it.run && it.run.gen !== gen) continue;
         dlog('say', r.duration ? r.duration.toFixed(1) + 's' : 'no audio', JSON.stringify(it.say.slice(0, 50)));
         beginPace(r.duration || it.say.length / SPEAK_CPS);
-        if (!it.repeat) typeInto(it.turn, it.say, r.duration ? it.say.length / r.duration : null);
+        // the chat text keeps up with the voice: in a slower lesson the voice keeps its natural pace (only the pen slows)
+        if (!it.repeat) typeInto(it.turn, it.say, r.duration ? it.say.length / (r.duration * Math.min(1, lessonRate)) : null);
         narrationDone = r.done.then(() => lsleep(BEAT_GAP_MS)); r.done.then(updateSendBtn);
         updateSendBtn();
       } else { beginPace(it.say.length / SPEAK_CPS); if (!it.repeat) typeInto(it.turn, it.say, SPEAK_CPS); }

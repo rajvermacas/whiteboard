@@ -61,7 +61,8 @@ let abortCtl = null, lastUserCamera = 0, autoId = 0;
 let pausedAt = null, pausedTotal = 0;
 const pauseWaiters = [];
 // Lesson speed: the lesson clock runs lessonRate× real time (J / K / L), so the pen, the pacing, the typing and the
-// breaths between lines all speed up or slow down together; the voice plays at the same rate (Voice.setRate).
+// breaths between lines all speed up or slow down together. A faster lesson speeds the voice up too (Voice.setRate); a
+// slower one keeps the voice at its natural pace, so the teacher talks normally and then draws and pauses longer.
 let lessonRate = 1, rateAt = { real: 0, virt: 0 };
 const LESSON_SPEED_MIN = 0.5, LESSON_SPEED_MAX = 2, LESSON_SPEED_STEP = 0.1;
 const realClock = () => (pausedAt ?? performance.now()) - pausedTotal;

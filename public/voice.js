@@ -8,9 +8,11 @@
 window.Voice = (() => {
   'use strict';
   let cfg = { mode: 'kokoro', voice: 'af_heart', engine: 'server' };
-  // Lesson speed: at 1× Kokoro speaks at BASE_SPEED. A new line is made at BASE_SPEED × rate (Kokoro's own pace sounds
-  // most natural); a line made at another rate, a Maya line (one speed only), or a sentence the speed changes in the
-  // middle of is time-stretched (pitch kept) so it plays at the lesson rate.
+  // Lesson speed: at 1× Kokoro speaks at BASE_SPEED. A faster lesson speeds the voice up: a new line is made at
+  // BASE_SPEED × rate (Kokoro's own pace sounds most natural); a line made at another rate, a Maya line (one speed only),
+  // or a sentence the speed changes in the middle of is time-stretched (pitch kept) so it plays at that rate.
+  // A slower lesson never slows the voice (drawn-out speech sounds mechanical): the teacher talks at the natural pace
+  // and the lesson clock gives the extra time to the pen and the pauses, so `rate` here is never below 1.
   const BASE_SPEED = 0.85;
   let rate = 1;
   let serverState = 'unknown';         // unknown | loading | ready | unavailable
@@ -255,7 +257,8 @@ window.Voice = (() => {
   const at = cur => cur.from + (cur.c.currentTime - cur.t0) * cur.k;
   // a held J / L sends a step every ~30 ms: the line is restarted (and stretched) once the steps stop for a moment
   let rateTimer = null;
-  function setRate(r) {
+  function setRate(lessonRate) {
+    const r = Math.max(1, lessonRate);
     if (r === rate) return;
     rate = r;
     clearTimeout(rateTimer); rateTimer = setTimeout(restartAtRate, 120);
