@@ -175,7 +175,9 @@ async function openCodeModels() {
       return {
         id: m.id,
         name: m.name || m.id,
-        efforts: Array.isArray(r.effort) ? r.effort : [],
+        // DeepSeek V4.1 Flash on OpenCode Go treats low/high/max only as a loose hint, but reasoning_effort "none" turns
+        // thinking off (0 reasoning tokens), so it is offered even though the catalogue does not list it
+        efforts: Array.isArray(r.effort) ? (m.family === 'deepseek-flash' && !r.effort.includes('none') ? ['none', ...r.effort] : r.effort) : [],
         defaultEffort: r.default && r.default.type === 'effort' ? r.default.value : null,
         output: (m.limit && m.limit.output) || 32000,
         api: m.recommended_api || '',
