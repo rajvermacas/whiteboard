@@ -130,11 +130,13 @@ window.Voice = (() => {
   // question). Only the line about to play and the next few (prefetch) are made, and a line that must play now
   // jumps to the front.
   const wantQ = []; let inflight = 0; const MAX_INFLIGHT = 1;   // one at a time: a line that must play next waits for at most one other
-  // spoken: what the voice says when it differs from the words shown (a Hinglish line, with its Hindi in Devanagari)
+  // spoken: what a Hindi voice says instead of the words shown (a Hinglish line, with its Hindi in Devanagari).
+  // Which of the two is sent is decided when the line is voiced, by the voice in use then (it may change meanwhile).
+  const isHindi = () => cfg.voice[0] === 'h';
   function prepare(text, spoken) {
-    const clean = speakable(spoken && isHindi() ? spoken : text);
-    return { text: clean, raw: text, audio: null, started: false };
+    return { text: speakable(text), spoken: spoken ? speakable(spoken) : '', raw: text, audio: null, started: false };
   }
+  const textFor = h => h.spoken && isHindi() ? h.spoken : h.text;
   function want(h, urgent) {
     if (!h || !h.text || cfg.mode !== 'kokoro' || h.started) return;
     if (!h.audio) { h.audio = new Promise((res, rej) => { h.res = res; h.rej = rej; }); h.audio.catch(() => {}); }
@@ -146,7 +148,7 @@ window.Voice = (() => {
   function pump() {
     while (inflight < MAX_INFLIGHT && wantQ.length) {
       const h = wantQ.shift(); h.started = true; inflight++;
-      synthKokoro(h.text).then(h.res, h.rej).finally(() => { inflight--; pump(); });
+      synthKokoro(textFor(h)).then(h.res, h.rej).finally(() => { inflight--; pump(); });
     }
   }
   // the next lines in the order they will be said: voice them ahead (and before anything prefetched earlier)
@@ -227,7 +229,6 @@ window.Voice = (() => {
     ['bf_emma', 'Emma (UK, female)'], ['bf_isabella', 'Isabella (UK, female)'], ['bm_george', 'George (UK, male)'], ['bm_fable', 'Fable (UK, male)'],
     ['hf_alpha', 'Alpha (Hindi, female)'], ['hf_beta', 'Beta (Hindi, female)'], ['hm_omega', 'Omega (Hindi, male)'], ['hm_psi', 'Psi (Hindi, male)'],
   ];
-  const isHindi = () => cfg.voice[0] === 'h';
   const voiceName = () => (VOICES.find(v => v[0] === cfg.voice) || [, cfg.voice])[1];
 
   // Which voice is (or will be) speaking, in plain words for the settings panel.

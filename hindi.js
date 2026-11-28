@@ -16,19 +16,17 @@ const VOWEL = { 'अ': 'ə', 'आ': 'aː', 'इ': 'ɪ', 'ई': 'iː', 'उ': 'ʊ
 const MATRA = { 'ा': 'aː', 'ि': 'ɪ', 'ी': 'iː', 'ु': 'ʊ', 'ू': 'uː', 'ृ': 'ɾɪ', 'े': 'eː', 'ै': 'ɛː', 'ो': 'oː', 'ौ': 'ɔː', 'ॉ': 'ɔ', 'ॅ': 'ɛ' };
 const VIRAMA = '्', NUKTA_SIGN = '़', ANUSVARA = 'ं', CANDRA = 'ँ', VISARGA = 'ः';
 // an anusvara before a stop is said as that stop's own nasal (हिंदी = hindi, संबंध = sambandh)
-const PLACE = [[/^(k|ɡ|x|ɣ)/, 'ŋ'], [/^(ʧ|ʤ)/, 'n'], [/^(ʈ|ɖ)/, 'ɳ'], [/^(t|d|n)/, 'n'], [/^(p|b|m)/, 'm']];
+const PLACE = [[/^(k|ɡ|x|ɣ)/, 'ŋ'], [/^(ʧ|ʤ)/, 'ɲ'], [/^(ʈ|ɖ)/, 'ɳ'], [/^(t|d|n)/, 'n'], [/^(p|b|m)/, 'm']];
 // small words said without stress, as in speech (है, का, में …)
 const LIGHT = new Set(['है', 'हैं', 'का', 'की', 'के', 'को', 'में', 'से', 'पे', 'पर', 'और', 'तो', 'ही', 'भी', 'ना', 'न', 'कि', 'या', 'हो', 'था', 'थी', 'थे']);
 // everyday words whose sound the rules do not reach
 const WORDS = { 'यह': 'jˈɛh', 'वह': 'ʋˈoː', 'ये': 'jˈeː', 'वो': 'ʋˈoː' };
 
 const DEVA = /[ऀ-ॿ]/;
-const isDeva = ch => DEVA.test(ch) && !/[।॥०-९]/.test(ch);
-const unstressed = s => s.replace(/ˈ/g, '');
 
 // one Hindi word to phonemes
 function word(w) {
-  if (WORDS[w]) return LIGHT.has(w) ? unstressed(WORDS[w]) : WORDS[w];
+  if (WORDS[w]) return WORDS[w];
   const ph = [];   // {c} consonant | {v, schwa, nasal}
   const chars = [...w];
   for (let i = 0; i < chars.length; i++) {
@@ -79,9 +77,11 @@ function word(w) {
 // {p: punctuation}, which Kokoro reads as pauses. The Hindi full stop becomes a full stop.
 const PUNCT = ';:,.!?—…"()“”';
 function split(text) {
-  const t = String(text).replace(/[।॥]/g, '.').replace(/[०-९]/g, d => String(d.charCodeAt(0) - 0x0966));
+  // zero-width joiners only shape how a conjunct is drawn; ॐ is said "om"
+  const t = String(text).replace(/[\u200c\u200d]/g, '').replace(/ॐ/g, 'ओम').replace(/[।॥]/g, '.').replace(/[०-९]/g, d => String(d.charCodeAt(0) - 0x0966));
   const pieces = [];
-  for (const m of t.matchAll(/[\u0900-\u097F]+|[;:,.!?—…"()“”]+|[^\u0900-\u097F;:,.!?—…"()“”]+/g)) {
+  // a number keeps its , and . (1,000 is "one thousand", 3.14 is "three point one four"), so it goes whole to English
+  for (const m of t.matchAll(/[\u0900-\u097F]+|[;:,.!?—…"()“”]+|(?:\d+(?:[.,]\d+)+|[^\u0900-\u097F;:,.!?—…"()“”])+/g)) {
     const x = m[0];
     if (DEVA.test(x[0])) pieces.push({ hi: word(x) });
     else if (PUNCT.includes(x[0])) pieces.push({ p: x });
@@ -89,6 +89,4 @@ function split(text) {
   }
   return pieces;
 }
-const hasHindi = text => [...String(text)].some(isDeva);
-
-module.exports = { split, word, hasHindi };
+module.exports = { split, word };

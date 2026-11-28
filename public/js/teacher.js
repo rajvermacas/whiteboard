@@ -64,7 +64,7 @@ async function runQueue() {
     try {
     if (it.say != null) {
       lastSay = it;
-      if (!it.repeat) recordSay(it.turn, it.say);   // a sentence said again after coming back belongs to its step already
+      if (!it.repeat) recordSay(it.turn, it.say, it.hi);   // a sentence said again after coming back belongs to its step already
       if (EMBED) liveCaption(it.say);
       if (it.voice && Voice.enabled()) {
         // one narrated sentence at a time: wait until the previous one (and the drawing after it) is done
@@ -745,7 +745,8 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
         if (it.say != null) {
           const t = trimSay(str(it.say, 1200)); if (t.length < String(it.say).trim().length) dlog('shortened a long spoken line');
-          const hi = typeof it.hi === 'string' && it.hi.trim() ? trimSay(str(it.hi, 1500)) : undefined;   // Hinglish: the same line for the Hindi voice
+          const hi = typeof it.hi === 'string' && sayable(it.hi) ? trimSay(str(it.hi, 1500)) : undefined;   // Hinglish: the same line for the Hindi voice
+          if (!hi && !fix && teachLang() === 'hinglish') dlog('a Hinglish line came without its hi copy: the Hindi voice reads the Roman words');
           if (!fix) put({ say: t, hi, turn, run, voice: Voice.enabled() ? Voice.prepare(t, hi) : null });
         }
         if (it.cmd || it.type || it.op) {

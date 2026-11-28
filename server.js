@@ -557,7 +557,7 @@ async function hinglishSpeak(text, voice, speed) {
     else out.push((await enPhonemize(p.en, 'en-us')).join(' ').replace(/ʲ/g, 'j').replace(/r/g, 'ɹ').replace(/x/g, 'k').replace(/ɬ/g, 'l'));
   }
   const ipa = out.join(' ').trim();
-  if (!ipa) return { audio: new Float32Array(0), sampling_rate: 24000 };
+  if (!ipa) return { audio: new Float32Array(2400), sampling_rate: 24000 };   // nothing to say: a tenth of a second of silence, still a valid sound
   const { input_ids } = tts.engine.tokenizer(ipa, { truncation: true });
   return tts.engine.generate_from_ids(input_ids, { voice, speed });
 }

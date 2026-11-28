@@ -164,6 +164,8 @@ function setLang(l) {
   else if (l === 'en' && isHindiVoice(v.voice)) setVoice({ voice: v.enVoice || 'af_heart', hiVoice: v.voice });
   else { saveSettings(); applyVoice(); }
 }
+// a voice picked from the other family switches the language with it, so the prompt and the voice always match
+function pickVoice(id) { settings.lang = isHindiVoice(id) ? 'hinglish' : 'en'; setVoice({ voice: id }); }
 function setVoice(patch) { settings.voice = { ...voiceCfg(), ...patch }; saveSettings(); applyVoice(); }
 function renderVoiceStatus(st) {
   const v = voiceCfg(), bar = $('#voiceBar');
@@ -187,7 +189,7 @@ function fillVoiceList() {
       const n = document.createElement('span'); n.className = 'mName'; n.textContent = v.name;
       const k = document.createElement('span'); k.className = 'mId'; k.textContent = v.kind;
       o.append(n, k); o.title = `${v.name} (${label}, ${v.kind.replace(/ · /g, ', ')})`;
-      o.onclick = () => { setVoice({ voice: v.id }); box.focus({ preventScroll: true }); };
+      o.onclick = () => { pickVoice(v.id); box.focus({ preventScroll: true }); };
       box.appendChild(o);
     }
   }
@@ -200,7 +202,7 @@ function showCurrentVoice() {
 $('#voiceList').onkeydown = e => {
   const rows = voiceRows(), i = rows.findIndex(r => r.classList.contains('on'));
   const to = e.key === 'ArrowDown' ? i + 1 : e.key === 'ArrowUp' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : null;
-  if (to !== null) { e.preventDefault(); e.stopPropagation(); const r = rows[clamp(to, 0, rows.length - 1)]; setVoice({ voice: r.dataset.id }); voiceRows().find(x => x.dataset.id === r.dataset.id).scrollIntoView({ block: 'nearest' }); return; }
+  if (to !== null) { e.preventDefault(); e.stopPropagation(); const r = rows[clamp(to, 0, rows.length - 1)]; pickVoice(r.dataset.id); voiceRows().find(x => x.dataset.id === r.dataset.id).scrollIntoView({ block: 'nearest' }); return; }
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); $('#voicePreview').click(); }
 };
 (() => {

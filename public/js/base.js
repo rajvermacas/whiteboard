@@ -85,7 +85,7 @@ function clipLines(v, lines, n) { return String(v ?? '').split('\n').slice(0, li
 // spoken / chat lines: keep whole sentences up to a word budget
 function trimSay(t) {
   const words = String(t).trim().split(/\s+/); if (words.length <= MAX_SAY_WORDS) return String(t).trim();
-  const sentences = String(t).match(/[^.!?]+[.!?]+(\s|$)/g) || [];
+  const sentences = String(t).match(/[^.!?।]+[.!?।]+(\s|$)/g) || [];
   let out = ''; for (const sn of sentences) { if ((out + sn).trim().split(/\s+/).length > MAX_SAY_WORDS) break; out += sn; }
   return out.trim() || words.slice(0, MAX_SAY_WORDS).join(' ') + '…';
 }
