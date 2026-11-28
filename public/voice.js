@@ -243,11 +243,23 @@ window.Voice = (() => {
     if (narrErr) return `${e} · ${voiceName()} had no sound for recent lines.`;
     return serverState === 'ready' ? `Speaking with ${e} · ${voiceName()}, generated on this computer.${fixed}` : `${e} · ${voiceName()} on this computer, getting ready…`;
   }
+  // The preview plays on its own audio context: a paused lesson holds every line on the lesson's context until it
+  // goes on (so a preview would wait forever), and the paused sentence must stay as it is. Call it from the click
+  // itself: Safari only lets a context start inside a gesture.
+  let pv = null, pvSrc = null;
   async function preview() {
-    stop();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!pv || pv.state === 'closed') pv = new AC();
+    pv.resume().catch(() => {});
+    if (pvSrc) { try { pvSrc.stop(); } catch {} pvSrc = null; }
+    if (!paused) stop();   // a lesson that is talking makes way; a paused one keeps its sentence
     const name = voiceName().split(' (')[0];
-    return play(isMaya() ? prepare(`Namaste, main ${name} hoon. Chaliye whiteboard pe saath mein kuch naya seekhte hain.`)
-      : prepare(`Hi, I'm ${name}. Let's learn something together on the whiteboard.`));
+    const text = speakable(isMaya() ? `Namaste, main ${name} hoon. Chaliye whiteboard pe saath mein kuch naya seekhte hain.` : `Hi, I'm ${name}. Let's learn something together on the whiteboard.`);
+    const buf = await withTimeout(synthKokoro(text), 120000);
+    const src = pvSrc = pv.createBufferSource(); src.buffer = buf; src.connect(pv.destination);
+    const done = new Promise(r => { src.onended = r; setTimeout(r, (buf.duration + 1.5) * 1000); });
+    src.start(0);
+    return { duration: buf.duration, done };
   }
 
   return {

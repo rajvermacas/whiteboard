@@ -196,8 +196,9 @@ $('#voiceList').onkeydown = e => {
   $('#voiceModeSeg').querySelectorAll('button').forEach(b => { b.onclick = () => { const m = b.dataset.m; setVoice({ mode: m, lastMode: m === 'off' ? voiceCfg().lastMode : m }); }; });
   $('#voicePreview').onclick = async () => {
     const b = $('#voicePreview'); Voice.unlock(); b.textContent = '… generating';
-    try { const r = await Voice.preview(); b.textContent = '🔊 playing'; await r.done; } catch (e) { dlog('preview failed', String(e)); }
-    b.textContent = '▶ Preview voice'; renderVoiceStatus(Voice.status());
+    try { const r = await Voice.preview(); b.textContent = '🔊 playing'; await r.done; b.textContent = '▶ Preview voice'; }
+    catch (e) { dlog('preview failed', String(e)); b.textContent = '⚠ Preview failed: ' + (e.timeout ? 'the voice took too long' : e.message); setTimeout(() => { b.textContent = '▶ Preview voice'; }, 5000); }
+    renderVoiceStatus(Voice.status());
   };
   $('#voiceSpeed').oninput = e => setVoice({ speed: Number(e.target.value) });
   $('#muteBtn').onclick = () => { const v = voiceCfg(); if (v.mode === 'off') setVoice({ mode: v.lastMode || 'kokoro' }); else { Voice.stop(); setVoice({ mode: 'off', lastMode: v.mode }); } };
