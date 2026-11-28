@@ -59,6 +59,7 @@ button { font: inherit; cursor: pointer; }
 #modelPop label { display: flex; flex-direction: column; gap: 4px; }
 #modelPop select { font: inherit; padding: 6px; border-radius: 8px; border: 1px solid #d0d5db; }
 #modelPick[hidden] { display: none; }
+#voiceSpeedRow[hidden] { display: none; }   /* #modelPop label is flex, which would win over [hidden] */
 #modelPop .mHead { font-size: 12px; font-weight: 600; color: #5b636b; margin-bottom: 6px; }
 #modelPop #modelSearch { -webkit-appearance: none; appearance: none; font: inherit; font-size: 13px; box-sizing: border-box; width: 100%; height: 34px; padding: 0 12px; border: 1px solid #d0d5db; border-radius: 10px; background: #fff; color: #1f2328; outline: none; }
 #modelPop #modelSearch:focus { border-color: #1d6fb8; }
