@@ -64,7 +64,7 @@ async function runQueue() {
     try {
     if (it.say != null) {
       lastSay = it;
-      if (!it.repeat) recordSay(it.turn, it.say, it.hi);   // a sentence said again after coming back belongs to its step already
+      if (!it.repeat) recordSay(it.turn, it.say);   // a sentence said again after coming back belongs to its step already
       if (EMBED) liveCaption(it.say);
       if (it.voice && Voice.enabled()) {
         // one narrated sentence at a time: wait until the previous one (and the drawing after it) is done
@@ -153,19 +153,6 @@ function objLine(o, full = false) {
   bits.push(`box x${r(bb.x)} y${r(bb.y)} w${r(bb.width)} h${r(bb.height)}`);
   return bits.filter(Boolean).join(' · ');
 }
-// Hinglish lessons: the chat shows Roman Hinglish, and a Hindi voice reads the "hi" copy of each line, written all
-// in Devanagari (a Hindi voice cannot tell Roman "hai" or "pe" from English words, and English words left in English
-// letters go through the English phonemizer and come out in an American accent)
-const HINGLISH = `LANGUAGE: HINGLISH. Teach in Hinglish: everyday Hindi mixed with English, the way Indian teachers and students talk ("Ab dekhte hain ki cache kaise kaam karta hai"). Keep technical terms, names, numbers and units in English.
-Every spoken line has two fields with the SAME sentence, word for word: "say" in Roman letters (shown in the chat) and "hi" for the voice, ALL in Devanagari: Hindi words in Hindi spelling, and English words written in Devanagari the way an Indian teacher says them (cache → कैश, CPU → सीपीयू, data → डेटा, API → एपीआई, vs → वर्सेस), numbers as spoken words (10 → दस, 3.5 → तीन दशमलव पाँच):
-{"say":"Ab dekhte hain ki CPU ko data kaise milta hai.","hi":"अब देखते हैं कि सीपीयू को डेटा कैसे मिलता है।"}
-Never translate an English word into a Hindi word in "hi" (data stays डेटा, not आँकड़े), and never leave Roman letters or digits there. Board labels, headings and captions stay in short English. The examples below are in English: speak them in Hinglish.
-`;
-// said again at the very end: in a long prompt whose examples are all English "say" lines, the model otherwise drops "hi"
-const HINGLISH_LAST = `
-
-LAST AND MOST IMPORTANT: this lesson is in HINGLISH. Every spoken line has BOTH "say" (Roman Hinglish) and "hi" (the same sentence all in Devanagari, English words spelled as an Indian teacher says them). A line without "hi" is read in the wrong accent. Example:
-{"say":"Model text ko numbers mein badalta hai.","hi":"मॉडल टेक्स्ट को नंबर्स में बदलता है।"}`;
 function systemPrompt() {
   return `You are a great teacher at a whiteboard. The board SHOWS the idea (pictures, not text); your voice EXPLAINS it: the reasoning, the why, the cause and effect, while the pen draws. A learner should come away actually understanding, not just having seen a diagram.
 
@@ -174,7 +161,7 @@ What is on the board right now (every drawing, where it is), the lesson in progr
 
 OUTPUT: JSON Lines only, one object per line, nothing else (no markdown, no code fences, no prose outside JSON).
 Spoken line: {"say":"one short sentence"}   It is spoken while the drawing commands right after it are drawn, so it must explain exactly those.
-${teachLang() === 'hinglish' ? HINGLISH : ''}Board commands (each line has "cmd"). Place things with "near" instead of guessing coordinates: "near":{"of":"<id>","side":"right|left|below|above","gap":70}. Give x,y only for the very first object of a new area (use the free space listed above).
+Board commands (each line has "cmd"). Place things with "near" instead of guessing coordinates: "near":{"of":"<id>","side":"right|left|below|above","gap":70}. Give x,y only for the very first object of a new area (use the free space listed above).
 
 Pictures, best first:
 {"cmd":"icon","id":"gpu","name":"gpu","label":"GPU","near":{"of":"q","side":"right"}}   icons: ${window.WB_ICONS ? WB_ICONS.names.join(', ') : 'gpu, server, database, person, document'} (plus common synonyms). Use them for every real-world thing.
@@ -274,7 +261,7 @@ EXAMPLE of the balance wanted (a different topic; notice every beat is one short
 {"say":"A cache is a bet on reuse: win it often, and slow storage feels fast."}
 {"cmd":"frame","id":"fall","around":["fc","disk","slots"],"label":"the bet"}
 {"cmd":"highlight","id":"hl2","target":"hr","style":"circle","color":"#2a8a3e"}
-{"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}${teachLang() === 'hinglish' ? HINGLISH_LAST : ''}`;
+{"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}`;
 }
 // The parts of the prompt that change between calls (board, outline, selection, session name) go at the start of the
 // latest user message, not in the system prompt: providers cache a prompt by its unchanged beginning, so the long
@@ -751,9 +738,7 @@ async function streamAnswer(messages, { model, effort, run, turn, signal, onReas
         if (it.plan && typeof it.plan === 'object' && !lesson.plan) { lesson.plan = { example: str(it.plan.example, 300), colors: it.plan.colors && typeof it.plan.colors === 'object' ? Object.fromEntries(Object.entries(it.plan.colors).slice(0, 8).map(([k, v]) => [str(k, 40), col(v)])) : {} }; saveSoon(); }
         if (it.say != null) {
           const t = trimSay(str(it.say, 1200)); if (t.length < String(it.say).trim().length) dlog('shortened a long spoken line');
-          const hi = typeof it.hi === 'string' && sayable(it.hi) ? trimSay(str(it.hi, 1500)) : undefined;   // Hinglish: the same line for the Hindi voice
-          if (!hi && !fix && teachLang() === 'hinglish') dlog('a Hinglish line came without its hi copy: the Hindi voice reads the Roman words');
-          if (!fix) put({ say: t, hi, turn, run, voice: Voice.enabled() ? Voice.prepare(t, hi) : null });
+          if (!fix) put({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null });
         }
         if (it.cmd || it.type || it.op) {
           if (fix) {

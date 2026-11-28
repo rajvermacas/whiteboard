@@ -9,6 +9,7 @@ const path = require('path');
 const crypto = require('crypto');
 const links = require('./links');   // reads links in the learner's message (LINK_FETCH=off disables)
 const hindi = require('./hindi');   // Hindi words to phonemes, for the Hindi voices (Hinglish narration)
+const maya = require('./maya');   // Maya 2: a natural Hindi voice through mlx-audio (optional, Apple Silicon)
 
 // ---------- .env loader (tiny, no dependency) ----------
 function loadEnv(file) {
@@ -561,23 +562,25 @@ async function hinglishSpeak(text, voice, speed) {
   const { input_ids } = tts.engine.tokenizer(ipa, { truncation: true });
   return tts.engine.generate_from_ids(input_ids, { voice, speed });
 }
-const speakWith = (c, voice, speed) => voice[0] === 'h' ? hinglishSpeak(c, voice, speed) : tts.engine.generate(c, { voice, speed });
+// Maya voices (my_…) are their own engine: no other voice stands in when Maya is missing or fails (fail fast)
+const speakWith = (c, voice, speed) => voice.startsWith('my_') ? maya.speak(c, voice) : voice[0] === 'h' ? hinglishSpeak(c, voice, speed) : tts.engine.generate(c, { voice, speed });
 async function handleTTS(req, res) {
   let body; try { body = JSON.parse(await readBody(req, 20000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
   const text = String(body.text || '').slice(0, 1500).trim();
-  let voice = /^[a-z]{2}_[a-z]+$/.test(body.voice || '') ? body.voice : 'af_heart';
-  if (voice[0] === 'h' && !HINDI_VOICES.has(voice)) voice = 'hf_alpha';
+  // no voice means the default; a voice that is not a known one is an error, never quietly another voice
+  const voice = body.voice == null || body.voice === '' ? 'af_heart' : String(body.voice);
+  if (!/^[a-z]{2}_[a-z]+$/.test(voice) || voice[0] === 'h' && !HINDI_VOICES.has(voice) || voice.startsWith('my_') && !maya.hasVoice(voice)) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'unknown voice ' + voice } });
   const speed = Math.max(0.5, Math.min(2, Number(body.speed) || 1));
   if (!text) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'no text' } });
-  loadTTS();
-  if (tts.state === 'unavailable' || tts.state === 'error') return sendJSON(res, 501, { error: { code: 'tts_unavailable', message: tts.error } });
-  const key = `${voice}|${speed}|${text}`;
+  const isMaya = voice.startsWith('my_');
+  if (isMaya) { if (!maya.installed()) return sendJSON(res, 501, { error: { code: 'tts_unavailable', message: maya.status().error } }); }
+  else { loadTTS(); if (tts.state === 'unavailable' || tts.state === 'error') return sendJSON(res, 501, { error: { code: 'tts_unavailable', message: tts.error } }); }
+  const key = isMaya ? `${voice}|${text}` : `${voice}|${speed}|${text}`;   // Maya has one speed
   let job = tts.cache.get(key);
   if (!job) {
     // one generation at a time keeps each sentence as fast as possible
     job = tts.chain = tts.chain.catch(() => {}).then(async () => {
-      await tts.loading;
-      if (tts.state !== 'ready') throw new Error(tts.error || 'voice not ready');
+      if (!isMaya) { await tts.loading; if (tts.state !== 'ready') throw new Error(tts.error || 'voice not ready'); }
       const t0 = Date.now(), pieces = []; let sr = 24000, len = 0;
       for (const c of sentenceChunks(text)) { const a = await speakWith(c, voice, speed); sr = a.sampling_rate; pieces.push(a.audio); len += a.audio.length; }
       const all = new Float32Array(len); let off = 0; for (const p of pieces) { all.set(p, off); off += p.length; }
@@ -661,7 +664,16 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/links' && req.method === 'POST') return await handleLinks(req, res);
     if (url.pathname === '/api/search' && req.method === 'POST') return await handleSearch(req, res);
     if (url.pathname === '/api/tts' && req.method === 'POST') return await handleTTS(req, res);
-    if (url.pathname === '/api/tts/status' && req.method === 'GET') { loadTTS(); return sendJSON(res, 200, ttsStatus()); }
+    if (url.pathname === '/api/tts/status' && req.method === 'GET') {
+      // a Maya voice reports Maya's own state (and starts it loading); every other voice reports Kokoro's
+      const v = url.searchParams.get('voice') || '';
+      if (v.startsWith('my_')) {
+        if (!maya.hasVoice(v)) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'unknown voice ' + v } });
+        if (maya.installed() && maya.status().state === 'idle') maya.start().catch(() => {});   // after a failure it reports the error; the next line retries
+        return sendJSON(res, 200, { ...maya.status(), engine: 'maya' });
+      }
+      loadTTS(); return sendJSON(res, 200, { ...ttsStatus(), engine: 'kokoro' });
+    }
     if (url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) return await handleSessions(req, res, url);
     if (url.pathname === '/api/board/events' && req.method === 'GET') return handleBoardEvents(req, res, url);
     if (url.pathname === '/api/board/status' && req.method === 'GET') return sendJSON(res, 200, { app: 'whiteboard-teacher', boards: boards.length, embedded: boards.filter(b => b.embed).length });

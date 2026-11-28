@@ -111,7 +111,7 @@ function trimSteps() {
   let total = steps.reduce((n, st) => n + st.cmds.length, 0);
   while (total > 5000 && steps.length > 2) { const a = steps.shift(); steps[0].cmds = a.cmds.concat(steps[0].cmds); total = steps.reduce((n, st) => n + st.cmds.length, 0); }
 }
-function recordSay(turn, say, hi) { steps.push({ say, hi: hi || undefined, by: 'teacher', cmds: [], t: turn.key }); trimSteps(); updateTimeline(); }
+function recordSay(turn, say) { steps.push({ say, by: 'teacher', cmds: [], t: turn.key }); trimSteps(); updateTimeline(); }
 function recordCmd(turn, c) {
   let st = steps[steps.length - 1];
   if (!st || st.by !== 'teacher' || st.t !== turn.key) { st = { say: '', by: 'teacher', cmds: [], t: turn.key }; steps.push(st); }
@@ -160,7 +160,7 @@ async function showStep(i, animate) {
   if (!animate) return;
   lastUserCamera = 0; replaying = true; updateSendBtn();
   let narration = null;
-  if (steps[i].say && Voice.enabled()) narration = Voice.play(Voice.prepare(steps[i].say, steps[i].hi));
+  if (steps[i].say && Voice.enabled()) narration = Voice.play(Voice.prepare(steps[i].say));
   const started = narration ? await narration : null;
   beginPace(started && started.duration ? started.duration : steps[i].say.length / SPEAK_CPS);
   const cmds = steps[i].cmds;

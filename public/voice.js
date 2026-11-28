@@ -1,6 +1,7 @@
 /* Narration engine for Whiteboard Teacher.
- * One voice only: Kokoro, generated on this computer by the app's server (/api/tts). There is no fallback voice:
- * if Kokoro is not ready or fails, the line is silent (the lesson keeps its pace) and the status says why.
+ * Two engines, both generated on this computer by the app's server (/api/tts): Kokoro, and Maya 2 (natural Hindi,
+ * for Hinglish; voices my_…). There is no fallback voice: if the chosen engine is not ready or fails, the line is
+ * silent (the lesson keeps its pace) and the status says why.
  * prepare(text) starts synthesis early so audio is ready when the pen reaches that step.
  * play(handle) resolves when audio starts, with {duration, done} so the caller can pace typing and drawing.
  */
@@ -75,11 +76,13 @@ window.Voice = (() => {
     if (polling) return; polling = true;
     try {
       for (let i = 0; i < 900; i++) {
-        const r = await fetch('/api/tts/status'); const j = await r.json();
+        const r = await fetch('/api/tts/status?voice=' + encodeURIComponent(cfg.voice)); const j = await r.json();
         if (j.state === 'ready') { serverState = 'ready'; failStreak = 0; narrErr = false; setStatus('ready', ''); break; }   // a healthy server check also clears a narration error
         if (j.state === 'unavailable' || j.state === 'error') {
           serverState = 'unavailable'; log('server voice unavailable:', j.error);
-          if (cfg.mode === 'kokoro') setStatus('error', j.state === 'unavailable'
+          if (cfg.mode === 'kokoro') setStatus('error', isMaya()
+            ? (j.state === 'unavailable' ? 'Maya is not installed on this computer (see the README, "Natural Hindi voice"). The lesson goes on without sound.' : 'Maya failed (' + (j.error || 'unknown error') + '). The lesson goes on without sound.')
+            : j.state === 'unavailable'
             ? 'Kokoro is not installed: run npm install in the project folder, then restart the server. The lesson goes on without sound.'
             : 'Kokoro failed to load on this computer (' + (j.error || 'unknown error') + '). Restart the server to try again.');
           break;
@@ -93,13 +96,13 @@ window.Voice = (() => {
   }
   async function synth(text) {
     const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: cfg.voice, speed: cfg.speed }) });
-    if (r.status === 501) { serverState = 'unavailable'; checkServer(); throw new Error('Kokoro is not available on the server'); }
+    if (r.status === 501) { serverState = 'unavailable'; checkServer(); throw new Error(engine() + ' is not available on the server'); }
     if (!r.ok) throw new Error('server voice error ' + r.status);
     const genMs = Number(r.headers.get('X-Gen-Ms') || 0);
     const arr = await r.arrayBuffer();
     const c = ensureCtx();
     const buf = await new Promise((res, rej) => { const p = c.decodeAudioData(arr, res, rej); if (p && p.catch) p.catch(rej); });
-    if (genMs && buf.duration > 0.8) log('kokoro generated', buf.duration.toFixed(1) + 's audio in', (genMs / 1000).toFixed(1) + 's');
+    if (genMs && buf.duration > 0.8) log(engine() + ' generated', buf.duration.toFixed(1) + 's audio in', (genMs / 1000).toFixed(1) + 's');
     return buf;
   }
   function synthKokoro(text) {
@@ -117,7 +120,9 @@ window.Voice = (() => {
 
   // ---------- public API ----------
   function configure(next) {
+    const was = engine();
     cfg = { ...cfg, ...next, engine: 'server' };
+    if (engine() !== was) { serverState = 'unknown'; failStreak = 0; narrErr = false; }   // the other engine has its own state
     if (cfg.mode !== 'kokoro') { cfg.mode = cfg.mode === 'off' ? 'off' : 'kokoro'; }
     if (cfg.mode === 'off') { stop(); failStreak = 0; narrErr = false; setStatus('idle', ''); return; }   // Off silences the sentence being said, like the 🔊 button
     if (serverState !== 'ready') checkServer();
@@ -130,13 +135,11 @@ window.Voice = (() => {
   // question). Only the line about to play and the next few (prefetch) are made, and a line that must play now
   // jumps to the front.
   const wantQ = []; let inflight = 0; const MAX_INFLIGHT = 1;   // one at a time: a line that must play next waits for at most one other
-  // spoken: what a Hindi voice says instead of the words shown (a Hinglish line, with its Hindi in Devanagari).
-  // Which of the two is sent is decided when the line is voiced, by the voice in use then (it may change meanwhile).
-  const isHindi = () => cfg.voice[0] === 'h';
-  function prepare(text, spoken) {
-    return { text: speakable(text), spoken: spoken ? speakable(spoken) : '', raw: text, audio: null, started: false };
+  const isMaya = () => cfg.voice.startsWith('my_');
+  const engine = () => isMaya() ? 'Maya 2' : 'Kokoro';
+  function prepare(text) {
+    return { text: speakable(text), raw: text, audio: null, started: false };
   }
-  const textFor = h => h.spoken && isHindi() ? h.spoken : h.text;
   function want(h, urgent) {
     if (!h || !h.text || cfg.mode !== 'kokoro' || h.started) return;
     if (!h.audio) { h.audio = new Promise((res, rej) => { h.res = res; h.rej = rej; }); h.audio.catch(() => {}); }
@@ -148,7 +151,7 @@ window.Voice = (() => {
   function pump() {
     while (inflight < MAX_INFLIGHT && wantQ.length) {
       const h = wantQ.shift(); h.started = true; inflight++;
-      synthKokoro(textFor(h)).then(h.res, h.rej).finally(() => { inflight--; pump(); });
+      synthKokoro(h.text).then(h.res, h.rej).finally(() => { inflight--; pump(); });
     }
   }
   // the next lines in the order they will be said: voice them ahead (and before anything prefetched earlier)
@@ -179,7 +182,7 @@ window.Voice = (() => {
       return silent(h.text);
     }
     if (myEpoch !== epoch) return none;
-    failStreak = 0; if (narrErr) { narrErr = false; setStatus('ready', ''); }   // it spoke again: clear the error
+    failStreak = 0; if (narrErr || serverState === 'unavailable') { narrErr = false; serverState = 'ready'; setStatus('ready', ''); }   // it spoke again: clear the error
     await whenResumed();
     if (myEpoch !== epoch) return none;
     let c = ensureCtx();
@@ -200,7 +203,7 @@ window.Voice = (() => {
     current = { src, h, c, t0: c.currentTime - from, stop: () => { try { src.stop(); } catch {} speakingNow = false; doneResolve(); } };
     speakingNow = true;
     src.start(0, from);
-    lastSource = 'kokoro-server';
+    lastSource = isMaya() ? 'maya-server' : 'kokoro-server';
     activeTimeout((buf.duration - from + 1.5) * 1000, finish);   // never wait forever for onended
     return { duration: buf.duration - from, done };
   }
@@ -228,20 +231,23 @@ window.Voice = (() => {
     ['am_michael', 'Michael (US, male)'], ['am_fenrir', 'Fenrir (US, male)'], ['am_puck', 'Puck (US, male)'],
     ['bf_emma', 'Emma (UK, female)'], ['bf_isabella', 'Isabella (UK, female)'], ['bm_george', 'George (UK, male)'], ['bm_fable', 'Fable (UK, male)'],
     ['hf_alpha', 'Alpha (Hindi, female)'], ['hf_beta', 'Beta (Hindi, female)'], ['hm_omega', 'Omega (Hindi, male)'], ['hm_psi', 'Psi (Hindi, male)'],
+    ['my_ishwari', 'Ishwari (Maya, female)'], ['my_vrinda', 'Vrinda (Maya, female)'], ['my_nivedita', 'Nivedita (Maya, female)'],
+    ['my_ritvik', 'Ritvik (Maya, male)'], ['my_abhay', 'Abhay (Maya, male)'], ['my_shaunak', 'Shaunak (Maya, male)'],
   ];
   const voiceName = () => (VOICES.find(v => v[0] === cfg.voice) || [, cfg.voice])[1];
 
   // Which voice is (or will be) speaking, in plain words for the settings panel.
   function describe() {
     if (cfg.mode === 'off') return 'Narration is off.';
-    if (serverState === 'unavailable') return `Kokoro · ${voiceName()} is not available on this computer, so the lesson has no sound.`;
-    if (narrErr) return `Kokoro · ${voiceName()} had no sound for recent lines.`;
-    return serverState === 'ready' ? `Speaking with Kokoro · ${voiceName()}, generated on this computer.` : `Kokoro · ${voiceName()} on this computer, getting ready…`;
+    const e = engine(), fixed = isMaya() ? ' Maya speaks at one speed.' : '';
+    if (serverState === 'unavailable') return `${e} · ${voiceName()} is not available on this computer, so the lesson has no sound.`;
+    if (narrErr) return `${e} · ${voiceName()} had no sound for recent lines.`;
+    return serverState === 'ready' ? `Speaking with ${e} · ${voiceName()}, generated on this computer.${fixed}` : `${e} · ${voiceName()} on this computer, getting ready…`;
   }
   async function preview() {
     stop();
     const name = voiceName().split(' (')[0];
-    return play(isHindi() ? prepare(`Namaste, main ${name} hoon.`, `नमस्ते, मैं ${name} हूँ। चलिए व्हाइटबोर्ड पे साथ में कुछ नया सीखते हैं।`)
+    return play(cfg.voice[0] === 'h' || isMaya() ? prepare(`Namaste, main ${name} hoon. Chaliye whiteboard pe saath mein kuch naya seekhte hain.`)
       : prepare(`Hi, I'm ${name}. Let's learn something together on the whiteboard.`));
   }
 
