@@ -261,7 +261,9 @@ EXAMPLE of the balance wanted (a different topic; notice every beat is one short
 {"say":"A cache is a bet on reuse: win it often, and slow storage feels fast."}
 {"cmd":"frame","id":"fall","around":["fc","disk","slots"],"label":"the bet"}
 {"cmd":"highlight","id":"hl2","target":"hr","style":"circle","color":"#2a8a3e"}
-{"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}`;
+{"next":["Why is the disk so much slower?","What if two keys want one slot?","Compare LRU and FIFO eviction"]}
+
+LANGUAGE: answer each question in the language that question is written in, judged only by the words of the latest question, even when earlier messages, the board or the lesson so far used another. A question in English gets an English answer, however short ("first explain attention", "what is a token?" are English). A question in Hindi or Hinglish gets a Hinglish answer, Hindi and English mixed the way Indian teachers talk, in Roman letters (or Devanagari if the learner wrote in Devanagari). Spoken lines, "next" suggestions and new board words follow that language.`;
 }
 // The parts of the prompt that change between calls (board, outline, selection, session name) go at the start of the
 // latest user message, not in the system prompt: providers cache a prompt by its unchanged beginning, so the long
