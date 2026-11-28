@@ -156,14 +156,12 @@ document.addEventListener('click', e => {
 // narration settings
 // ======================================================================
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
-function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro' }; }
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', engine: 'server', lastMode: 'kokoro' }; }
 function applyVoice() {
   const v = voiceCfg();
-  Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });
+  Voice.configure({ mode: v.mode, voice: v.voice, engine: v.engine });
   $('#voiceModeSeg').querySelectorAll('button').forEach(b => { const on = b.dataset.m === v.mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   fillVoiceList();
-  $('#voiceSpeedRow').hidden = v.voice.startsWith('my_');   // Maya has one speed
-  $('#voiceSpeed').value = String(v.speed); $('#voiceSpeedVal').textContent = v.speed.toFixed(2) + '×';
   $('#kokoroRow').hidden = v.mode !== 'kokoro';
   $('#muteBtn').textContent = v.mode === 'off' ? '🔇' : '🔊';
   $('#muteBtn').setAttribute('aria-pressed', v.mode !== 'off');
@@ -229,10 +227,32 @@ $('#voiceList').onkeydown = e => {
     catch (e) { dlog('preview failed', String(e)); b.textContent = '⚠ Preview failed: ' + (e.timeout ? 'the voice took too long' : e.message); setTimeout(() => { b.textContent = '▶ Preview voice'; }, 5000); }
     renderVoiceStatus(Voice.status());
   };
-  $('#voiceSpeed').oninput = e => setVoice({ speed: Number(e.target.value) });
   $('#muteBtn').onclick = () => { const v = voiceCfg(); if (v.mode === 'off') setVoice({ mode: v.lastMode || 'kokoro' }); else { Voice.stop(); setVoice({ mode: 'off', lastMode: v.mode }); } };
   document.addEventListener('pointerdown', () => Voice.unlock(), { capture: true });
 })();
+
+// ======================================================================
+// lesson speed: J slower, K normal, L faster (the − 1× + buttons in the top bar)
+// ======================================================================
+const fmtSpeed = r => (Number.isInteger(r) ? r : r.toFixed(1)) + '×';
+let speedFlashTimer = null;
+function setLessonSpeed(r, why) {
+  r = Math.round(clamp(r, LESSON_SPEED_MIN, LESSON_SPEED_MAX) * 10) / 10;
+  if (r !== lessonRate) dlog(`user: ${why} → lesson speed`, fmtSpeed(r));
+  if (why !== 'load') { settings.lessonSpeed = r; saveSettings(); }
+  setClockRate(r); Voice.setRate(r);
+  $('#speedVal').textContent = fmtSpeed(r);
+  $('#speedVal').setAttribute('aria-label', 'Lesson speed ' + fmtSpeed(r) + ', back to normal');
+  $('#speedDown').disabled = r <= LESSON_SPEED_MIN; $('#speedUp').disabled = r >= LESSON_SPEED_MAX;
+  if (why === 'load') return;
+  const f = $('#speedFlash'); f.textContent = fmtSpeed(r); f.hidden = false; f.classList.remove('out');
+  clearTimeout(speedFlashTimer); speedFlashTimer = setTimeout(() => f.classList.add('out'), 700);
+}
+const speedBy = d => setLessonSpeed(lessonRate + d * LESSON_SPEED_STEP, d < 0 ? 'slower' : 'faster');
+$('#speedDown').onclick = () => speedBy(-1);
+$('#speedUp').onclick = () => speedBy(1);
+$('#speedVal').onclick = () => setLessonSpeed(1, 'normal');
+$('#speedFlash').addEventListener('transitionend', e => { if (e.target.classList.contains('out')) e.target.hidden = true; });
 
 // ======================================================================
 // topic dialog
@@ -311,7 +331,7 @@ let captionTimer = null;
 function liveCaption(text) {
   if (scrub) return;
   const c = $('#caption'); c.textContent = text; c.hidden = false;
-  clearTimeout(captionTimer); captionTimer = setTimeout(() => { if (!scrub) c.hidden = true; }, Math.max(4000, text.length / SPEAK_CPS * 1000 + 1500));
+  clearTimeout(captionTimer); captionTimer = setTimeout(() => { if (!scrub) c.hidden = true; }, Math.max(4000, text.length / SPEAK_CPS / lessonRate * 1000 + 1500));
 }
 let mcpTurn = null;
 // Draw calls that come in close together belong to one answer (one chat bubble, one answer on the timeline).
@@ -446,6 +466,7 @@ function mcpSetup() {
   const had = await loadAll();
   updateEmpty();
   applyVoice(); updateTimeline();
+  setLessonSpeed(Number(settings.lessonSpeed) || 1, 'load');
   renderTitle(); renderChat(); applyCamera();
   if (MCP_MODE) mcpSetup(); else await loadModels();
   if (!had) newSession();

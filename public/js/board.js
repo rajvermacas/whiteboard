@@ -252,7 +252,7 @@ async function ensureVisible(b, run) {
     if (b.x < x + mm) x = b.x - mm; else if (b.x + b.width > x + vw - mm) x = b.x + b.width - vw + mm;
     if (b.y < y + mm) y = b.y - mm; else if (b.y + b.height > y + vh - mm) y = b.y + b.height - vh + mm;
   }
-  await animateCamera({ x, y, scale: s }, 420, run);
+  await animateCamera({ x, y, scale: s }, 420 / lessonRate, run);
 }
 function allBounds() {
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
@@ -423,7 +423,7 @@ async function updateCmd(c, run, animate) {
 async function execCommand(c, run, animate) {
   switch (c.cmd) {
     case 'clear': return clearBoard(run, animate, c.keepInk);
-    case 'wait': if (animate && run.gen === gen) await sleep(c.ms / speed()); return;
+    case 'wait': if (animate && run.gen === gen) await lsleep(c.ms / speed()); return;
     case 'erase': {
       let ids = c.ids.slice();
       if (c.area && c.area.length === 4) { const [x, y, w, h] = c.area, a = { x, y, width: w, height: h }; for (const [k, o] of objs) if (overlaps(a, bbOf(o), 0)) ids.push(k); }

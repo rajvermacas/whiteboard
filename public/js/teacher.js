@@ -79,7 +79,7 @@ async function runQueue() {
         dlog('say', r.duration ? r.duration.toFixed(1) + 's' : 'no audio', JSON.stringify(it.say.slice(0, 50)));
         beginPace(r.duration || it.say.length / SPEAK_CPS);
         if (!it.repeat) typeInto(it.turn, it.say, r.duration ? it.say.length / r.duration : null);
-        narrationDone = r.done.then(() => sleep(BEAT_GAP_MS)); r.done.then(updateSendBtn);
+        narrationDone = r.done.then(() => lsleep(BEAT_GAP_MS)); r.done.then(updateSendBtn);
         updateSendBtn();
       } else { beginPace(it.say.length / SPEAK_CPS); if (!it.repeat) typeInto(it.turn, it.say, SPEAK_CPS); }
       continue;

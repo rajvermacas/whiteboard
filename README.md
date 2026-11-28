@@ -80,7 +80,7 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
   ```
   uv venv -p 3.12 .venv-maya && uv pip install -p .venv-maya/bin/python mlx-audio
   ```
-  The 8-bit model (~3 GB) downloads on first use. It stays loaded in a Python process (`maya_server.py`, ~5 GB of memory) once a Maya voice is chosen. On a base M5 it makes speech a little faster than it plays: a 6 s line takes about 5 s. Kokoro is 2–3× faster. Maya has one speaking speed. There is no fallback: if Maya isn't installed or fails, that line is silent and the narration bar says why. `MAYA=off` turns it off, `MAYA_PYTHON` points to another Python, and `MAYA_MODEL` picks another model.
+  The 8-bit model (~3 GB) downloads on first use. It stays loaded in a Python process (`maya_server.py`, ~5 GB of memory) once a Maya voice is chosen. On a base M5 it makes speech a little faster than it plays: a 6 s line takes about 5 s. Kokoro is 2–3× faster. There is no fallback: if Maya isn't installed or fails, that line is silent and the narration bar says why. `MAYA=off` turns it off, `MAYA_PYTHON` points to another Python, and `MAYA_MODEL` picks another model.
 - **Pacing:** each sentence's drawing is slowed down or sped up to last as long as the sentence takes to say, so the pen draws what the teacher is talking about. The next sentence waits until both are done. With narration off, drawing and captions follow a normal speaking pace.
 - **No fallback voice:** only Kokoro on this computer is used. If it isn't installed, is still loading, or fails, that line is silent (the lesson keeps its pace) and the narration bar says why.
 
@@ -102,6 +102,7 @@ Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`)
 | Play / pause | **Space** (or **S**) with the board focused, same as the timeline's ▶/⏸; while the teacher is still thinking, before the timeline appears, it is the chat's ⏸/▶ |
 | Draw yourself | **✏️ Draw** → sketch → **Check my drawing** → ask (optional) → Send |
 | Erase your sketch | **✏️ Draw** → **🧽 Rubber** → drag over your strokes (only your own sketches are erased) |
+| Lesson speed | **J** slower, **K** back to normal (1×), **L** faster, in 0.1× steps from 0.5× to 2× (hold J or L to keep going), or **− 1× +** in the toolbar. The whole lesson changes speed together, immediately, even in the middle of a sentence or a stroke: the voice, the pen, the camera, the typing in the chat and the pauses between lines. The voice keeps its pitch: Kokoro makes new lines at the new speed, and a line already made (or a Maya line) is sped up or slowed down in the browser. Remembered |
 | Pause | **⏸** next to Send freezes the voice, pen and typing; **▶** resumes exactly there. Ask something while paused: the lesson stays paused until the answer is ready, the teacher answers it, then goes back to where the lesson was |
 | Interrupt the teacher | type while it answers and press Send: it finishes its sentence, then takes your message into account · **Stop** ends the answer |
 | Replay / Wipe / Fit / Full screen | toolbar |
