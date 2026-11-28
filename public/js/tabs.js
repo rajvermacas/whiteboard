@@ -122,7 +122,7 @@ const nameIn = (tabId, obj) => withTab(tabId, () => objs.has(obj) ? nameOf(obj) 
 function closeTab(id) {
   const gone = new Set([id]); let grew = true;
   while (grew) { grew = false; for (const t of tabs.values()) if (t.parent && gone.has(t.parent) && !gone.has(t.id)) { gone.add(t.id); grew = true; } }
-  // an answer still being written for it (before its first line arrives, or its follow-up / tidy call) counts too
+  // an answer still being written for it (before its first line arrives, or its drawing follow-up) counts too
   const busy = [...queue, currentItem].some(it => it && it.turn && gone.has(it.turn.tab)) || forks.some(f => gone.has(f.turn.tab))
     || (liveTurn && gone.has(liveTurn.tab) && (!liveTurn.streamDone || liveWorking()));
   if (busy) { alert('The teacher is still teaching on this tab. Stop it first (■), then close the tab.'); return; }

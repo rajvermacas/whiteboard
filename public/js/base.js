@@ -26,7 +26,7 @@ window.addEventListener('error', e => dlog('page error', e.message, (e.filename 
 window.addEventListener('unhandledrejection', e => dlog('unhandled rejection', String(e.reason && e.reason.stack || e.reason).slice(0, 300)));
 const NS = 'http://www.w3.org/2000/svg';
 const LS_SET = 'wbt.settings.v2';
-const FIX_MAX = 12, MAX_OBJECTS = 600, MAX_SAY_WORDS = 26;
+const ARROW_CURVE_MAX = 3, MAX_OBJECTS = 600, MAX_SAY_WORDS = 26;
 const PALETTE = { blue: '#1d6fb8', amber: '#c48a00', yellow: '#c48a00', green: '#2a8a3e', red: '#d1382c', purple: '#7a48c2', orange: '#e07800', black: '#1f2328', grey: '#7d848c', gray: '#7d848c' };
 const BOXLIKE = new Set(['write', 'box', 'circle', 'vector', 'matrix', 'bars', 'plot', 'math', 'code', 'network', 'tree', 'graph', 'numberline', 'timeline', 'table', 'icon', 'tokens', 'schedule', 'sequence']);
 // what counts as drawing (vs. writing) when judging an answer
@@ -143,8 +143,8 @@ function roughEllipse(cx, cy, rx, ry, r, overshoot = 1.06) {
   return smoothPath(pts);
 }
 // The page is going away (reload, close, navigation). Safari aborts the open fetches BEFORE pagehide, so a stream's error
-// and tidy-up paths would run first and overwrite the good checkpoint (inflight.js) with a worse one. This is set as
-// early as beforeunload; the send / continue / tidy-up / popup error paths, the non-closing checkpoint saves and the
+// paths would run first and overwrite the good checkpoint (inflight.js) with a worse one. This is set as
+// early as beforeunload; the send / continue / popup error paths, the non-closing checkpoint saves and the
 // hand-over of waiting side answers check it. If the page stays after all (a download, a bfcache round trip) the flag
 // is released and what was held back runs then (afterUnload), so nothing is left "Teaching…" forever.
 let unloading = false, unloadTimer = 0; const unloadWaiters = [];

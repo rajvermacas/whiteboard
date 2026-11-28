@@ -188,9 +188,8 @@ const builders = {
     if (c.label) {
       const mx = 0.25 * p1[0] + 0.5 * q[0] + 0.25 * p2[0], my = 0.25 * p1[1] + 0.5 * q[1] + 0.25 * p2[1];
       if (geo.loop) { addText(g, parts, mx + 12, my + 7, c.label, { size: 20, color: c.color, anchor: 'start' }); return; }
-      const dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.hypot(dx, dy) || 1;
-      let nx = -dy / len, ny = dx / len; if (ny > 0) { nx = -nx; ny = -ny; }
-      addText(g, parts, mx + nx * 14, my + ny * 14, c.label, { size: 20, color: c.color, anchor: Math.abs(dy) > Math.abs(dx) ? 'start' : 'middle' });
+      const at = arrowLabelAt(p1, q, p2);
+      addText(g, parts, at.x, at.y, c.label, { size: 20, color: c.color, anchor: at.anchor });
     }
   },
   // ---- feature 4: real maths (KaTeX) and code blocks ----
@@ -532,8 +531,45 @@ function arrowGeometry(c) {
   }
   const ca = centerOf(a), cb = centerOf(b);
   const p1 = a.box ? edgePoint(a.box, cb) : ca, p2 = b.box ? edgePoint(b.box, ca) : cb;
-  const dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.hypot(dx, dy) || 1, k = clamp(num(c.curve, 0), -1, 1) * len * 0.5;
+  const dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.hypot(dx, dy) || 1, k = clamp(num(c.curve, 0), -ARROW_CURVE_MAX, ARROW_CURVE_MAX) * len * 0.5;
   return [p1, [(p1[0] + p2[0]) / 2 - dy / len * k, (p1[1] + p2[1]) / 2 + dx / len * k], p2];
+}
+
+// the drawings (other than its two ends) that an arrow drawn with curve `curve` would run through or put its label on.
+// Each drawing counts with a small clear margin round it, so a routed arrow does not graze it.
+function arrowHits(c, curve = c.curve) {
+  const geo = arrowGeometry({ ...c, curve }); if (!geo || geo.loop) return [];
+  const [p1, q, p2] = geo, hit = new Set(), m = 8;
+  const solid = [...objs.values()].filter(o => BOXLIKE.has(o.cmd.cmd) && o.cmd.id !== c.from && o.cmd.id !== c.to)
+    .map(o => { const b = bbOf(o); return [o.cmd.id, { x: b.x - m, y: b.y - m, width: b.width + 2 * m, height: b.height + 2 * m }]; });
+  for (let k = 2; k <= 18; k++) {
+    const t = k / 20, u = 1 - t, x = u * u * p1[0] + 2 * u * t * q[0] + t * t * p2[0], y = u * u * p1[1] + 2 * u * t * q[1] + t * t * p2[1];
+    for (const [id, b] of solid) if (x > b.x && x < b.x + b.width && y > b.y && y < b.y + b.height) hit.add(id);
+  }
+  const lb = c.label && arrowLabelBox(c.label, p1, q, p2);
+  if (lb) for (const [id, b] of solid) if (overlaps(lb, b, 0)) hit.add(id);
+  return [...hit];
+}
+// where the arrow builder writes an arrow's label (size 20 text), as a box
+function arrowLabelBox(label, p1, q, p2) {
+  const { x, y, anchor } = arrowLabelAt(p1, q, p2), w = String(label).length * 10.5;
+  return { x: anchor === 'start' ? x : x - w / 2, y: y - 18, width: w, height: 24 };
+}
+function arrowLabelAt(p1, q, p2) {
+  const mx = 0.25 * p1[0] + 0.5 * q[0] + 0.25 * p2[0], my = 0.25 * p1[1] + 0.5 * q[1] + 0.25 * p2[1];
+  const dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.hypot(dx, dy) || 1;
+  let nx = -dy / len, ny = dx / len; if (ny > 0) { nx = -nx; ny = -ny; }
+  return { x: mx + nx * 14, y: my + ny * 14, anchor: Math.abs(dy) > Math.abs(dx) ? 'start' : 'middle' };
+}
+// An arrow whose path or label would run into another drawing is bent just enough to go round it (the gentlest
+// curve that is clear, on either side), so it is drawn right the first time. The curve it gets is kept in the command.
+// Routing may bend further (up to ±3) than the model is asked to (±1).
+function routeArrow(c) {
+  if (!arrowHits(c).length) return;
+  for (const k of [0.25, 0.4, 0.55, 0.7, 0.85, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]) for (const s of [1, -1]) {
+    const curve = clamp(num(c.curve, 0) + s * k, -ARROW_CURVE_MAX, ARROW_CURVE_MAX);
+    if (!arrowHits(c, curve).length) { c.curve = curve; return; }
+  }
 }
 
 function buildGroup(c) {

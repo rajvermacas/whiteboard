@@ -46,7 +46,7 @@ The app sizes its limits to the depth the teacher chose (how much it may draw, a
 
 Objects are placed relative to each other (`"near":{"of":"gpu","side":"right"}`) instead of at guessed coordinates, and overlapping objects are pushed apart.
 
-**👀 Looks at its own drawing and tidies it.** After each answer the app checks the new drawings (overlaps, arrows running through other drawings, cut-off labels). It then sends a picture of that area to a model that can see images, which replies only with fixes (`move`, `update`, `erase`, or up to 3 small additions such as an arrow or highlight; never the learner's ink), or `{"ok":true}` if the board is clear. The fixes animate on the board and the answer shows *"Tidied N things"*. It costs one extra quick call per answer. Turn it off in ⚙ → *Check and tidy each drawing*.
+**📐 Draws it right the first time.** There is no check-and-fix pass after an answer (no extra model call). The board prevents the usual mistakes as it draws: a new drawing that would land on another shifts aside, an arrow whose path would run through another drawing is bent just enough to go round it (also after the teacher moves or changes things), an arrow from a drawing back to itself is a loop beside it, and the model is told the exact label lengths so labels are not cut off.
 
 **⏯ Steps and timeline.** Every caption line, plus the drawing that goes with it, is a step. The bar under the board lets you:
 - step back and forward with ‹ › or the ← → keys,

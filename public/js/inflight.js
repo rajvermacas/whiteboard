@@ -10,7 +10,7 @@ let inflightLast = '', inflightReady = false, inflightSent = 0;
 const inflightUrl = id => '/api/sessions/' + encodeURIComponent(id) + '/inflight';
 
 // ---- what is saved ----
-const itemOut = it => it.say != null ? { say: it.say, repeat: it.repeat || undefined } : it.cmd ? { cmd: it.cmd, fix: it.fix || undefined } : null;
+const itemOut = it => it.say != null ? { say: it.say, repeat: it.repeat || undefined } : it.cmd ? { cmd: it.cmd } : null;
 // the answer's latest lines, whole lines only, at most `max` characters
 function lastLines(lines, max) {
   const out = []; let n = 0;
@@ -83,7 +83,7 @@ function turnIn(s, msg) {
 // the saved beat goes after the saved queue: the lines the continuation brings in come after it
 const itemsIn = (t, list) => [...(Array.isArray(list) ? list : []), ...(t.savedBeat || [])].map(x => !x ? null
   : x.say != null ? { say: String(x.say), repeat: !!x.repeat, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(String(x.say)) : null }
-  : x.cmd && typeof x.cmd === 'object' && x.cmd.cmd ? { cmd: x.cmd, turn: t, run: t.run, fix: !!x.fix } : null).filter(Boolean);
+  : x.cmd && typeof x.cmd === 'object' && x.cmd.cmd ? { cmd: x.cmd, turn: t, run: t.run } : null).filter(Boolean);
 // a restored question's place in the tree, as it was (addToTree works it out from what is happening now)
 function restoreNode(t, parent) {
   t.asked = t.ask || t.q; t.parent = parent || null; t.level = parent ? (parent.level || 0) + 1 : 0; t.askedAt = Date.now();
