@@ -140,35 +140,21 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // narration settings
 // ======================================================================
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
-function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro', enVoice: v.enVoice, hiVoice: v.hiVoice }; }
-const teachLang = () => settings.lang === 'hinglish' ? 'hinglish' : 'en';
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro' }; }
+// the voice decides the lesson's language: a Hindi voice (Maya 2 or Kokoro Hindi) means a Hinglish lesson
 const isHindiVoice = id => /^(h[fm]|my)_/.test(id || '');
+const teachLang = () => isHindiVoice(voiceCfg().voice) ? 'hinglish' : 'en';
 function applyVoice() {
   const v = voiceCfg();
-  // the language follows the voice family (a Hindi voice saved before the Language setting, or with it out of step,
-  // would otherwise get Roman Hinglish read with English sounds, since the prompt would not ask for the hi copy)
-  if (isHindiVoice(v.voice) !== (teachLang() === 'hinglish')) { settings.lang = isHindiVoice(v.voice) ? 'hinglish' : 'en'; saveSettings(); dlog('language set to', settings.lang, 'to match the voice', v.voice); }
   Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });
   $('#voiceModeSeg').querySelectorAll('button').forEach(b => { const on = b.dataset.m === v.mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   fillVoiceList();
-  $('#langSeg').querySelectorAll('button').forEach(b => { const on = b.dataset.l === teachLang(); b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   $('#voiceSpeed').value = String(v.speed); $('#voiceSpeedVal').textContent = v.speed.toFixed(2) + '×';
   $('#kokoroRow').hidden = v.mode !== 'kokoro';
   $('#muteBtn').textContent = v.mode === 'off' ? '🔇' : '🔊';
   $('#muteBtn').setAttribute('aria-pressed', v.mode !== 'off');
   renderVoiceStatus(Voice.status());
 }
-// teaching language: Hinglish lessons are read by a Hindi voice, so switching picks one (and switching back
-// returns to the English voice used before)
-function setLang(l) {
-  if (l === teachLang()) return;
-  const v = voiceCfg(); settings.lang = l;
-  if (l === 'hinglish' && !isHindiVoice(v.voice)) setVoice({ voice: v.hiVoice || 'my_ishwari', enVoice: v.voice });
-  else if (l === 'en' && isHindiVoice(v.voice)) setVoice({ voice: v.enVoice || 'af_heart', hiVoice: v.voice });
-  else { saveSettings(); applyVoice(); }
-}
-// a voice picked from the other family switches the language with it, so the prompt and the voice always match
-function pickVoice(id) { settings.lang = isHindiVoice(id) ? 'hinglish' : 'en'; setVoice({ voice: id }); }
 function setVoice(patch) { settings.voice = { ...voiceCfg(), ...patch }; saveSettings(); applyVoice(); }
 function renderVoiceStatus(st) {
   const v = voiceCfg(), bar = $('#voiceBar');
@@ -192,7 +178,7 @@ function fillVoiceList() {
       const n = document.createElement('span'); n.className = 'mName'; n.textContent = v.name;
       const k = document.createElement('span'); k.className = 'mId'; k.textContent = v.kind;
       o.append(n, k); o.title = `${v.name} (${label}, ${v.kind.replace(/ · /g, ', ')})`;
-      o.onclick = () => { pickVoice(v.id); box.focus({ preventScroll: true }); };
+      o.onclick = () => { setVoice({ voice: v.id }); box.focus({ preventScroll: true }); };
       box.appendChild(o);
     }
   }
@@ -205,7 +191,7 @@ function showCurrentVoice() {
 $('#voiceList').onkeydown = e => {
   const rows = voiceRows(), i = rows.findIndex(r => r.classList.contains('on'));
   const to = e.key === 'ArrowDown' ? i + 1 : e.key === 'ArrowUp' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : null;
-  if (to !== null) { e.preventDefault(); e.stopPropagation(); const r = rows[clamp(to, 0, rows.length - 1)]; pickVoice(r.dataset.id); voiceRows().find(x => x.dataset.id === r.dataset.id).scrollIntoView({ block: 'nearest' }); return; }
+  if (to !== null) { e.preventDefault(); e.stopPropagation(); const r = rows[clamp(to, 0, rows.length - 1)]; setVoice({ voice: r.dataset.id }); voiceRows().find(x => x.dataset.id === r.dataset.id).scrollIntoView({ block: 'nearest' }); return; }
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); $('#voicePreview').click(); }
 };
 (() => {
@@ -215,7 +201,6 @@ $('#voiceList').onkeydown = e => {
     try { const r = await Voice.preview(); b.textContent = '🔊 playing'; await r.done; } catch (e) { dlog('preview failed', String(e)); }
     b.textContent = '▶ Preview voice'; renderVoiceStatus(Voice.status());
   };
-  $('#langSeg').querySelectorAll('button').forEach(b => { b.onclick = () => setLang(b.dataset.l); });
   $('#voiceSpeed').oninput = e => setVoice({ speed: Number(e.target.value) });
   $('#muteBtn').onclick = () => { const v = voiceCfg(); if (v.mode === 'off') setVoice({ mode: v.lastMode || 'kokoro' }); else { Voice.stop(); setVoice({ mode: 'off', lastMode: v.mode }); } };
   document.addEventListener('pointerdown', () => Voice.unlock(), { capture: true });
