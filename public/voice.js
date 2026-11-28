@@ -102,7 +102,7 @@ window.Voice = (() => {
     const arr = await r.arrayBuffer();
     const c = ensureCtx();
     const buf = await new Promise((res, rej) => { const p = c.decodeAudioData(arr, res, rej); if (p && p.catch) p.catch(rej); });
-    if (genMs && buf.duration > 0.8) log('kokoro generated', buf.duration.toFixed(1) + 's audio in', (genMs / 1000).toFixed(1) + 's');
+    if (genMs && buf.duration > 0.8) log(engine() + ' generated', buf.duration.toFixed(1) + 's audio in', (genMs / 1000).toFixed(1) + 's');
     return buf;
   }
   function synthKokoro(text) {
@@ -135,17 +135,11 @@ window.Voice = (() => {
   // question). Only the line about to play and the next few (prefetch) are made, and a line that must play now
   // jumps to the front.
   const wantQ = []; let inflight = 0; const MAX_INFLIGHT = 1;   // one at a time: a line that must play next waits for at most one other
-  // spoken: what a Hindi voice says instead of the words shown (a Hinglish line, with its Hindi in Devanagari).
-  // Which of the two is sent is decided when the line is voiced, by the voice in use then (it may change meanwhile).
   const isMaya = () => cfg.voice.startsWith('my_');
-  const isHindi = () => cfg.voice[0] === 'h' || isMaya();
   const engine = () => isMaya() ? 'Maya 2' : 'Kokoro';
-  function prepare(text, spoken) {
-    return { text: speakable(text), spoken: spoken ? speakable(spoken) : '', raw: text, audio: null, started: false };
+  function prepare(text) {
+    return { text: speakable(text), raw: text, audio: null, started: false };
   }
-  // a Hindi voice reads only the Devanagari copy: a line without one fails (no reading the Roman words instead)
-  const textFor = h => isHindi() ? h.spoken : h.text;
-  const noHi = () => Object.assign(new Error('this line has no Devanagari (hi) copy for the Hindi voice'), { noHi: true });
   function want(h, urgent) {
     if (!h || !h.text || cfg.mode !== 'kokoro' || h.started) return;
     if (!h.audio) { h.audio = new Promise((res, rej) => { h.res = res; h.rej = rej; }); h.audio.catch(() => {}); }
@@ -157,8 +151,7 @@ window.Voice = (() => {
   function pump() {
     while (inflight < MAX_INFLIGHT && wantQ.length) {
       const h = wantQ.shift(); h.started = true; inflight++;
-      const text = textFor(h);
-      (text ? synthKokoro(text) : Promise.reject(noHi())).then(h.res, h.rej).finally(() => { inflight--; pump(); });
+      synthKokoro(h.text).then(h.res, h.rej).finally(() => { inflight--; pump(); });
     }
   }
   // the next lines in the order they will be said: voice them ahead (and before anything prefetched earlier)
@@ -185,12 +178,11 @@ window.Voice = (() => {
       log(e.timeout ? 'kokoro audio not ready after ' + limit + 'ms: this line stays silent' : 'kokoro failed: ' + e.message + ' (this line stays silent)');
       if (myEpoch !== epoch) return none;   // stopped, Off or replaced meanwhile: a cancelled line is not a failure
       // one failure may be a blip; two in a row say the voice is down, so say so (the lesson still goes on in silence)
-      if (e.noHi) { narrErr = true; setStatus('error', 'Narration failed: the teacher sent a line without its Devanagari (hi) copy, so the Hindi voice cannot read it. That line is silent.'); return silent(h.text); }
       if (++failStreak >= 2 && !narrErr) { narrErr = true; setStatus('error', e.timeout ? 'Narration failed: the voice is taking too long to make audio. The lesson goes on without sound.' : 'Narration failed: could not make audio for recent lines (' + e.message + '). The lesson goes on without sound.'); }
       return silent(h.text);
     }
     if (myEpoch !== epoch) return none;
-    failStreak = 0; if (narrErr) { narrErr = false; setStatus('ready', ''); }   // it spoke again: clear the error
+    failStreak = 0; if (narrErr || serverState === 'unavailable') { narrErr = false; serverState = 'ready'; setStatus('ready', ''); }   // it spoke again: clear the error
     await whenResumed();
     if (myEpoch !== epoch) return none;
     let c = ensureCtx();
@@ -211,7 +203,7 @@ window.Voice = (() => {
     current = { src, h, c, t0: c.currentTime - from, stop: () => { try { src.stop(); } catch {} speakingNow = false; doneResolve(); } };
     speakingNow = true;
     src.start(0, from);
-    lastSource = 'kokoro-server';
+    lastSource = isMaya() ? 'maya-server' : 'kokoro-server';
     activeTimeout((buf.duration - from + 1.5) * 1000, finish);   // never wait forever for onended
     return { duration: buf.duration - from, done };
   }
@@ -247,7 +239,7 @@ window.Voice = (() => {
   // Which voice is (or will be) speaking, in plain words for the settings panel.
   function describe() {
     if (cfg.mode === 'off') return 'Narration is off.';
-    const e = engine(), fixed = isMaya() ? ' Maya speaks at one speed, so the speed slider does not apply.' : '';
+    const e = engine(), fixed = isMaya() ? ' Maya speaks at one speed.' : '';
     if (serverState === 'unavailable') return `${e} · ${voiceName()} is not available on this computer, so the lesson has no sound.`;
     if (narrErr) return `${e} · ${voiceName()} had no sound for recent lines.`;
     return serverState === 'ready' ? `Speaking with ${e} · ${voiceName()}, generated on this computer.${fixed}` : `${e} · ${voiceName()} on this computer, getting ready…`;
@@ -255,7 +247,7 @@ window.Voice = (() => {
   async function preview() {
     stop();
     const name = voiceName().split(' (')[0];
-    return play(isHindi() ? prepare(`Namaste, main ${name} hoon.`, `नमस्ते, मैं ${name} हूँ। चलिए व्हाइटबोर्ड पे साथ में कुछ नया सीखते हैं।`)
+    return play(cfg.voice[0] === 'h' || isMaya() ? prepare(`Namaste, main ${name} hoon. Chaliye whiteboard pe saath mein kuch naya seekhte hain.`)
       : prepare(`Hi, I'm ${name}. Let's learn something together on the whiteboard.`));
   }
 

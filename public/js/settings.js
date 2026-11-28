@@ -141,14 +141,12 @@ document.addEventListener('pointerdown', e => { if (!$('#modelPop').hidden && !e
 // ======================================================================
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
 function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', speed: v.speed || 0.85, engine: 'server', lastMode: 'kokoro' }; }
-// the voice decides the lesson's language: a Hindi voice (Maya 2 or Kokoro Hindi) means a Hinglish lesson
-const isHindiVoice = id => /^(h[fm]|my)_/.test(id || '');
-const teachLang = () => isHindiVoice(voiceCfg().voice) ? 'hinglish' : 'en';
 function applyVoice() {
   const v = voiceCfg();
   Voice.configure({ mode: v.mode, voice: v.voice, speed: v.speed, engine: v.engine });
   $('#voiceModeSeg').querySelectorAll('button').forEach(b => { const on = b.dataset.m === v.mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   fillVoiceList();
+  $('#voiceSpeedRow').hidden = v.voice.startsWith('my_');   // Maya has one speed
   $('#voiceSpeed').value = String(v.speed); $('#voiceSpeedVal').textContent = v.speed.toFixed(2) + '×';
   $('#kokoroRow').hidden = v.mode !== 'kokoro';
   $('#muteBtn').textContent = v.mode === 'off' ? '🔇' : '🔊';
@@ -167,7 +165,7 @@ Voice.onStatus(renderVoiceStatus);
 const voiceRows = () => [...$('#voiceList').querySelectorAll('.mRow')];
 function fillVoiceList() {
   const box = $('#voiceList'), cur = voiceCfg().voice; box.textContent = '';
-  const groups = [['American', 'US'], ['British', 'UK'], ['Maya 2 · natural Hindi, for Hinglish', 'Maya'], ['Kokoro Hindi · faster, for Hinglish', 'Hindi']];
+  const groups = [['American', 'US'], ['British', 'UK'], ['Maya 2 · natural Hindi and Hinglish', 'Maya'], ['Kokoro Hindi · for text in Devanagari', 'Hindi']];
   for (const [label, tag] of groups) {
     const list = Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK|Hindi|Maya), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; }).filter(v => v.acc === tag);
     if (!list.length) continue;
@@ -313,7 +311,7 @@ const MCP_METHODS = {
     let n = 0;
     for (const st of parts.slice(0, 40)) {
       if (!st || typeof st !== 'object') continue;
-      if (st.say) { const t = trimSay(str(st.say, 1200)), hi = typeof st.hi === 'string' ? trimSay(str(st.hi, 1500)) : undefined; enqueue({ say: t, hi, turn, run, voice: Voice.enabled() ? Voice.prepare(t, hi) : null }); }
+      if (st.say) { const t = trimSay(str(st.say, 1200)); enqueue({ say: t, turn, run, voice: Voice.enabled() ? Voice.prepare(t) : null }); }
       for (const raw of Array.isArray(st.commands) ? st.commands : []) {
         if (++n > 300) { errors.push('more than 300 commands in one call: the rest were skipped'); break; }
         const c = normalize(raw);

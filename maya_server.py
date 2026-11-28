@@ -18,9 +18,10 @@ for line in sys.stdin:
     req = {}
     try:
         req = json.loads(line)
-        parts = [np.asarray(r.audio, dtype=np.float32) for r in model.generate(req["text"], voice=req.get("voice") or "Ahana", lang_code=req.get("lang") or "hi")]
-        audio = np.concatenate(parts) if parts else np.zeros(2400, dtype=np.float32)
-        out.write(json.dumps({"id": req.get("id"), "sr": 24000, "pcm": base64.b64encode(audio.astype("<f4").tobytes()).decode()}) + "\n")
+        results = list(model.generate(req["text"], voice=req["voice"], lang_code=req["lang"]))
+        sr = results[0].sample_rate if results else 24000
+        audio = np.concatenate([np.asarray(r.audio, dtype=np.float32) for r in results]) if results else np.zeros(sr // 10, dtype=np.float32)
+        out.write(json.dumps({"id": req.get("id"), "sr": sr, "pcm": base64.b64encode(audio.astype("<f4").tobytes()).decode()}) + "\n")
     except Exception as e:
         out.write(json.dumps({"id": req.get("id"), "error": str(e)[:300]}) + "\n")
     out.flush()

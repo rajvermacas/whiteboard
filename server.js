@@ -567,14 +567,15 @@ const speakWith = (c, voice, speed) => voice.startsWith('my_') ? maya.speak(c, v
 async function handleTTS(req, res) {
   let body; try { body = JSON.parse(await readBody(req, 20000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
   const text = String(body.text || '').slice(0, 1500).trim();
-  let voice = /^[a-z]{2}_[a-z]+$/.test(body.voice || '') ? body.voice : 'af_heart';
-  if (voice[0] === 'h' && !HINDI_VOICES.has(voice) || voice.startsWith('my_') && !maya.hasVoice(voice)) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'unknown voice ' + voice } });
+  // no voice means the default; a voice that is not a known one is an error, never quietly another voice
+  const voice = body.voice == null || body.voice === '' ? 'af_heart' : String(body.voice);
+  if (!/^[a-z]{2}_[a-z]+$/.test(voice) || voice[0] === 'h' && !HINDI_VOICES.has(voice) || voice.startsWith('my_') && !maya.hasVoice(voice)) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'unknown voice ' + voice } });
   const speed = Math.max(0.5, Math.min(2, Number(body.speed) || 1));
   if (!text) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'no text' } });
   const isMaya = voice.startsWith('my_');
   if (isMaya) { if (!maya.installed()) return sendJSON(res, 501, { error: { code: 'tts_unavailable', message: maya.status().error } }); }
   else { loadTTS(); if (tts.state === 'unavailable' || tts.state === 'error') return sendJSON(res, 501, { error: { code: 'tts_unavailable', message: tts.error } }); }
-  const key = `${voice}|${speed}|${text}`;
+  const key = isMaya ? `${voice}|${text}` : `${voice}|${speed}|${text}`;   // Maya has one speed
   let job = tts.cache.get(key);
   if (!job) {
     // one generation at a time keeps each sentence as fast as possible
@@ -664,10 +665,14 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/search' && req.method === 'POST') return await handleSearch(req, res);
     if (url.pathname === '/api/tts' && req.method === 'POST') return await handleTTS(req, res);
     if (url.pathname === '/api/tts/status' && req.method === 'GET') {
-      loadTTS();
       // a Maya voice reports Maya's own state (and starts it loading); every other voice reports Kokoro's
-      if (/^my_[a-z]+$/.test(url.searchParams.get('voice') || '')) { if (maya.installed()) maya.start().catch(() => {}); return sendJSON(res, 200, { ...maya.status(), engine: 'maya' }); }
-      return sendJSON(res, 200, { ...ttsStatus(), engine: 'kokoro' });
+      const v = url.searchParams.get('voice') || '';
+      if (v.startsWith('my_')) {
+        if (!maya.hasVoice(v)) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'unknown voice ' + v } });
+        if (maya.installed() && maya.status().state === 'idle') maya.start().catch(() => {});   // after a failure it reports the error; the next line retries
+        return sendJSON(res, 200, { ...maya.status(), engine: 'maya' });
+      }
+      loadTTS(); return sendJSON(res, 200, { ...ttsStatus(), engine: 'kokoro' });
     }
     if (url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) return await handleSessions(req, res, url);
     if (url.pathname === '/api/board/events' && req.method === 'GET') return handleBoardEvents(req, res, url);

@@ -3,10 +3,6 @@
 // ======================================================================
 // chat UI
 // ======================================================================
-// the app's own spoken lines in a Hinglish lesson: Hinglish on screen, and a Devanagari copy for the Hindi voice
-const hinglish = () => teachLang() === 'hinglish';
-const APP_HI = { asked: 'आपने पूछा।', back: 'आपके सवाल का जवाब हो गया। अब वापस चलते हैं।' };
-const introHi = () => hinglish() ? APP_HI.asked : undefined;
 const msgBox = $('#messages'), input = $('#input'), sendBtn = $('#sendBtn');
 // The chat follows the newest text only while the learner is at the bottom. Scrolling up (wheel, scrollbar, keys, touch)
 // stops the follow so the typing can't yank the view back every frame; scrolling back to the bottom, or sending a
@@ -240,7 +236,7 @@ function parkLive(why = 'look') {   // why: 'question' (a side question) or 'loo
   if (cut) {
     const pos = Voice.position(), mine = pos && lastSay.voice && pos.h === lastSay.voice;
     if (why === 'look' && lastSay.voice && !mine && !Voice.speaking() && queueBusy) dlog('set aside after its sentence was said: it is not said again');
-    else t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? (why === 'look' && mine ? lastSay.voice : Voice.prepare(lastSay.say, lastSay.hi)) : null, from: why === 'look' && mine ? Math.max(0, pos.at - 0.3) : 0 });
+    else t.parkedQ.unshift({ ...lastSay, repeat: true, voice: Voice.enabled() ? (why === 'look' && mine ? lastSay.voice : Voice.prepare(lastSay.say)) : null, from: why === 'look' && mine ? Math.max(0, pos.at - 0.3) : 0 });
   }
   if (currentItem && currentItem.cmd && currentItem.turn === t) currentItem.keep = true;
   forks.push({ turn: t, why, wasPaused, holdPause: false, abort: t.abort, say: lastSay && lastSay.turn === t ? lastSay.say : '' }); parked = forks[forks.length - 1];
@@ -300,9 +296,8 @@ function continueParked() {
     const via = []; for (let x = side && side.from; x && x !== t && via.length < 5; x = x.from) via.push(x);
     const done = side ? (isDrill(side) ? `That is ${side.q}.` : 'That answers your question.') : 'That answers your question.';
     const also = via.length ? ` That also finishes ${via.map(about).join(', and then ')}.` : '';
-    const hi = hinglish() ? APP_HI.back : undefined;
-    const line = hi ? `Aapke sawaal ka jawab ho gaya. Ab wapas chalte hain${topic ? ': ' + topic : ''}.` : `${done}${also} Now, back to ${topic || 'where we were'}.`;
-    items.unshift({ say: line, hi, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(line, hi) : null });
+    const line = `${done}${also} Now, back to ${topic || 'where we were'}.`;
+    items.unshift({ say: line, turn: t, run: t.run, voice: Voice.enabled() ? Voice.prepare(line) : null });
     showBackBanner(topic || 'where we were', p.say, [side, ...via].filter(Boolean).map(about));
     const ids = [...t.drew].filter(id => objs.has(id)).slice(-6);
     if (ids.length) {
@@ -327,7 +322,7 @@ function requestRelease(t) {
   t.releasing = true;
   // voice its first lines now, so they are ready when the current sentence ends
   if (Voice.enabled()) {
-    if (t.intro && !t.introVoice) t.introVoice = Voice.prepare(t.intro, introHi());
+    if (t.intro && !t.introVoice) t.introVoice = Voice.prepare(t.intro);
     Voice.prefetch([t.introVoice, ...t.held.filter(i => i.say != null && i.voice).slice(0, 1).map(i => i.voice)]);
   }
   const go = () => releaseHeld(t);
@@ -363,7 +358,7 @@ function releaseHeld(t, idle = false) {
   t.from = t.askedIn && forks.some(f => f.turn === t.askedIn) ? t.askedIn : liveTurn; liveTurn = t; t.run.gen = gen;
   if (!t.streamDone) { abortCtl = t.abort; activeStreams++; t.counted = true; streaming = true; }
   const items = t.held; t.held = null;
-  if (t.intro) items.unshift({ say: t.intro, hi: introHi(), turn: t, run: t.run, voice: Voice.enabled() ? t.introVoice || Voice.prepare(t.intro, introHi()) : null });
+  if (t.intro) items.unshift({ say: t.intro, turn: t, run: t.run, voice: Voice.enabled() ? t.introVoice || Voice.prepare(t.intro) : null });
   dlog('takes over:', lab(t), items.length, 'lines', '· asked in', lab(t.askedIn), '· stack:', forkStack());
   Voice.unlock();
   items.forEach(enqueue);
@@ -603,7 +598,7 @@ function ask(q, mode = 'fork', extra = {}) {
     dlog('user: asked while looking back: back to the live board,', stayPaused ? 'paused in' : 'carrying on with', lab(parked.turn));
     exitScrub(true); if (stayPaused) setPaused(true); continueParked();   // paused first: nothing of it plays meanwhile
   }
-  const side = { parallel: true, aside: true, topic: q, intro: hinglish() ? `Aapne poocha: “${clip(q, 90)}”.` : `You asked: “${clip(q, 90)}”.` };
+  const side = { parallel: true, aside: true, topic: q, intro: `You asked: “${clip(q, 90)}”.` };
   if (r.how === 'steer') { if (isPaused()) setPaused(false); return send(q, { ...extra, steer: true }); }
   if (r.how === 'side') return send(q, { ...extra, ...side });
   if (r.how === 'park') return send(q, { ...extra, side: true });
