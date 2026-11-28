@@ -156,7 +156,7 @@ document.addEventListener('click', e => {
 // narration settings
 // ======================================================================
 // one voice: Kokoro on this computer (an old 'browser' setting becomes Kokoro)
-function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'af_heart', engine: 'server', lastMode: 'kokoro' }; }
+function voiceCfg() { const v = settings.voice || (settings.voice = {}); const mode = v.mode === 'off' ? 'off' : 'kokoro'; return { mode, voice: v.voice || 'my_vrinda', engine: 'server', lastMode: 'kokoro' }; }
 function applyVoice() {
   const v = voiceCfg();
   Voice.configure({ mode: v.mode, voice: v.voice, engine: v.engine });

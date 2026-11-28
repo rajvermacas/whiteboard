@@ -552,7 +552,7 @@ async function handleTTS(req, res) {
   let body; try { body = JSON.parse(await readBody(req, 20000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
   const text = String(body.text || '').slice(0, 1500).trim();
   // no voice means the default; a voice that is not a known one is an error, never quietly another voice
-  const voice = body.voice == null || body.voice === '' ? 'af_heart' : String(body.voice);
+  const voice = body.voice == null || body.voice === '' ? 'my_vrinda' : String(body.voice);
   // Kokoro's American and British voices (a…/b…), or a Maya voice
   if (!(/^[ab][fm]_[a-z]+$/.test(voice) || maya.hasVoice(voice))) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'unknown voice ' + voice } });
   const speed = Math.max(0.5, Math.min(2, Number(body.speed) || 1));

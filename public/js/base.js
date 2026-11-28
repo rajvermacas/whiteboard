@@ -48,7 +48,7 @@ let chat = [];                 // [{role:'user'|'assistant'|'error'|'system', te
 const selection = new Set();
 const pops = [];   // "Ask whiteboard" popups: { el, key, ids, names, thread: [{q, a}], abort, at: [bx, by], min, unread }
 let popZ = 10;
-let settings = { model: null, efforts: {}, voice: { mode: 'kokoro', voice: 'af_heart', speed: 0.85, engine: 'server' } };
+let settings = { model: null, efforts: {}, voice: { mode: 'kokoro', voice: 'my_vrinda', speed: 0.85, engine: 'server' } };
 let models = [];
 let gen = 0;                   // animation generation: bump to finish every running tween at once
 let streaming = false, queueRunning = false, replaying = false;

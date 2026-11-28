@@ -7,7 +7,7 @@
  */
 window.Voice = (() => {
   'use strict';
-  let cfg = { mode: 'kokoro', voice: 'af_heart', engine: 'server' };
+  let cfg = { mode: 'kokoro', voice: 'my_vrinda', engine: 'server' };
   // Lesson speed: at 1× Kokoro speaks at BASE_SPEED. A faster lesson speeds the voice up: a new line is made at
   // BASE_SPEED × rate (Kokoro's own pace sounds most natural); a line made at another rate, a Maya line (one speed only),
   // or a sentence the speed changes in the middle of is time-stretched (pitch kept) so it plays at that rate.
