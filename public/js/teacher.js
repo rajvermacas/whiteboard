@@ -505,7 +505,7 @@ async function sendQ(q, opts, opened) {
     await softStop();
     pendingEl.remove();
   } else if (streamingLive() || queueRunning || replaying || scrub) stopAll(false, 'new question replaces the answer');
-  if (scrub) exitScrub();
+  if (scrub && !opts.parallel) exitScrub();   // a double-click while looking back is answered in the background: the step stays
   Voice.unlock();
   $('#modelPop').hidden = true;
   // opts.ids: the drawings a popup hand-off is about (used instead of the selection; a pending sketch is left alone)
@@ -546,6 +546,7 @@ async function sendQ(q, opts, opened) {
     turn.pausedAsk = isPaused() && !scrub;   // asked while paused: the lesson stays paused until this answer plays (chat.js)
     // the note is "<what> · <time> · <tokens> · <then>"; the time and tokens are filled in live (showThinking below)
     turn.heldUser.note = turn.pausedAsk ? ['⏳ Answering…', 'the lesson stays paused until it is ready']
+      : scrub ? ['⏳ Opening it up…', 'it plays when you go back to the live board']
       : [opts.aside ? '⏳ Answering on the side…' : '⏳ Opening it up…', 'the lesson goes on until it is ready'];
     w.textContent = turn.heldUser.note.join(' ');
     pendingHeld.add(turn); renderPendingPill();

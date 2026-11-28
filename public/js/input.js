@@ -170,21 +170,15 @@ svg.addEventListener('dblclick', e => {
 // While the teacher is answering this forks the answer, like a question asked while paused; it continues afterwards.
 const drillQuestion = n => `Open up “${n}”: show exactly what is inside it, with real shapes and numbers (the actual vectors, matrices, tables or data structures) and the computation it does, step by step${MCP_MODE ? ', right next to it' : ''}.`;
 function drillInto(id) {
-  // looking back at an earlier step: back to the live board first (the set-aside answer carries on, paused if it was,
-  // as when a question is typed there); the drawing must still be on the live board
-  if (scrub) {
-    const stay = !!(parked && parked.wasPaused);
-    dlog('user: double-click while looking back: back to the live board first');
-    exitScrub(true); if (parked) { if (stay) setPaused(true); continueParked(); }
-    if (!objs.has(id)) { dlog('that drawing is no longer on the live board'); return; }
-  }
-  dlog('user: double-click', JSON.stringify(nameOf(id)), '· state:', isPaused() ? 'paused' : liveBusy() ? 'teaching' : 'idle', '· live:', lab(liveTurn));
+  dlog('user: double-click', JSON.stringify(nameOf(id)), '· state:', scrub ? 'looking back at step ' + (scrub.i + 1) : isPaused() ? 'paused' : liveBusy() ? 'teaching' : 'idle', '· live:', lab(liveTurn));
   setSelection([id]);
   const q = drillQuestion(nameOf(id));
   const name = nameOf(id), topic = `what is inside “${name}”`;
   // the lesson is running: ask in the background and keep teaching; switch over once the answer is actually coming
   // (also while paused: it is answered in the background and takes over once the lesson is playing again)
-  if ((liveBusy() || (isPaused() && liveTurn))) send(q, { parallel: true, topic, pulse: pulseObj(id), intro: `Since you double-clicked “${name}”, here is what is inside it.`, newTab: { tab: activeTab, obj: id } });
+  // looking back at an earlier step: the board stays on that step; it is answered in the background and plays once
+  // the learner is back on the live board (releaseHeld waits while looking back)
+  if (scrub || liveBusy() || (isPaused() && liveTurn)) send(q, { parallel: true, topic, pulse: pulseObj(id), intro: `Since you double-clicked “${name}”, here is what is inside it.`, newTab: { tab: activeTab, obj: id } });
   else send(q, { topic, newTab: { tab: activeTab, obj: id } });
 }
 // instant feedback that a double-click was taken: a pulsing ring around the drawing until its answer takes over
