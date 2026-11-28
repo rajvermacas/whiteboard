@@ -327,11 +327,12 @@ const MCP_MODE = new URLSearchParams(location.search).get('mode') === 'mcp';
 // embed=1: shown inside opencode Desktop's side panel, next to opencode's own chat, so the chat column is hidden
 // and each spoken line shows as a caption over the board instead.
 const EMBED = MCP_MODE && new URLSearchParams(location.search).get('embed') === '1';
-let captionTimer = null;
+let captionTok = 0;
 function liveCaption(text) {
   if (scrub) return;
   const c = $('#caption'); c.textContent = text; c.hidden = false;
-  clearTimeout(captionTimer); captionTimer = setTimeout(() => { if (!scrub) c.hidden = true; }, Math.max(4000, text.length / SPEAK_CPS / lessonRate * 1000 + 1500));
+  // lesson time, so it follows a speed change while the caption is up
+  const tok = ++captionTok; lsleep(Math.max(4000, text.length / SPEAK_CPS * 1000 + 1500)).then(() => { if (tok === captionTok && !scrub) c.hidden = true; });
 }
 let mcpTurn = null;
 // Draw calls that come in close together belong to one answer (one chat bubble, one answer on the timeline).

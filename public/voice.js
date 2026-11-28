@@ -253,15 +253,26 @@ window.Voice = (() => {
   }
   // how far into its audio the current line is (the audio clock stands still while paused)
   const at = cur => cur.from + (cur.c.currentTime - cur.t0) * cur.k;
+  // a held J / L sends a step every ~30 ms: the line is restarted (and stretched) once the steps stop for a moment
+  let rateTimer = null;
   function setRate(r) {
     if (r === rate) return;
     rate = r;
-    if (!current) return;
-    const cur = current, pos = at(cur), old = cur.src;
+    clearTimeout(rateTimer); rateTimer = setTimeout(restartAtRate, 120);
+  }
+  function restartAtRate() {
+    const cur = current;
+    if (!cur || cur.k === rate / cur.g) return;
+    // its audio context was closed (Safari rebuilt it): that line cannot play on, so it ends here
+    if (cur.c.state === 'closed') { log('speed change: the line\'s audio context is closed, it ends here'); current = null; speakingNow = false; cur.done(); return; }
+    const pos = at(cur), old = cur.src;
     old.onended = null; try { old.stop(); } catch {}
     if (pos >= cur.buf.duration - 0.02) { current = null; speakingNow = false; cur.done(); return; }
     startAt(cur, pos);
+    // the drawing of this line keeps to where the voice really is (the clock changed speed up to 120 ms earlier)
+    resyncers.forEach(f => f((cur.buf.duration - pos) * cur.g));
   }
+  const resyncers = new Set();
 
   function pause() {
     if (paused) return; paused = true;
@@ -325,6 +336,7 @@ window.Voice = (() => {
     audioState: () => (ctx ? ctx.state : 'none'),
     source: () => lastSource,
     onStatus: f => { listeners.add(f); return () => listeners.delete(f); },
+    onResync: f => { resyncers.add(f); return () => resyncers.delete(f); },   // f(lesson seconds left in the line being said)
     VOICES,
   };
 })();
