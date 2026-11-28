@@ -8,7 +8,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const links = require('./links');   // reads links in the learner's message (LINK_FETCH=off disables)
-const hindi = require('./hindi');   // Hindi words to phonemes, for the Hindi voices (Hinglish narration)
 const maya = require('./maya');   // Maya 2: a natural Hindi voice through mlx-audio (optional, Apple Silicon)
 
 // ---------- .env loader (tiny, no dependency) ----------
@@ -544,32 +543,15 @@ function wav(samples, sr) {
   for (let i = 0; i < samples.length; i++) buf.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767))), 44 + i * 2);
   return buf;
 }
-// Kokoro's Hindi voices (h*_…): kokoro-js only lets its English voices speak, and its phonemizer only knows
-// English. So a Hinglish line is phonemized here, Hindi words by rule (hindi.js) and the rest (English words,
-// numbers) by the English phonemizer, and the model is fed those phonemes with the Hindi voice.
-const HINDI_VOICES = new Set(['hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi']);
-let enPhonemize = null;
-async function hinglishSpeak(text, voice, speed) {
-  if (!enPhonemize) ({ phonemize: enPhonemize } = await import('phonemizer'));
-  const out = [];
-  for (const p of hindi.split(text)) {
-    if (p.hi != null) out.push(p.hi);
-    else if (p.p != null) { if (out.length) out[out.length - 1] += p.p; }
-    else out.push((await enPhonemize(p.en, 'en-us')).join(' ').replace(/ʲ/g, 'j').replace(/r/g, 'ɹ').replace(/x/g, 'k').replace(/ɬ/g, 'l'));
-  }
-  const ipa = out.join(' ').trim();
-  if (!ipa) return { audio: new Float32Array(2400), sampling_rate: 24000 };   // nothing to say: a tenth of a second of silence, still a valid sound
-  const { input_ids } = tts.engine.tokenizer(ipa, { truncation: true });
-  return tts.engine.generate_from_ids(input_ids, { voice, speed });
-}
 // Maya voices (my_…) are their own engine: no other voice stands in when Maya is missing or fails (fail fast)
-const speakWith = (c, voice, speed) => voice.startsWith('my_') ? maya.speak(c, voice) : voice[0] === 'h' ? hinglishSpeak(c, voice, speed) : tts.engine.generate(c, { voice, speed });
+const speakWith = (c, voice, speed) => voice.startsWith('my_') ? maya.speak(c, voice) : tts.engine.generate(c, { voice, speed });
 async function handleTTS(req, res) {
   let body; try { body = JSON.parse(await readBody(req, 20000)); } catch (e) { return badBody(res, e, { error: { code: 'invalid_request' } }); }
   const text = String(body.text || '').slice(0, 1500).trim();
   // no voice means the default; a voice that is not a known one is an error, never quietly another voice
   const voice = body.voice == null || body.voice === '' ? 'af_heart' : String(body.voice);
-  if (!/^[a-z]{2}_[a-z]+$/.test(voice) || voice[0] === 'h' && !HINDI_VOICES.has(voice) || voice.startsWith('my_') && !maya.hasVoice(voice)) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'unknown voice ' + voice } });
+  // Kokoro's American and British voices (a…/b…), or a Maya voice
+  if (!(/^[ab][fm]_[a-z]+$/.test(voice) || maya.hasVoice(voice))) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'unknown voice ' + voice } });
   const speed = Math.max(0.5, Math.min(2, Number(body.speed) || 1));
   if (!text) return sendJSON(res, 400, { error: { code: 'invalid_request', message: 'no text' } });
   const isMaya = voice.startsWith('my_');

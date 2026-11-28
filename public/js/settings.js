@@ -165,9 +165,9 @@ Voice.onStatus(renderVoiceStatus);
 const voiceRows = () => [...$('#voiceList').querySelectorAll('.mRow')];
 function fillVoiceList() {
   const box = $('#voiceList'), cur = voiceCfg().voice; box.textContent = '';
-  const groups = [['American', 'US'], ['British', 'UK'], ['Maya 2 · natural Hindi and Hinglish', 'Maya'], ['Kokoro Hindi · for text in Devanagari', 'Hindi']];
+  const groups = [['American', 'US'], ['British', 'UK'], ['Maya 2 · natural Hindi and Hinglish', 'Maya']];
   for (const [label, tag] of groups) {
-    const list = Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK|Hindi|Maya), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; }).filter(v => v.acc === tag);
+    const list = Voice.VOICES.map(([id, l]) => { const m = /^(.*?) \((US|UK|Maya), (.*)\)$/.exec(l) || [, l, 'US', '']; return { id, name: m[1], acc: m[2], kind: m[3].replace(/, /g, ' · ') }; }).filter(v => v.acc === tag);
     if (!list.length) continue;
     const h = document.createElement('div'); h.className = 'mGroup'; h.textContent = label; box.appendChild(h);
     for (const v of list) {
